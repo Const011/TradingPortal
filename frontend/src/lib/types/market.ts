@@ -38,6 +38,19 @@ export type CurrentBar = {
   volume: number;
 };
 
+/** Volume profile data point (price level + weighted volume). */
+export type VolumeProfileDataPoint = {
+  price: number;
+  vol: number;
+};
+
+/** Volume profile indicator data (from backend). */
+export type VolumeProfileData = {
+  time: number;
+  profile: VolumeProfileDataPoint[];
+  width: number;
+};
+
 /** Real-time kline update (current bar OHLCV; confirm=false while bar is open). */
 export type BarUpdate = {
   start: number;

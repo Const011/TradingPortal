@@ -4,10 +4,47 @@ from dataclasses import dataclass, field
 
 from app.schemas.market import Candle
 from app.services.bybit_client import BybitClient
+from app.services.indicators.volume_profile import build_volume_profile_from_candles
+
+DEFAULT_VOLUME_PROFILE_WINDOW = 2000
 
 
 def _candle_from_bar(start: int, open_: float, high: float, low: float, close: float, volume: float) -> Candle:
     return Candle(time=start, open=open_, high=high, low=low, close=close, volume=volume)
+
+
+def _make_snapshot_payload(candles: list[Candle], volume_profile_window: int) -> dict:
+    payload: dict = {
+        "event": "snapshot",
+        "candles": [c.model_dump() for c in candles],
+    }
+    if candles:
+        vp = build_volume_profile_from_candles(
+            candles,
+            time=candles[-1].time // 1000,
+            width=6,
+            window_size=volume_profile_window,
+        )
+        if vp:
+            payload["volumeProfile"] = vp
+    return payload
+
+
+def _make_upsert_payload(candle: Candle, candles: list[Candle], volume_profile_window: int) -> dict:
+    payload: dict = {
+        "event": "upsert",
+        "candle": candle.model_dump(),
+    }
+    if candles:
+        vp = build_volume_profile_from_candles(
+            candles,
+            time=candles[-1].time // 1000,
+            width=6,
+            window_size=volume_profile_window,
+        )
+        if vp:
+            payload["volumeProfile"] = vp
+    return payload
 
 
 @dataclass
@@ -15,6 +52,7 @@ class CandleStreamState:
     queues: set[asyncio.Queue[dict]] = field(default_factory=set)
     candles: list[Candle] = field(default_factory=list)
     task: asyncio.Task[None] | None = None
+    volume_profile_window: int = DEFAULT_VOLUME_PROFILE_WINDOW
 
 
 class CandleStreamHub:
@@ -24,18 +62,24 @@ class CandleStreamHub:
         self._streams: dict[tuple[str, str], CandleStreamState] = defaultdict(CandleStreamState)
         self._lock = asyncio.Lock()
 
-    async def subscribe(self, symbol: str, interval: str) -> asyncio.Queue[dict]:
+    async def subscribe(
+        self,
+        symbol: str,
+        interval: str,
+        volume_profile_window: int = DEFAULT_VOLUME_PROFILE_WINDOW,
+    ) -> asyncio.Queue[dict]:
         queue: asyncio.Queue[dict] = asyncio.Queue(maxsize=200)
         stream_key = (symbol, interval)
         snapshot_payload: dict | None = None
         async with self._lock:
             state = self._streams[stream_key]
             state.queues.add(queue)
+            state.volume_profile_window = volume_profile_window
             if state.candles:
-                snapshot_payload = {
-                    "event": "snapshot",
-                    "candles": [candle.model_dump() for candle in state.candles],
-                }
+                snapshot_payload = _make_snapshot_payload(
+                    state.candles,
+                    state.volume_profile_window,
+                )
             if state.task is None or state.task.done():
                 state.task = asyncio.create_task(self._run_stream(symbol, interval))
         if snapshot_payload is not None:
@@ -69,7 +113,8 @@ class CandleStreamHub:
                     if state is None:
                         return
                     state.candles = candles
-                await self._broadcast(stream_key, {"event": "snapshot", "candles": [c.model_dump() for c in candles]})
+                payload = _make_snapshot_payload(candles, state.volume_profile_window)
+                await self._broadcast(stream_key, payload)
 
                 async for bar in self._bybit_client.stream_kline(symbol, interval):
                     candidate = _candle_from_bar(
@@ -89,23 +134,31 @@ class CandleStreamHub:
                             return
                         if not state.candles:
                             state.candles = [candidate]
-                            event_payload = {"event": "upsert", "candle": candidate.model_dump()}
+                            event_payload = _make_upsert_payload(
+                                candidate, state.candles, state.volume_profile_window
+                            )
                         else:
                             last = state.candles[-1]
                             if candidate.time > last.time:
                                 state.candles.append(candidate)
                                 if len(state.candles) > self._snapshot_limit:
                                     state.candles = state.candles[-self._snapshot_limit :]
-                                event_payload = {"event": "upsert", "candle": candidate.model_dump()}
+                                event_payload = _make_upsert_payload(
+                                    candidate, state.candles, state.volume_profile_window
+                                )
                                 do_resync = True
                             elif candidate.time == last.time:
                                 state.candles[-1] = candidate
-                                event_payload = {"event": "upsert", "candle": candidate.model_dump()}
+                                event_payload = _make_upsert_payload(
+                                    candidate, state.candles, state.volume_profile_window
+                                )
                             else:
                                 for idx, candle in enumerate(state.candles):
                                     if candle.time == candidate.time:
                                         state.candles[idx] = candidate
-                                        event_payload = {"event": "upsert", "candle": candidate.model_dump()}
+                                        event_payload = _make_upsert_payload(
+                                            candidate, state.candles, state.volume_profile_window
+                                        )
                                         break
 
                     if event_payload is not None:
@@ -130,7 +183,8 @@ class CandleStreamHub:
             if state is None:
                 return
             state.candles = candles
-        await self._broadcast(stream_key, {"event": "snapshot", "candles": [c.model_dump() for c in candles]})
+            vp_window = state.volume_profile_window
+        await self._broadcast(stream_key, _make_snapshot_payload(candles, vp_window))
 
     async def _broadcast(self, stream_key: tuple[str, str], payload: dict) -> None:
         async with self._lock:

@@ -88,6 +88,7 @@ This document is intentionally scoped to **Spot trading only** for v1 to reduce 
 ### FR-4: Indicator Engine
 
 - Compute configured indicators on candle close (e.g., SMA, EMA, RSI, MACD, ATR, VWAP).
+- **Volume profile** is computed in the market data pipeline (CandleStreamHub) and streamed with candle snapshot/upsert events; same data is available for strategy and simulation.
 - Store values keyed by symbol, timeframe, timestamp, indicator name, and parameter hash.
 - Expose indicator series for frontend overlays and for simulation engine.
 
@@ -207,12 +208,12 @@ flowchart LR
 
 ## 10) Data Flow
 
-### Candle Stream (Chart Data)
+### Candle Stream (Chart Data + Indicators)
 
-1. Frontend subscribes to `WS /api/v1/stream/candles/{symbol}?interval=...`.
-2. Backend `CandleStreamHub` fetches REST kline (spot), broadcasts snapshot.
-3. Backend subscribes to Bybit kline WebSocket (spot); for each bar update: replace last candle or append new bar; on new bar start, refetch REST and broadcast fresh snapshot.
-4. Frontend applies snapshot/upsert events to local candle state; chart renders from candles only. No accumulation of volume; replace semantics throughout.
+1. Frontend subscribes to `WS /api/v1/stream/candles/{symbol}?interval=...&volume_profile_window=2000`.
+2. Backend `CandleStreamHub` fetches REST kline (spot), computes indicators (e.g. volume profile), broadcasts snapshot with `candles` and `volumeProfile`.
+3. Backend subscribes to Bybit kline WebSocket (spot); for each bar update: replace last candle or append new bar; recompute indicators; on new bar start, refetch REST and broadcast fresh snapshot.
+4. Frontend applies snapshot/upsert events to local candle state and indicator data; chart renders from candles and displays pre-calculated indicators. No client-side indicator computation.
 
 ### Ticker Stream (Ticker List Only)
 
@@ -287,7 +288,7 @@ Lightweight Charts does not provide built-in box, line, label, or shape primitiv
 
 **Implementation strategy:**
 - Use series primitives for boxes, lines, labels; reuse/adapt official plugins.
-- Volume profile: official Volume Profile primitive; displayed in inverse orientation, to the right of the main chart. Uses a configurable **window** (default 2000 bars) with recency weighting: `weight = (window - positionFromNewest) / window`, so older bars contribute less. Window is a frontend-settable parameter.
+- Volume profile: official Volume Profile primitive; displayed in inverse orientation, to the right of the main chart. **Computed on the backend** (indicator engine); frontend only displays pre-calculated data. Uses a configurable **window** (default 2000 bars) with recency weighting: `weight = (window - positionFromNewest) / window`. Window is passed via WebSocket query param and persisted in chart preferences.
 - Custom candle colors: set `color`, `wickColor`, `borderColor` per data point in `CandlestickData`; supports 4-way coloring (e.g. swing×internal trend: bright/dark green, bright/dark red).
 - Status/metric tables: render outside the chart (e.g. sidebar or panel) when needed.
 - Keep drawing objects in backend-serializable format (`shapeType`, `points`, `style`, `label`) for reproducibility and auditability.

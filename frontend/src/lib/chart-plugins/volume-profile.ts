@@ -50,6 +50,8 @@ class VolumeProfileRenderer implements IPrimitivePaneRenderer {
       const hRatio = scope.horizontalPixelRatio;
       const vRatio = scope.verticalPixelRatio;
 
+      const width = 10*Math.max(...this._data.items.map((item) => item.width));
+
       // ctx.fillStyle = "rgba(0, 0, 255, 0.2)";
       // const bgHorizontal = positionsBox(
       //   this._data.x,
@@ -69,7 +71,7 @@ class VolumeProfileRenderer implements IPrimitivePaneRenderer {
       // );
 
       ctx.fillStyle = "rgba(80, 80, 255, 0.8)";
-      const xAnchor = this._data.x + 100;
+      const xAnchor = this._data.x + 25+width*hRatio;
 
       const pixelHeight = Math.max(
         1,
@@ -84,7 +86,7 @@ class VolumeProfileRenderer implements IPrimitivePaneRenderer {
       }
 
       for (const [pixelY, width] of aggregated) {
-        const itemHorizontal = positionsBox(xAnchor, xAnchor - 10*width, hRatio );
+        const itemHorizontal = positionsBox(xAnchor, xAnchor - 10*width*hRatio, hRatio );
         ctx.fillRect(
           itemHorizontal.position,
           pixelY,

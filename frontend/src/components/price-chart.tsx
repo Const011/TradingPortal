@@ -20,7 +20,6 @@ import {
 } from "@/lib/constants/chart-intervals";
 import { useMarketData } from "@/contexts/market-data-context";
 import { VolumeProfile } from "@/lib/chart-plugins/volume-profile";
-import { buildVolumeProfileFromCandles } from "@/lib/chart-plugins/build-volume-profile";
 import { IndicatorControlPanel } from "@/components/indicator-control-panel";
 
 function toChartTime(milliseconds: number): Time {
@@ -57,7 +56,7 @@ export function PriceChart() {
     logScaleEnabled,
     setLogScaleEnabled,
     volumeProfileEnabled,
-    volumeProfileWindow,
+    volumeProfile,
   } = useMarketData();
   const containerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -218,7 +217,7 @@ export function PriceChart() {
     const chart = chartRef.current;
     if (!series || !chart) return;
 
-    if (!volumeProfileEnabled) {
+    if (!volumeProfileEnabled || !volumeProfile) {
       const primitive = volumeProfilePrimitiveRef.current;
       if (primitive) {
         series.detachPrimitive(primitive);
@@ -227,21 +226,10 @@ export function PriceChart() {
       return;
     }
 
-    const vpWidth = 6;
-    const anchorIndex = Math.max(0, chartData.length - vpWidth);
-    const anchorTime =
-      chartData.length > 0
-        ? (chartData[anchorIndex].time as Time)
-        : (Math.floor(Date.now() / 1000) as Time);
-    const vpData = buildVolumeProfileFromCandles(
-      candles,
-      anchorTime,
-      vpWidth,
-      undefined,
-      volumeProfileWindow
-    );
-    if (!vpData) return;
-
+    const vpData = {
+      ...volumeProfile,
+      time: volumeProfile.time as Time,
+    };
     const primitive = volumeProfilePrimitiveRef.current;
     if (primitive) {
       series.detachPrimitive(primitive);
@@ -249,7 +237,7 @@ export function PriceChart() {
     const newPrimitive = new VolumeProfile(chart, series, vpData);
     series.attachPrimitive(newPrimitive);
     volumeProfilePrimitiveRef.current = newPrimitive;
-  }, [volumeProfileEnabled, volumeProfileWindow, candles, chartData]);
+  }, [volumeProfileEnabled, volumeProfile]);
 
   return (
     <div

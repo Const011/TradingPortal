@@ -52,12 +52,20 @@ export function getTicksWebSocketUrl(symbol: string): string {
   return `${normalizedBaseUrl}/api/v1/stream/ticks/${symbol}`;
 }
 
-/** [Backend] WS /stream/candles. Merged snapshot + live bar updates; use for chart data. */
-export function getCandlesWebSocketUrl(symbol: string, interval: string): string {
+/** [Backend] WS /stream/candles. Merged snapshot + live bar updates + indicators; use for chart data. */
+export function getCandlesWebSocketUrl(
+  symbol: string,
+  interval: string,
+  volumeProfileWindow: number = 2000
+): string {
   const normalizedBaseUrl = backendBaseUrl.replace("https://", "wss://").replace(
     "http://",
     "ws://"
   );
-  return `${normalizedBaseUrl}/api/v1/stream/candles/${symbol}?interval=${encodeURIComponent(interval)}`;
+  const params = new URLSearchParams({
+    interval,
+    volume_profile_window: String(volumeProfileWindow),
+  });
+  return `${normalizedBaseUrl}/api/v1/stream/candles/${symbol}?${params.toString()}`;
 }
 

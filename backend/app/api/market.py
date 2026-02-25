@@ -110,17 +110,20 @@ async def stream_candles(
     websocket: WebSocket,
     symbol: str,
     interval: str = Query(default="1", description="Kline interval (e.g. 1, 5, 15, 60, D)"),
+    volume_profile_window: int = Query(default=2000, ge=100, le=10000),
     candle_stream_hub: CandleStreamHub = Depends(get_candle_stream_hub),
 ) -> None:
-    """[Frontend] Stream merged candle data: initial snapshot + live bar updates.
+    """[Frontend] Stream merged candle data: initial snapshot + live bar updates + indicators.
     Backend merges Bybit REST kline (history) + Bybit kline WebSocket (current bar);
-    sends snapshot and upsert events. Use this for chart data."""
+    sends snapshot and upsert events with computed volume profile."""
     if interval not in CANDLE_INTERVALS:
         await websocket.close(code=4000)
         return
     await websocket.accept()
     normalized_symbol = symbol.upper()
-    queue = await candle_stream_hub.subscribe(normalized_symbol, interval)
+    queue = await candle_stream_hub.subscribe(
+        normalized_symbol, interval, volume_profile_window=volume_profile_window
+    )
     try:
         while True:
             try:

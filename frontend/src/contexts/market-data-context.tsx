@@ -31,6 +31,7 @@ import {
   SymbolInfo,
   TickerSnapshot,
   TickerTick,
+  type VolumeProfileData,
 } from "@/lib/types/market";
 
 type MarketDataContextValue = {
@@ -48,6 +49,7 @@ type MarketDataContextValue = {
   volumeProfileWindow: number;
   setVolumeProfileWindow: (window: number) => void;
   candles: Candle[];
+  volumeProfile: VolumeProfileData | null;
   currentBar: CurrentBar | null;
   hoveredBarTime: number | null;
   setHoveredBarTime: (time: number | null) => void;
@@ -72,6 +74,7 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
   const [volumeProfileEnabled, setVolumeProfileEnabled] = useState<boolean>(false);
   const [volumeProfileWindow, setVolumeProfileWindow] = useState<number>(VOLUME_PROFILE_WINDOW_DEFAULT);
   const [candles, setCandles] = useState<Candle[]>([]);
+  const [volumeProfile, setVolumeProfile] = useState<VolumeProfileData | null>(null);
   const [tickers, setTickers] = useState<Record<string, TickerSnapshot>>({});
   const [latestTick, setLatestTick] = useState<TickerTick | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
@@ -142,21 +145,28 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
       candleSocketRef.current = null;
     }
     setCandles([]);
-    const ws = new WebSocket(getCandlesWebSocketUrl(selectedSymbol, chartInterval));
+    setVolumeProfile(null);
+    const ws = new WebSocket(
+      getCandlesWebSocketUrl(selectedSymbol, chartInterval, volumeProfileWindow)
+    );
     candleSocketRef.current = ws;
 
     ws.onmessage = (event: MessageEvent<string>) => {
       try {
         const payload = JSON.parse(event.data) as
-          | { event: "snapshot"; candles: Candle[] }
-          | { event: "upsert"; candle: Candle }
+          | { event: "snapshot"; candles: Candle[]; volumeProfile?: VolumeProfileData }
+          | { event: "upsert"; candle: Candle; volumeProfile?: VolumeProfileData }
           | { event: "heartbeat" };
         if (payload.event === "heartbeat") {
           return;
         }
         if (payload.event === "snapshot") {
           setCandles(payload.candles);
+          setVolumeProfile(payload.volumeProfile ?? null);
           return;
+        }
+        if ("volumeProfile" in payload) {
+          setVolumeProfile(payload.volumeProfile ?? null);
         }
         setCandles((current) => {
           if (current.length === 0) {
@@ -188,7 +198,7 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
       ws.close();
       candleSocketRef.current = null;
     };
-  }, [selectedSymbol, chartInterval]);
+  }, [selectedSymbol, chartInterval, volumeProfileWindow]);
 
   useEffect(() => {
     if (symbols.length === 0) {
@@ -312,6 +322,7 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
       volumeProfileWindow,
       setVolumeProfileWindow,
       candles,
+      volumeProfile,
       currentBar,
       hoveredBarTime,
       setHoveredBarTime,
@@ -329,6 +340,7 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
       volumeProfileEnabled,
       volumeProfileWindow,
       candles,
+      volumeProfile,
       currentBar,
       hoveredBarTime,
       tickers,
