@@ -14,8 +14,25 @@ import {
   DEFAULT_CHART_INTERVAL,
   type ChartIntervalValue,
 } from "@/lib/constants/chart-intervals";
-import { fetchCandles, fetchSymbols, fetchTickers, getTicksWebSocketUrl } from "@/lib/api/market";
-import { Candle, SymbolInfo, TickerSnapshot, TickerTick } from "@/lib/types/market";
+import {
+  getStoredChartPreferences,
+  setStoredChartPreferences,
+} from "@/lib/chart-preferences-storage";
+import {
+  fetchCandles,
+  fetchSymbols,
+  fetchTickers,
+  getBarUpdatesWebSocketUrl,
+  getTicksWebSocketUrl,
+} from "@/lib/api/market";
+import {
+  type BarUpdate,
+  Candle,
+  type CurrentBar,
+  SymbolInfo,
+  TickerSnapshot,
+  TickerTick,
+} from "@/lib/types/market";
 
 type MarketDataContextValue = {
   symbols: SymbolInfo[];
@@ -23,7 +40,16 @@ type MarketDataContextValue = {
   setSelectedSymbol: (symbol: string) => void;
   chartInterval: ChartIntervalValue;
   setChartInterval: (interval: ChartIntervalValue) => void;
+  autoScaleEnabled: boolean;
+  setAutoScaleEnabled: (enabled: boolean) => void;
+  logScaleEnabled: boolean;
+  setLogScaleEnabled: (enabled: boolean) => void;
   candles: Candle[];
+  /** Real-time kline update for current bar (accumulated volume); null when not available. */
+  liveBarUpdate: BarUpdate | null;
+  currentBar: CurrentBar | null;
+  hoveredBarTime: number | null;
+  setHoveredBarTime: (time: number | null) => void;
   tickers: Record<string, TickerSnapshot>;
   latestTick: TickerTick | null;
   loading: boolean;
@@ -40,13 +66,35 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
   const [symbols, setSymbols] = useState<SymbolInfo[]>([]);
   const [selectedSymbol, setSelectedSymbol] = useState<string>("");
   const [chartInterval, setChartInterval] = useState<ChartIntervalValue>(DEFAULT_CHART_INTERVAL);
+  const [autoScaleEnabled, setAutoScaleEnabled] = useState<boolean>(true);
+  const [logScaleEnabled, setLogScaleEnabled] = useState<boolean>(false);
   const [candles, setCandles] = useState<Candle[]>([]);
   const [tickers, setTickers] = useState<Record<string, TickerSnapshot>>({});
   const [latestTick, setLatestTick] = useState<TickerTick | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
+  const [hoveredBarTime, setHoveredBarTime] = useState<number | null>(null);
+  const [liveBarUpdate, setLiveBarUpdate] = useState<BarUpdate | null>(null);
 
   const socketRef = useRef<WebSocket | null>(null);
+  const barSocketRef = useRef<WebSocket | null>(null);
+
+  useEffect(() => {
+    const prefs = getStoredChartPreferences();
+    setSelectedSymbol(prefs.selectedSymbol);
+    setChartInterval(prefs.chartInterval);
+    setAutoScaleEnabled(prefs.autoScale);
+    setLogScaleEnabled(prefs.logScale);
+  }, []);
+
+  useEffect(() => {
+    setStoredChartPreferences({
+      selectedSymbol,
+      chartInterval,
+      autoScale: autoScaleEnabled,
+      logScale: logScaleEnabled,
+    });
+  }, [selectedSymbol, chartInterval, autoScaleEnabled, logScaleEnabled]);
 
   useEffect(() => {
     let mounted = true;
@@ -183,6 +231,74 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
     };
   }, [selectedSymbol]);
 
+  useEffect(() => {
+    if (!selectedSymbol) {
+      return;
+    }
+    if (barSocketRef.current) {
+      barSocketRef.current.close();
+      barSocketRef.current = null;
+    }
+    setLiveBarUpdate(null);
+    const barWs = new WebSocket(
+      getBarUpdatesWebSocketUrl(selectedSymbol, chartInterval)
+    );
+    barSocketRef.current = barWs;
+    barWs.onmessage = (event: MessageEvent<string>) => {
+      try {
+        const payload = JSON.parse(event.data) as BarUpdate;
+        setLiveBarUpdate(payload);
+      } catch {
+        // ignore
+      }
+    };
+    return () => {
+      barWs.close();
+      barSocketRef.current = null;
+    };
+  }, [selectedSymbol, chartInterval]);
+
+  const currentBar = useMemo<CurrentBar | null>(() => {
+    if (candles.length === 0) {
+      return null;
+    }
+    if (hoveredBarTime != null) {
+      const bar = candles.find((c) => Math.floor(c.time / 1000) === hoveredBarTime);
+      if (bar) {
+        return {
+          open: bar.open,
+          high: bar.high,
+          low: bar.low,
+          close: bar.close,
+          volume: bar.volume,
+        };
+      }
+    }
+    const last = candles[candles.length - 1];
+    if (
+      liveBarUpdate &&
+      liveBarUpdate.start === last.time
+    ) {
+      return {
+        open: liveBarUpdate.open,
+        high: liveBarUpdate.high,
+        low: liveBarUpdate.low,
+        close: liveBarUpdate.close,
+        volume: liveBarUpdate.volume,
+      };
+    }
+    const close = latestTick ? latestTick.price : last.close;
+    const high = latestTick ? Math.max(last.high, latestTick.price) : last.high;
+    const low = latestTick ? Math.min(last.low, latestTick.price) : last.low;
+    return {
+      open: last.open,
+      high,
+      low,
+      close,
+      volume: last.volume,
+    };
+  }, [candles, latestTick, hoveredBarTime, liveBarUpdate]);
+
   const value = useMemo<MarketDataContextValue>(
     () => ({
       symbols,
@@ -190,13 +306,35 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
       setSelectedSymbol,
       chartInterval,
       setChartInterval,
+      autoScaleEnabled,
+      setAutoScaleEnabled,
+      logScaleEnabled,
+      setLogScaleEnabled,
       candles,
+      liveBarUpdate,
+      currentBar,
+      hoveredBarTime,
+      setHoveredBarTime,
       tickers,
       latestTick,
       loading,
       error,
     }),
-    [symbols, selectedSymbol, chartInterval, candles, tickers, latestTick, loading, error]
+    [
+      symbols,
+      selectedSymbol,
+      chartInterval,
+      autoScaleEnabled,
+      logScaleEnabled,
+      candles,
+      liveBarUpdate,
+      currentBar,
+      hoveredBarTime,
+      tickers,
+      latestTick,
+      loading,
+      error,
+    ]
   );
 
   return <MarketDataContext.Provider value={value}>{children}</MarketDataContext.Provider>;

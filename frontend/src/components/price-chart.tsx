@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import {
   CandlestickData,
   CandlestickSeries,
@@ -39,13 +39,23 @@ const intervalButtonActiveStyle = {
 };
 
 export function PriceChart() {
-  const { candles, latestTick, selectedSymbol, chartInterval, setChartInterval } = useMarketData();
+  const {
+    candles,
+    latestTick,
+    liveBarUpdate,
+    selectedSymbol,
+    chartInterval,
+    setChartInterval,
+    setHoveredBarTime,
+    autoScaleEnabled,
+    setAutoScaleEnabled,
+    logScaleEnabled,
+    setLogScaleEnabled,
+  } = useMarketData();
   const containerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const volumeSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
-  const [autoScaleEnabled, setAutoScaleEnabled] = useState<boolean>(true);
-  const [logScaleEnabled, setLogScaleEnabled] = useState<boolean>(false);
 
   const chartData = useMemo<CandlestickData<Time>[]>(() => {
     return candles.map((item) => ({
@@ -118,6 +128,12 @@ export function PriceChart() {
     seriesRef.current = candlestickSeries;
     volumeSeriesRef.current = volumeSeries;
 
+    chart.subscribeCrosshairMove((param) => {
+      if (param.time != null) {
+        setHoveredBarTime(typeof param.time === "number" ? param.time : Number(param.time));
+      }
+    });
+
     const observer = new ResizeObserver(() => {
       if (!containerRef.current || !chartRef.current) {
         return;
@@ -131,8 +147,9 @@ export function PriceChart() {
       chart.remove();
       chartRef.current = null;
       seriesRef.current = null;
+      volumeSeriesRef.current = null;
     };
-  }, []);
+  }, [setHoveredBarTime]);
 
   useEffect(() => {
     if (!seriesRef.current) {
@@ -169,8 +186,27 @@ export function PriceChart() {
     seriesRef.current.update({ time, open, high, low, close });
   }, [latestTick, chartData]);
 
+  useEffect(() => {
+    if (!volumeSeriesRef.current || !liveBarUpdate || candles.length === 0) {
+      return;
+    }
+    const lastCandle = candles[candles.length - 1];
+    if (liveBarUpdate.start !== lastCandle.time) {
+      return;
+    }
+    const color = liveBarUpdate.close >= liveBarUpdate.open ? "#2ecc71" : "#e74c3c";
+    volumeSeriesRef.current.update({
+      time: toChartTime(liveBarUpdate.start),
+      value: liveBarUpdate.volume,
+      color,
+    });
+  }, [liveBarUpdate, candles]);
+
   return (
-    <div style={{ width: "100%", minWidth: 400 }}>
+    <div
+      style={{ width: "100%", minWidth: 400 }}
+      onMouseLeave={() => setHoveredBarTime(null)}
+    >
       <div
         style={{
           display: "flex",
@@ -198,14 +234,14 @@ export function PriceChart() {
         <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
           <button
             type="button"
-            onClick={() => setAutoScaleEnabled((current) => !current)}
+            onClick={() => setAutoScaleEnabled(!autoScaleEnabled)}
             style={autoScaleEnabled ? intervalButtonActiveStyle : intervalButtonStyle}
           >
             Auto
           </button>
           <button
             type="button"
-            onClick={() => setLogScaleEnabled((current) => !current)}
+            onClick={() => setLogScaleEnabled(!logScaleEnabled)}
             style={logScaleEnabled ? intervalButtonActiveStyle : intervalButtonStyle}
           >
             Log

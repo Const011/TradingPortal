@@ -5,7 +5,7 @@ import httpx
 import websockets
 
 from app.config import settings
-from app.schemas.market import Candle, SymbolInfo, TickerSnapshot, TickerTick
+from app.schemas.market import BarUpdate, Candle, SymbolInfo, TickerSnapshot, TickerTick
 
 
 class BybitClient:
@@ -107,4 +107,36 @@ class BybitClient:
                     ts=int(data.get("ts", 0)),
                 )
                 yield tick
+
+    async def stream_kline(
+        self, symbol: str, interval: str
+    ) -> AsyncGenerator[BarUpdate, None]:
+        """Stream real-time kline updates for the current bar (volume accumulates until confirm=true)."""
+        topic = f"kline.{interval}.{symbol}"
+        async with websockets.connect(settings.bybit_ws_public_spot_url) as connection:
+            subscribe_message = json.dumps({"op": "subscribe", "args": [topic]})
+            await connection.send(subscribe_message)
+
+            async for message in connection:
+                data = json.loads(message)
+                raw_payload = data.get("data")
+                if raw_payload is None:
+                    continue
+                if isinstance(raw_payload, list):
+                    if not raw_payload:
+                        continue
+                    row = raw_payload[0]
+                else:
+                    row = raw_payload
+                yield BarUpdate(
+                    start=int(row["start"]),
+                    end=int(row["end"]),
+                    open=float(row["open"]),
+                    close=float(row["close"]),
+                    high=float(row["high"]),
+                    low=float(row["low"]),
+                    volume=float(row["volume"]),
+                    confirm=bool(row.get("confirm", True)),
+                    timestamp=int(row.get("timestamp", data.get("ts", 0))),
+                )
 

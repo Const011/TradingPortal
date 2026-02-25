@@ -29,3 +29,25 @@ export type TickerSnapshot = {
   volume_24h: number;
 };
 
+/** Current (last) bar OHLC + volume, aligned with chart data; close/high/low updated by latest tick. */
+export type CurrentBar = {
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+};
+
+/** Real-time kline update (current bar OHLCV; confirm=false while bar is open). */
+export type BarUpdate = {
+  start: number;
+  end: number;
+  open: number;
+  close: number;
+  high: number;
+  low: number;
+  volume: number;
+  confirm: boolean;
+  timestamp: number;
+};
+

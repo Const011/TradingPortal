@@ -2,7 +2,7 @@ import asyncio
 
 from fastapi import APIRouter, Depends, Query, WebSocket, WebSocketDisconnect, HTTPException
 
-from app.schemas.market import Candle, SymbolInfo, TickerSnapshot
+from app.schemas.market import BarUpdate, Candle, SymbolInfo, TickerSnapshot
 from app.services.bybit_client import BybitClient
 from app.services.market_stream import MarketStreamHub
 
@@ -66,6 +66,26 @@ async def list_tickers(
 ) -> list[TickerSnapshot]:
     requested_symbols = [item.strip().upper() for item in symbols.split(",")] if symbols else None
     return await bybit_client.get_tickers(symbols=requested_symbols)
+
+
+@router.websocket("/stream/bar-updates/{symbol}")
+async def stream_bar_updates(
+    websocket: WebSocket,
+    symbol: str,
+    interval: str = Query(default="1", description="Kline interval (e.g. 1, 5, 15, 60, D)"),
+    bybit_client: BybitClient = Depends(get_bybit_client),
+) -> None:
+    """Stream real-time kline updates for the current bar (accumulated volume, OHLC)."""
+    if interval not in CANDLE_INTERVALS:
+        await websocket.close(code=4000)
+        return
+    await websocket.accept()
+    normalized_symbol = symbol.upper()
+    try:
+        async for bar in bybit_client.stream_kline(normalized_symbol, interval):
+            await websocket.send_json(bar.model_dump())
+    except Exception:
+        pass
 
 
 @router.websocket("/stream/ticks/{symbol}")

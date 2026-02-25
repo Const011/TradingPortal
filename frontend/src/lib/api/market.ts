@@ -43,3 +43,11 @@ export function getTicksWebSocketUrl(symbol: string): string {
   return `${normalizedBaseUrl}/api/v1/stream/ticks/${symbol}`;
 }
 
+export function getBarUpdatesWebSocketUrl(symbol: string, interval: string): string {
+  const normalizedBaseUrl = backendBaseUrl.replace("https://", "wss://").replace(
+    "http://",
+    "ws://"
+  );
+  return `${normalizedBaseUrl}/api/v1/stream/bar-updates/${symbol}?interval=${encodeURIComponent(interval)}`;
+}
+

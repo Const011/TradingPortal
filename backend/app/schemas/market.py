@@ -31,3 +31,17 @@ class TickerSnapshot(BaseModel):
     change_24h_percent: float
     volume_24h: float
 
+
+class BarUpdate(BaseModel):
+    """Real-time kline update from Bybit (current bar OHLCV; confirm=false while bar is open)."""
+
+    start: int
+    end: int
+    open: float
+    close: float
+    high: float
+    low: float
+    volume: float
+    confirm: bool
+    timestamp: int
+
