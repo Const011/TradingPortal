@@ -19,6 +19,9 @@ import {
   chartIntervalSeconds,
 } from "@/lib/constants/chart-intervals";
 import { useMarketData } from "@/contexts/market-data-context";
+import { VolumeProfile } from "@/lib/chart-plugins/volume-profile";
+import { buildVolumeProfileFromCandles } from "@/lib/chart-plugins/build-volume-profile";
+import { IndicatorControlPanel } from "@/components/indicator-control-panel";
 
 function toChartTime(milliseconds: number): Time {
   return Math.floor(milliseconds / 1000) as Time;
@@ -53,11 +56,13 @@ export function PriceChart() {
     setAutoScaleEnabled,
     logScaleEnabled,
     setLogScaleEnabled,
+    volumeProfileEnabled,
   } = useMarketData();
   const containerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const volumeSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
+  const volumeProfilePrimitiveRef = useRef<VolumeProfile | null>(null);
   const lastFittedKeyRef = useRef<string | null>(null);
 
   const chartData = useMemo<CandlestickData<Time>[]>(() => {
@@ -97,7 +102,7 @@ export function PriceChart() {
         horzLines: { color: "#1a2538" },
       },
       width: containerRef.current.clientWidth,
-      height: 520,
+      height: 800,
       rightPriceScale: {
         borderColor: "#253349",
       },
@@ -151,6 +156,7 @@ export function PriceChart() {
       chartRef.current = null;
       seriesRef.current = null;
       volumeSeriesRef.current = null;
+      volumeProfilePrimitiveRef.current = null;
     };
   }, [setHoveredBarTime]);
 
@@ -206,6 +212,38 @@ export function PriceChart() {
     seriesRef.current.update({ time, open, high, low, close });
   }, [latestTick, chartData, chartInterval]);
 
+  useEffect(() => {
+    const series = seriesRef.current;
+    const chart = chartRef.current;
+    if (!series || !chart) return;
+
+    if (!volumeProfileEnabled) {
+      const primitive = volumeProfilePrimitiveRef.current;
+      if (primitive) {
+        series.detachPrimitive(primitive);
+        volumeProfilePrimitiveRef.current = null;
+      }
+      return;
+    }
+
+    const vpWidth = 6;
+    const anchorIndex = Math.max(0, chartData.length - vpWidth);
+    const anchorTime =
+      chartData.length > 0
+        ? (chartData[anchorIndex].time as Time)
+        : (Math.floor(Date.now() / 1000) as Time);
+    const vpData = buildVolumeProfileFromCandles(candles, anchorTime, vpWidth);
+    if (!vpData) return;
+
+    const primitive = volumeProfilePrimitiveRef.current;
+    if (primitive) {
+      series.detachPrimitive(primitive);
+    }
+    const newPrimitive = new VolumeProfile(chart, series, vpData);
+    series.attachPrimitive(newPrimitive);
+    volumeProfilePrimitiveRef.current = newPrimitive;
+  }, [volumeProfileEnabled, candles, chartData]);
+
   return (
     <div
       style={{ width: "100%", minWidth: 400 }}
@@ -235,7 +273,8 @@ export function PriceChart() {
             );
           })}
         </div>
-        <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+        <div style={{ marginLeft: "auto", display: "flex", gap: 8, alignItems: "center" }}>
+          <IndicatorControlPanel />
           <button
             type="button"
             onClick={() => setAutoScaleEnabled(!autoScaleEnabled)}

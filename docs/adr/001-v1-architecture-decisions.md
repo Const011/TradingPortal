@@ -66,6 +66,30 @@ To avoid unstable early complexity, v1 must prioritize safety, observability, an
 - **Why:** REST is reliable for deterministic history fetch while WebSocket is required for low-latency updates.
 - **Consequence:** Backend must own stream lifecycle, reconnection policy, and frontend fanout endpoint.
 
+### D10: Unified Spot market for chart data
+
+- **Decision:** Use Bybit Spot for both REST kline and kline WebSocket; never mix Spot REST with Linear WebSocket.
+- **Why:** Spot and Linear are different products; mixing causes volume/price mismatches and apparent "accumulation" or "reset" artifacts.
+- **Consequence:** All chart-related endpoints (candles, candle stream) use `category=spot` and `wss://stream.bybit.com/v5/public/spot` for kline topic.
+
+### D11: Backend-owned candle merge
+
+- **Decision:** Backend merges REST kline (history) + kline WebSocket (current bar) into a single `WS /stream/candles` endpoint; frontend consumes only this stream for chart data.
+- **Why:** Single source of truth, correct period rollover, validated refetch on new bar, no double volume accumulation.
+- **Consequence:** Ticker stream is used solely for ticker list; chart bar updates come exclusively from candle stream.
+
+### D12: Chart viewport preservation
+
+- **Decision:** Call `fitContent()` only when symbol or interval changes, not on every candle/tick update.
+- **Why:** Frequent `fitContent()` resets scroll/zoom position on each tick.
+- **Consequence:** Track last-fitted symbol:interval key; fit only when it changes.
+
+### D13: Indicator drawing via series primitives
+
+- **Decision:** Use Lightweight Charts series primitives (Canvas 2D) for boxes, lines, labels, shapes; reuse official plugin examples where possible.
+- **Why:** LWC has no built-in box/line/label primitives; primitives pattern is the supported extension mechanism.
+- **Consequence:** Order Blocks, FVG, S/R, volume profile require custom or adapted primitives. Custom candle colors (4-way by trend) use per-point `color`/`wickColor`/`borderColor` on `CandlestickData`. Status/metric tables render outside the chart when needed.
+
 ## Alternatives Considered
 
 - **Microservices from day one:** rejected for early operational complexity.
@@ -87,4 +111,5 @@ Revisit this ADR when one of the following occurs:
 - Throughput requires splitting modules into separate deployables.
 - Multi-exchange routing becomes an explicit requirement.
 - Annotation UX requirements exceed primitive-based implementation limits.
+- Indicator overlays (Order Blocks, S/R, volume profile) require different drawing approach than series primitives.
 

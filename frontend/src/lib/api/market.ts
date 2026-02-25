@@ -17,7 +17,7 @@ export async function fetchCandles(symbol: string, interval: string): Promise<Ca
   const searchParams = new URLSearchParams({
     symbol,
     interval,
-    limit: "300",
+    limit: "1500",
   });
   const response = await fetch(`${backendBaseUrl}/api/v1/candles?${searchParams.toString()}`);
   if (!response.ok) {

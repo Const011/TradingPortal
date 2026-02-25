@@ -42,6 +42,8 @@ type MarketDataContextValue = {
   setAutoScaleEnabled: (enabled: boolean) => void;
   logScaleEnabled: boolean;
   setLogScaleEnabled: (enabled: boolean) => void;
+  volumeProfileEnabled: boolean;
+  setVolumeProfileEnabled: (enabled: boolean) => void;
   candles: Candle[];
   currentBar: CurrentBar | null;
   hoveredBarTime: number | null;
@@ -64,6 +66,7 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
   const [chartInterval, setChartInterval] = useState<ChartIntervalValue>(DEFAULT_CHART_INTERVAL);
   const [autoScaleEnabled, setAutoScaleEnabled] = useState<boolean>(true);
   const [logScaleEnabled, setLogScaleEnabled] = useState<boolean>(false);
+  const [volumeProfileEnabled, setVolumeProfileEnabled] = useState<boolean>(false);
   const [candles, setCandles] = useState<Candle[]>([]);
   const [tickers, setTickers] = useState<Record<string, TickerSnapshot>>({});
   const [latestTick, setLatestTick] = useState<TickerTick | null>(null);
@@ -80,6 +83,7 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
     setChartInterval(prefs.chartInterval);
     setAutoScaleEnabled(prefs.autoScale);
     setLogScaleEnabled(prefs.logScale);
+    setVolumeProfileEnabled(prefs.volumeProfileEnabled);
   }, []);
 
   useEffect(() => {
@@ -88,8 +92,9 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
       chartInterval,
       autoScale: autoScaleEnabled,
       logScale: logScaleEnabled,
+      volumeProfileEnabled,
     });
-  }, [selectedSymbol, chartInterval, autoScaleEnabled, logScaleEnabled]);
+  }, [selectedSymbol, chartInterval, autoScaleEnabled, logScaleEnabled, volumeProfileEnabled]);
 
   useEffect(() => {
     let mounted = true;
@@ -296,6 +301,8 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
       setAutoScaleEnabled,
       logScaleEnabled,
       setLogScaleEnabled,
+      volumeProfileEnabled,
+      setVolumeProfileEnabled,
       candles,
       currentBar,
       hoveredBarTime,
@@ -311,6 +318,7 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
       chartInterval,
       autoScaleEnabled,
       logScaleEnabled,
+      volumeProfileEnabled,
       candles,
       currentBar,
       hoveredBarTime,

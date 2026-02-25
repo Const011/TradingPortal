@@ -23,7 +23,7 @@ app.add_middleware(
 
 bybit_client = BybitClient()
 stream_hub = MarketStreamHub(bybit_client=bybit_client)
-candle_stream_hub = CandleStreamHub(bybit_client=bybit_client)
+candle_stream_hub = CandleStreamHub(bybit_client=bybit_client, snapshot_limit=1500)
 
 
 @app.get("/healthz")

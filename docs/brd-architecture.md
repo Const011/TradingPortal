@@ -62,12 +62,14 @@ This document is intentionally scoped to **Spot trading only** for v1 to reduce 
 - Ingest ticker snapshots (last price, 24h change, volume).
 - Ingest candles for configured intervals (1m, 5m, 15m, 1h, 4h, 1d).
 - Maintain canonical normalized model independent of exchange response shape.
+- **Unified Spot market:** All chart data (REST + WebSocket) must use the same Bybit market (Spot) to avoid volume/price mismatches.
 - Use Bybit REST for historical bootstrap and symbol catalog:
   - `GET /v5/market/instruments-info` for Spot symbols.
-  - `GET /v5/market/kline` for historical candles.
+  - `GET /v5/market/kline` (category=spot) for historical candles.
 - Use Bybit public WebSocket for realtime updates:
-  - `wss://stream.bybit.com/v5/public/spot` with `tickers.{symbol}` topic.
-  - Backend must aggregate stream messages into frontend-friendly tick payloads.
+  - `wss://stream.bybit.com/v5/public/spot` with `tickers.{symbol}` for ticker list (last price, 24h change, volume24h).
+  - `wss://stream.bybit.com/v5/public/spot` with `kline.{interval}.{symbol}` for chart candle updates.
+- **Backend candle merge:** Backend merges REST kline (history) + kline WebSocket (current bar) into a single stream; frontend consumes only the merged candle stream for chart data. Ticker stream is used solely for the ticker list, not for chart bar updates.
 
 ### FR-2: Order Execution and Tracking
 
@@ -205,24 +207,38 @@ flowchart LR
 
 ## 10) Data Flow
 
-1. Market data job fetches candles/tickers from Bybit and stores normalized records.
-2. Indicator job computes values per configured symbol/timeframe and writes `IndicatorValue`.
-3. Strategy generates `OrderIntent`; Execution Service submits to Bybit.
-4. Order updates and fills are persisted and reflected in positions.
-5. Historical trades + indicators feed AI Advisor request.
-6. AI Advisor returns schema-valid parameter proposals.
-7. Simulator evaluates proposal; results are attached to suggestion.
-8. Operator approves/rejects; approved versions can be activated for paper/live modes.
+### Candle Stream (Chart Data)
+
+1. Frontend subscribes to `WS /api/v1/stream/candles/{symbol}?interval=...`.
+2. Backend `CandleStreamHub` fetches REST kline (spot), broadcasts snapshot.
+3. Backend subscribes to Bybit kline WebSocket (spot); for each bar update: replace last candle or append new bar; on new bar start, refetch REST and broadcast fresh snapshot.
+4. Frontend applies snapshot/upsert events to local candle state; chart renders from candles only. No accumulation of volume; replace semantics throughout.
+
+### Ticker Stream (Ticker List Only)
+
+1. Frontend subscribes to `WS /api/v1/stream/ticks/{symbol}`.
+2. Backend proxies Bybit ticker WebSocket; used for last price, volume24h, change% in ticker list. **Not used for chart bar updates.**
+
+### General
+
+1. Indicator job computes values per configured symbol/timeframe and writes `IndicatorValue`.
+2. Strategy generates `OrderIntent`; Execution Service submits to Bybit.
+3. Order updates and fills are persisted and reflected in positions.
+4. Historical trades + indicators feed AI Advisor request.
+5. AI Advisor returns schema-valid parameter proposals.
+6. Simulator evaluates proposal; results are attached to suggestion.
+7. Operator approves/rejects; approved versions can be activated for paper/live modes.
 
 ## 11) API Contract Draft (v1)
 
 ### Market Data
 
-- `GET /api/v1/symbols`
-- `GET /api/v1/tickers?symbols=BTCUSDT,ETHUSDT`
-- `GET /api/v1/candles?symbol=BTCUSDT&interval=1m&from=...&to=...`
-- `GET /api/v1/indicators?symbol=BTCUSDT&interval=1m&name=ema&params=...`
-- `WS /api/v1/stream/ticks/{symbol}` realtime tick stream for selected symbol.
+- `GET /api/v1/symbols` — tradable Spot symbols.
+- `GET /api/v1/intervals` — supported kline intervals.
+- `GET /api/v1/tickers?symbols=BTCUSDT,ETHUSDT` — 24h snapshots for ticker list.
+- `GET /api/v1/candles?symbol=BTCUSDT&interval=1m&limit=300` — historical klines (standalone fetch).
+- `WS /api/v1/stream/candles/{symbol}?interval=1` — **primary chart stream:** merged snapshot + live bar upserts.
+- `WS /api/v1/stream/ticks/{symbol}` — ticker stream for ticker list only (last price, volume24h, change%); not used for chart bar updates.
 
 ### Trading
 
@@ -256,16 +272,25 @@ flowchart LR
 
 ### Chart and Plugin Strategy
 
-Lightweight Charts community examples are suitable for v1 visualization needs, but not all examples are production-ready plugins. The practical strategy is:
+Lightweight Charts does not provide built-in box, line, label, or shape primitives. Drawing is done via **series primitives** (plugins) using `CanvasRenderingContext2D`. Reference indicators (Order Blocks, Support/Resistance) use these Pine graphics objects:
 
-- Use official primitives pattern for:
-  - Trend/Support lines with configurable width.
-  - Rectangle zones (supply/demand, session regions).
-  - Anchored text annotations.
-  - Entry/exit markers.
-- Use or adapt community volume-profile examples for vertical histogram overlays.
-- Keep drawing objects in backend-serializable format (`shapeType`, `points`, `style`, `label`) so annotations are reproducible and auditable.
-- Add custom hit-testing/editing iteratively; advanced manipulation (drag handles, resize UX) is a phase-2 enhancement.
+| Pine object | Purpose | LWC approach |
+|-------------|---------|--------------|
+| **Box** | Order blocks, Fair Value Gaps, volume profile bars | Rectangle Drawing Tool primitive; custom primitive for programmatic boxes |
+| **Line** | Structure lines (BOS/CHoCH), S/R horizontals, OB boundaries | Trend Line, Vertical Line primitives; custom for horizontal extend.both |
+| **Label** | Swing labels (HH, HL, LH, LL), BOS/CHoCH, EQH/EQL | Anchored Text or custom primitive for price/time-anchored labels |
+| **Shape** | Bar markers (triangle, diamond) | `setMarkers()` on series or custom primitive |
+| **Volume profile** | Price-level histogram | Official Volume Profile plugin example |
+| **Custom candle colors** | 4 colors (bright/dark green, bright/dark red) by trend | Per-point `color`, `wickColor`, `borderColor` on `CandlestickData`; each bar overrides series defaults |
+
+**Official plugin examples** (TradingView): Rectangle Drawing Tool, Trend Line, Vertical Line, Volume Profile, Anchored Text, Bands Indicator. Source: `tradingview.github.io/lightweight-charts/plugin-examples` and `github.com/tradingview/lightweight-charts/plugin-examples`.
+
+**Implementation strategy:**
+- Use series primitives for boxes, lines, labels; reuse/adapt official plugins.
+- Volume profile: official Volume Profile primitive.
+- Custom candle colors: set `color`, `wickColor`, `borderColor` per data point in `CandlestickData`; supports 4-way coloring (e.g. swing×internal trend: bright/dark green, bright/dark red).
+- Status/metric tables: render outside the chart (e.g. sidebar or panel) when needed.
+- Keep drawing objects in backend-serializable format (`shapeType`, `points`, `style`, `label`) for reproducibility and auditability.
 
 ## 13) AI Suggestion + Simulation Guardrails
 
@@ -288,8 +313,9 @@ Lightweight Charts community examples are suitable for v1 visualization needs, b
 ### Phase 1.1: UI/Feed Wiring
 
 - Symbol switcher in frontend linked to backend market endpoints.
-- On symbol change: refetch historical candles, reconnect realtime tick stream.
-- Lightweight Charts integration with candle series + live price updates.
+- On symbol change: reconnect candle stream (backend sends fresh snapshot); reconnect ticker stream for ticker list.
+- Lightweight Charts integration with candle series from `WS /stream/candles`; optional tick-based OHLC polish for last bar (ticker used only for last price, not volume).
+- Chart viewport: call `fitContent()` only when symbol or interval changes, not on every data update, to preserve scroll/zoom position.
 
 ### Phase 2: Paper Trading Loop
 

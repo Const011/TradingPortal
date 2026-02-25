@@ -1,0 +1,222 @@
+//@version=6
+indicator("Auto Detection of Support/Resistance Lines", overlay=true, scale=scale.none, max_bars_back=5000, max_lines_count = 500, max_boxes_count = 500)
+
+bars_back = input.int(5000, minval=100, maxval = 5000, title="Horizon")
+N = input.int(500, minval=10, maxval = 500, title="Number of Baskets")
+M = input.int(9, minval=1, maxval=50, title="Vicinity Range for Minima Detection")
+W = input.int(8, minval=1, maxval=50, title="Smoothing window size")
+width_multiplier = input.float(1.0, minval=0.01, maxval=10.0, title="Line Width Multiplier")
+max_width = input.float(10.0, minval=0.1, maxval=20.0, title="Line max width")
+show_vol_profile = input.bool(true, title = "Show volume profile?")
+lines_color = input.color(color.rgb(51, 33, 243, 61), title = "Color of lines")
+boxes_color = input.color(#00e5ce7d, title = "Color of volume profile")
+
+min_price = ta.lowest(low, bars_back)
+max_price = ta.highest(high, bars_back)
+
+smooth_triangular(input_array, window_size) => 
+
+    smoothed_array = array.new_float(N, 0.0)
+    
+    // Ensure window_size is odd and at least 3
+    actual_window_size = window_size % 2 == 0 ? window_size + 1 : window_size
+    actual_window_size := math.max(actual_window_size, 3)
+    
+    half_window = int(actual_window_size / 2)
+    
+    // Generate triangular weights
+    weights = array.new_float(actual_window_size, 0.0)
+    weight_sum = 0.0
+    
+    for j = 0 to actual_window_size - 1
+        // Triangular weight calculation
+        distance_from_center = math.abs(j - half_window)
+        weight = half_window + 1 - distance_from_center
+        array.set(weights, j, weight)
+        weight_sum := weight_sum + weight
+    
+    // Normalize weights
+    for j = 0 to actual_window_size - 1
+        normalized_weight = array.get(weights, j) / weight_sum
+        array.set(weights, j, normalized_weight)
+    
+    // Apply convolution
+    for i = 0 to N - 1
+        smoothed_value = 0.0
+        
+        for j = 0 to actual_window_size - 1
+            array_index = i + j - half_window
+            weight = array.get(weights, j)
+            
+            // Handle boundary conditions - clip to array bounds
+            if array_index < 0
+                // Use first element for indices below 0
+                smoothed_value := smoothed_value + array.get(input_array, 0) * weight
+            else if array_index >= N
+                // Use last element for indices beyond array size
+                smoothed_value := smoothed_value + array.get(input_array, N - 1) * weight
+            else
+                // Normal case - use actual array value
+                smoothed_value := smoothed_value + array.get(input_array, array_index) * weight
+        
+        array.set(smoothed_array, i, smoothed_value)
+    
+    smoothed_array
+
+if barstate.islast
+
+
+
+    var float[] volume_baskets = array.new_float(N, 0)
+    var box[] histogram_boxes = array.new_box(N)
+    var line[] minima_lines = array.new_line(N)
+
+    // Calculate the basket index for the current bar
+    
+    //basket_index := math.max(0, math.min(basket_index, N - 1))  // Ensure index is within [0, N-1]
+
+    // Accumulate volume in the appropriate basket
+    for i=0 to bars_back
+        avg_price = (high[i] + low[i]) / 2
+        basket_index = int(math.floor((avg_price - min_price) / (max_price - min_price) * (N - 1)))    
+        if basket_index < array.size (volume_baskets)    
+            array.set(volume_baskets, basket_index, array.get(volume_baskets, basket_index) + volume[i]*(bars_back-i))
+
+    var line min_price_line = na
+    var line max_price_line = na
+
+
+    // Smooth the histogram with a moving average
+    smoothed_baskets = smooth_triangular(volume_baskets,W)
+
+    //smoothed_baskets := volume_baskets
+
+    // Remove existing histogram boxes
+    for i = 0 to array.size(histogram_boxes) - 1
+        b = array.get(histogram_boxes, i)
+        box.delete(b)
+    array.clear(histogram_boxes)
+
+    // Remove existing minima lines
+    for i = 0 to array.size(minima_lines) - 1
+        l = array.get(minima_lines, i)
+        line.delete(l)
+    array.clear(minima_lines)
+    
+    // Find the maximum volume for normalization
+    max_volume = 0.0
+    for i = 0 to N - 1
+        //vol = array.get(volume_baskets, i)
+        vol = array.get(smoothed_baskets, i)
+        max_volume := math.max(max_volume, vol)
+
+    // Normalize and draw the histogram
+    for i = 0 to N - 1
+        //vol = array.get(volume_baskets, i)
+        vol = array.get(smoothed_baskets, i)
+        vol_norm = vol / max_volume  // Normalize between 0 and 1
+
+        // Calculate price levels for the basket boundaries
+        basket_price_low = min_price + i * (max_price - min_price) / N
+        basket_price_high = min_price + (i + 1) * (max_price - min_price) / N
+
+        // Define x coordinates for the histogram bar
+        x_right = bar_index + 1 + 50  // Right side of the chart
+        histogram_width = int(vol_norm * 50)  // Adjust '10' to change histogram width
+        histogram_width := math.max(histogram_width, 1)  // Ensure minimum width
+
+        x_left = x_right - histogram_width
+
+        // Create the histogram bar as a box
+        top_left = chart.point.from_index(x_right, basket_price_high)
+        bottom_right = chart.point.from_index(x_left, basket_price_low)
+
+        if (show_vol_profile)    
+            b = box.new(top_left, bottom_right, xloc=xloc.bar_index, bgcolor=boxes_color, border_width = 0)
+            array.push(histogram_boxes, b)
+
+    // Find local minima and calculate cluster-based line widths
+    var int[] minima_indices = array.new_int()
+    var float[] minima_volumes = array.new_float()
+    
+    // Clear previous minima data
+    array.clear(minima_indices)
+    array.clear(minima_volumes)
+    
+    // First pass: find all minima positions and volumes
+    for i = M to N - M - 1
+        vol_curr = array.get(smoothed_baskets, i)
+        is_min = true
+        // Check volumes in the vicinity of M baskets before and after
+        for j = i - M to i + M
+            if j != i
+                vol_neighbor = array.get(smoothed_baskets, j)
+                if vol_neighbor <= vol_curr
+                    is_min := false
+                    break  // No need to check further
+        if is_min
+            // Local minimum found - store index and volume
+            array.push(minima_indices, i)
+            array.push(minima_volumes, vol_curr)
+    
+    // Second pass: calculate cluster averages and draw lines with proportional widths
+    num_minima = array.size(minima_indices)
+    
+    if num_minima > 0
+        for k = 0 to num_minima - 1
+            minima_index = array.get(minima_indices, k)
+            minima_volume = array.get(minima_volumes, k)
+            
+            // Calculate average volume from both clusters separated by this line
+            left_cluster_sum = 0.0
+            left_cluster_size = 0
+            right_cluster_sum = 0.0
+            right_cluster_size = 0
+            
+            // Left cluster: from previous minima (or start) to current minima
+            left_start = 0
+            if k > 0
+                left_start := array.get(minima_indices, k - 1) + 1
+            
+            for j = left_start to minima_index - 1
+                left_cluster_sum := left_cluster_sum + array.get(smoothed_baskets, j)
+                left_cluster_size := left_cluster_size + 1
+            
+            // Right cluster: from current minima to next minima (or end)
+            right_end = N - 1
+            if k < num_minima - 1
+                right_end := array.get(minima_indices, k + 1) - 1
+            
+            for j = minima_index + 1 to right_end
+                right_cluster_sum := right_cluster_sum + array.get(smoothed_baskets, j)
+                right_cluster_size := right_cluster_size + 1
+            
+            // Calculate combined average of both clusters
+            total_cluster_sum = left_cluster_sum + right_cluster_sum
+            total_cluster_size = left_cluster_size + right_cluster_size
+            
+            // Avoid division by zero
+            clusters_average = total_cluster_size > 0 ? total_cluster_sum / total_cluster_size : minima_volume
+            
+            // Calculate line width based on ratio of minima to clusters average
+            volume_ratio = clusters_average > 0 ? clusters_average / minima_volume : 1.0
+            line_width = math.max(1, volume_ratio * width_multiplier)
+            line_width_int = int(math.min(line_width, max_width))  // Cap maximum width to 10
+            
+            // Calculate price level and draw line
+            basket_price = min_price + (minima_index + 0.5) * (max_price - min_price) / N
+            hline = line.new(x1=bar_index, y1=basket_price, x2=bar_index + 1, y2=basket_price, xloc=xloc.bar_index, extend=extend.both, color=lines_color, width=line_width_int, style=line.style_solid)
+            array.push(minima_lines, hline)
+
+    // --- Draw min_price and max_price horizontal lines ---
+
+    // Delete existing lines if they exist
+    if not na(min_price_line)
+        line.delete(min_price_line)
+    if not na(max_price_line)
+        line.delete(max_price_line)
+
+    // Create new lines at min_price and max_price
+    min_price_line := line.new(x1=bar_index, y1=min_price,x2=bar_index + 1, y2=min_price,xloc=xloc.bar_index, extend=extend.both,color=lines_color, width=1, style=line.style_dashed)
+
+    max_price_line := line.new(x1=bar_index, y1=max_price,x2=bar_index + 1, y2=max_price,xloc=xloc.bar_index, extend=extend.both,color=lines_color, width=1, style=line.style_dashed)

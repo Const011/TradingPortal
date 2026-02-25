@@ -88,32 +88,49 @@ class BybitClient:
     async def get_klines(
         self, symbol: str, interval: str = "1", limit: int = 300
     ) -> list[Candle]:
-        """[Bybit] REST GET /v5/market/kline. Returns historical OHLCV candles for chart."""
-        url = f"{settings.bybit_rest_base_url}/v5/market/kline"
-        params = {
-            "category": "spot",
-            "symbol": symbol,
-            "interval": interval,
-            "limit": limit,
-        }
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            response = await client.get(url, params=params)
-            response.raise_for_status()
-        payload = response.json()
-        raw_klines = payload.get("result", {}).get("list", [])
-        candles: list[Candle] = []
-        for kline in reversed(raw_klines):
-            candles.append(
-                Candle(
-                    time=int(kline[0]),
-                    open=float(kline[1]),
-                    high=float(kline[2]),
-                    low=float(kline[3]),
-                    close=float(kline[4]),
-                    volume=float(kline[5]),
+        """[Bybit] REST GET /v5/market/kline. Returns historical OHLCV candles for chart.
+        Bybit max per request is 1000; for limit>1000 we fetch in batches and merge."""
+        BYBIT_MAX = 1000
+        all_candles: list[Candle] = []
+        remaining = limit
+        end_time: int | None = None
+
+        while remaining > 0:
+            batch_limit = min(remaining, BYBIT_MAX)
+            url = f"{settings.bybit_rest_base_url}/v5/market/kline"
+            params: dict = {
+                "category": "spot",
+                "symbol": symbol,
+                "interval": interval,
+                "limit": batch_limit,
+            }
+            if end_time is not None:
+                params["end"] = end_time
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                response = await client.get(url, params=params)
+                response.raise_for_status()
+            payload = response.json()
+            raw_klines = payload.get("result", {}).get("list", [])
+            if not raw_klines:
+                break
+            batch: list[Candle] = []
+            for kline in reversed(raw_klines):
+                batch.append(
+                    Candle(
+                        time=int(kline[0]),
+                        open=float(kline[1]),
+                        high=float(kline[2]),
+                        low=float(kline[3]),
+                        close=float(kline[4]),
+                        volume=float(kline[5]),
+                    )
                 )
-            )
-        return candles
+            all_candles = batch + all_candles
+            remaining -= len(batch)
+            if len(batch) < batch_limit:
+                break
+            end_time = batch[0].time - 1
+        return all_candles
     async def stream_kline(
         self, symbol: str, interval: str
     ) -> AsyncGenerator[BarUpdate, None]:

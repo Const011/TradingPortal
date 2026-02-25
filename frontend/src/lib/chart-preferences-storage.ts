@@ -15,6 +15,7 @@ export type StoredChartPreferences = {
   chartInterval: ChartIntervalValue;
   autoScale: boolean;
   logScale: boolean;
+  volumeProfileEnabled: boolean;
 };
 
 const DEFAULTS: StoredChartPreferences = {
@@ -22,6 +23,7 @@ const DEFAULTS: StoredChartPreferences = {
   chartInterval: DEFAULT_CHART_INTERVAL,
   autoScale: true,
   logScale: false,
+  volumeProfileEnabled: false,
 };
 
 function parseStored(raw: string | null): Partial<StoredChartPreferences> {
@@ -44,6 +46,9 @@ function parseStored(raw: string | null): Partial<StoredChartPreferences> {
     if (typeof parsed.logScale === "boolean") {
       out.logScale = parsed.logScale;
     }
+    if (typeof parsed.volumeProfileEnabled === "boolean") {
+      out.volumeProfileEnabled = parsed.volumeProfileEnabled;
+    }
     return out;
   } catch {
     return {};
@@ -63,6 +68,10 @@ export function getStoredChartPreferences(): StoredChartPreferences {
       partial.chartInterval !== undefined ? partial.chartInterval : DEFAULTS.chartInterval,
     autoScale: partial.autoScale !== undefined ? partial.autoScale : DEFAULTS.autoScale,
     logScale: partial.logScale !== undefined ? partial.logScale : DEFAULTS.logScale,
+    volumeProfileEnabled:
+      partial.volumeProfileEnabled !== undefined
+        ? partial.volumeProfileEnabled
+        : DEFAULTS.volumeProfileEnabled,
   };
 }
 
@@ -76,6 +85,8 @@ export function setStoredChartPreferences(
     chartInterval: prefs.chartInterval ?? current.chartInterval,
     autoScale: prefs.autoScale ?? current.autoScale,
     logScale: prefs.logScale ?? current.logScale,
+    volumeProfileEnabled:
+      prefs.volumeProfileEnabled ?? current.volumeProfileEnabled,
   };
   window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
 }
