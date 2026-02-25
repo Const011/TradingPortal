@@ -14,7 +14,10 @@ import {
   type HistogramData,
 } from "lightweight-charts";
 
-import { CHART_INTERVAL_OPTIONS } from "@/lib/constants/chart-intervals";
+import {
+  CHART_INTERVAL_OPTIONS,
+  chartIntervalSeconds,
+} from "@/lib/constants/chart-intervals";
 import { useMarketData } from "@/contexts/market-data-context";
 
 function toChartTime(milliseconds: number): Time {
@@ -42,7 +45,6 @@ export function PriceChart() {
   const {
     candles,
     latestTick,
-    liveBarUpdate,
     selectedSymbol,
     chartInterval,
     setChartInterval,
@@ -56,6 +58,7 @@ export function PriceChart() {
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const volumeSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
+  const lastFittedKeyRef = useRef<string | null>(null);
 
   const chartData = useMemo<CandlestickData<Time>[]>(() => {
     return candles.map((item) => ({
@@ -169,8 +172,15 @@ export function PriceChart() {
     if (volumeSeriesRef.current) {
       volumeSeriesRef.current.setData(volumeData);
     }
-    chartRef.current?.timeScale().fitContent();
-  }, [chartData, volumeData, selectedSymbol]);
+    const symbolIntervalKey = `${selectedSymbol}:${chartInterval}`;
+    if (
+      chartData.length > 0 &&
+      lastFittedKeyRef.current !== symbolIntervalKey
+    ) {
+      chartRef.current?.timeScale().fitContent();
+      lastFittedKeyRef.current = symbolIntervalKey;
+    }
+  }, [chartData, volumeData, selectedSymbol, chartInterval]);
 
   useEffect(() => {
     if (!seriesRef.current || !latestTick) {
@@ -178,29 +188,23 @@ export function PriceChart() {
     }
 
     const latestBar = chartData.length > 0 ? chartData[chartData.length - 1] : null;
+    const barTimeSec =
+      typeof latestBar?.time === "number" ? latestBar.time : null;
+    const intervalSec = chartIntervalSeconds(chartInterval);
+    const tickTimeSec = latestTick.ts / 1000;
+    if (
+      barTimeSec != null &&
+      (tickTimeSec < barTimeSec || tickTimeSec >= barTimeSec + intervalSec)
+    ) {
+      return;
+    }
     const time = latestBar ? latestBar.time : toChartTime(latestTick.ts);
     const close = latestTick.price;
     const open = latestBar ? latestBar.open : close;
     const high = latestBar ? Math.max(latestBar.high, close) : close;
     const low = latestBar ? Math.min(latestBar.low, close) : close;
     seriesRef.current.update({ time, open, high, low, close });
-  }, [latestTick, chartData]);
-
-  useEffect(() => {
-    if (!volumeSeriesRef.current || !liveBarUpdate || candles.length === 0) {
-      return;
-    }
-    const lastCandle = candles[candles.length - 1];
-    if (liveBarUpdate.start !== lastCandle.time) {
-      return;
-    }
-    const color = liveBarUpdate.close >= liveBarUpdate.open ? "#2ecc71" : "#e74c3c";
-    volumeSeriesRef.current.update({
-      time: toChartTime(liveBarUpdate.start),
-      value: liveBarUpdate.volume,
-      color,
-    });
-  }, [liveBarUpdate, candles]);
+  }, [latestTick, chartData, chartInterval]);
 
   return (
     <div

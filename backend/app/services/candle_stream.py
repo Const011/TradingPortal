@@ -1,0 +1,147 @@
+import asyncio
+from collections import defaultdict
+from dataclasses import dataclass, field
+
+from app.schemas.market import Candle
+from app.services.bybit_client import BybitClient
+
+
+def _candle_from_bar(start: int, open_: float, high: float, low: float, close: float, volume: float) -> Candle:
+    return Candle(time=start, open=open_, high=high, low=low, close=close, volume=volume)
+
+
+@dataclass
+class CandleStreamState:
+    queues: set[asyncio.Queue[dict]] = field(default_factory=set)
+    candles: list[Candle] = field(default_factory=list)
+    task: asyncio.Task[None] | None = None
+
+
+class CandleStreamHub:
+    def __init__(self, bybit_client: BybitClient, snapshot_limit: int = 300) -> None:
+        self._bybit_client = bybit_client
+        self._snapshot_limit = snapshot_limit
+        self._streams: dict[tuple[str, str], CandleStreamState] = defaultdict(CandleStreamState)
+        self._lock = asyncio.Lock()
+
+    async def subscribe(self, symbol: str, interval: str) -> asyncio.Queue[dict]:
+        queue: asyncio.Queue[dict] = asyncio.Queue(maxsize=200)
+        stream_key = (symbol, interval)
+        snapshot_payload: dict | None = None
+        async with self._lock:
+            state = self._streams[stream_key]
+            state.queues.add(queue)
+            if state.candles:
+                snapshot_payload = {
+                    "event": "snapshot",
+                    "candles": [candle.model_dump() for candle in state.candles],
+                }
+            if state.task is None or state.task.done():
+                state.task = asyncio.create_task(self._run_stream(symbol, interval))
+        if snapshot_payload is not None:
+            await queue.put(snapshot_payload)
+        return queue
+
+    async def unsubscribe(self, symbol: str, interval: str, queue: asyncio.Queue[dict]) -> None:
+        stream_key = (symbol, interval)
+        async with self._lock:
+            state = self._streams.get(stream_key)
+            if state is None:
+                return
+            state.queues.discard(queue)
+            if state.queues:
+                return
+            if state.task:
+                state.task.cancel()
+            self._streams.pop(stream_key, None)
+
+    async def _run_stream(self, symbol: str, interval: str) -> None:
+        stream_key = (symbol, interval)
+        while True:
+            try:
+                candles = await self._bybit_client.get_klines(
+                    symbol=symbol,
+                    interval=interval,
+                    limit=self._snapshot_limit,
+                )
+                async with self._lock:
+                    state = self._streams.get(stream_key)
+                    if state is None:
+                        return
+                    state.candles = candles
+                await self._broadcast(stream_key, {"event": "snapshot", "candles": [c.model_dump() for c in candles]})
+
+                async for bar in self._bybit_client.stream_kline(symbol, interval):
+                    candidate = _candle_from_bar(
+                        start=bar.start,
+                        open_=bar.open,
+                        high=bar.high,
+                        low=bar.low,
+                        close=bar.close,
+                        volume=bar.volume,
+                    )
+
+                    do_resync = False
+                    event_payload: dict | None = None
+                    async with self._lock:
+                        state = self._streams.get(stream_key)
+                        if state is None:
+                            return
+                        if not state.candles:
+                            state.candles = [candidate]
+                            event_payload = {"event": "upsert", "candle": candidate.model_dump()}
+                        else:
+                            last = state.candles[-1]
+                            if candidate.time > last.time:
+                                state.candles.append(candidate)
+                                if len(state.candles) > self._snapshot_limit:
+                                    state.candles = state.candles[-self._snapshot_limit :]
+                                event_payload = {"event": "upsert", "candle": candidate.model_dump()}
+                                do_resync = True
+                            elif candidate.time == last.time:
+                                state.candles[-1] = candidate
+                                event_payload = {"event": "upsert", "candle": candidate.model_dump()}
+                            else:
+                                for idx, candle in enumerate(state.candles):
+                                    if candle.time == candidate.time:
+                                        state.candles[idx] = candidate
+                                        event_payload = {"event": "upsert", "candle": candidate.model_dump()}
+                                        break
+
+                    if event_payload is not None:
+                        await self._broadcast(stream_key, event_payload)
+
+                    if do_resync:
+                        await self._resync_and_broadcast(stream_key, symbol, interval)
+            except asyncio.CancelledError:
+                break
+            except Exception:
+                # Retry on transient upstream/network issues.
+                await asyncio.sleep(2)
+
+    async def _resync_and_broadcast(self, stream_key: tuple[str, str], symbol: str, interval: str) -> None:
+        candles = await self._bybit_client.get_klines(
+            symbol=symbol,
+            interval=interval,
+            limit=self._snapshot_limit,
+        )
+        async with self._lock:
+            state = self._streams.get(stream_key)
+            if state is None:
+                return
+            state.candles = candles
+        await self._broadcast(stream_key, {"event": "snapshot", "candles": [c.model_dump() for c in candles]})
+
+    async def _broadcast(self, stream_key: tuple[str, str], payload: dict) -> None:
+        async with self._lock:
+            state = self._streams.get(stream_key)
+            if state is None:
+                return
+            queues = list(state.queues)
+        for queue in queues:
+            if queue.full():
+                try:
+                    queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    pass
+            await queue.put(payload)

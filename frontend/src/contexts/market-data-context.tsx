@@ -19,14 +19,12 @@ import {
   setStoredChartPreferences,
 } from "@/lib/chart-preferences-storage";
 import {
-  fetchCandles,
   fetchSymbols,
   fetchTickers,
-  getBarUpdatesWebSocketUrl,
+  getCandlesWebSocketUrl,
   getTicksWebSocketUrl,
 } from "@/lib/api/market";
 import {
-  type BarUpdate,
   Candle,
   type CurrentBar,
   SymbolInfo,
@@ -45,8 +43,6 @@ type MarketDataContextValue = {
   logScaleEnabled: boolean;
   setLogScaleEnabled: (enabled: boolean) => void;
   candles: Candle[];
-  /** Real-time kline update for current bar (accumulated volume); null when not available. */
-  liveBarUpdate: BarUpdate | null;
   currentBar: CurrentBar | null;
   hoveredBarTime: number | null;
   setHoveredBarTime: (time: number | null) => void;
@@ -74,10 +70,9 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [hoveredBarTime, setHoveredBarTime] = useState<number | null>(null);
-  const [liveBarUpdate, setLiveBarUpdate] = useState<BarUpdate | null>(null);
 
   const socketRef = useRef<WebSocket | null>(null);
-  const barSocketRef = useRef<WebSocket | null>(null);
+  const candleSocketRef = useRef<WebSocket | null>(null);
 
   useEffect(() => {
     const prefs = getStoredChartPreferences();
@@ -131,26 +126,56 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
     if (!selectedSymbol) {
       return;
     }
-
-    let mounted = true;
-    async function loadCandles(): Promise<void> {
-      try {
-        setError(null);
-        const fetchedCandles = await fetchCandles(selectedSymbol, chartInterval);
-        if (mounted) {
-          setCandles(fetchedCandles);
-        }
-      } catch (fetchError) {
-        if (mounted) {
-          const message = fetchError instanceof Error ? fetchError.message : "Unknown error";
-          setError(message);
-        }
-      }
+    if (candleSocketRef.current) {
+      candleSocketRef.current.close();
+      candleSocketRef.current = null;
     }
+    setCandles([]);
+    const ws = new WebSocket(getCandlesWebSocketUrl(selectedSymbol, chartInterval));
+    candleSocketRef.current = ws;
 
-    void loadCandles();
+    ws.onmessage = (event: MessageEvent<string>) => {
+      try {
+        const payload = JSON.parse(event.data) as
+          | { event: "snapshot"; candles: Candle[] }
+          | { event: "upsert"; candle: Candle }
+          | { event: "heartbeat" };
+        if (payload.event === "heartbeat") {
+          return;
+        }
+        if (payload.event === "snapshot") {
+          setCandles(payload.candles);
+          return;
+        }
+        setCandles((current) => {
+          if (current.length === 0) {
+            return [payload.candle];
+          }
+          const last = current[current.length - 1];
+          if (payload.candle.time > last.time) {
+            return [...current, payload.candle];
+          }
+          if (payload.candle.time === last.time) {
+            return [...current.slice(0, -1), payload.candle];
+          }
+          const idx = current.findIndex((c) => c.time === payload.candle.time);
+          if (idx < 0) {
+            return current;
+          }
+          const next = [...current];
+          next[idx] = payload.candle;
+          return next;
+        });
+      } catch {
+        // ignore malformed payloads
+      }
+    };
+    ws.onerror = () => {
+      setError("Candles stream disconnected");
+    };
     return () => {
-      mounted = false;
+      ws.close();
+      candleSocketRef.current = null;
     };
   }, [selectedSymbol, chartInterval]);
 
@@ -231,33 +256,6 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
     };
   }, [selectedSymbol]);
 
-  useEffect(() => {
-    if (!selectedSymbol) {
-      return;
-    }
-    if (barSocketRef.current) {
-      barSocketRef.current.close();
-      barSocketRef.current = null;
-    }
-    setLiveBarUpdate(null);
-    const barWs = new WebSocket(
-      getBarUpdatesWebSocketUrl(selectedSymbol, chartInterval)
-    );
-    barSocketRef.current = barWs;
-    barWs.onmessage = (event: MessageEvent<string>) => {
-      try {
-        const payload = JSON.parse(event.data) as BarUpdate;
-        setLiveBarUpdate(payload);
-      } catch {
-        // ignore
-      }
-    };
-    return () => {
-      barWs.close();
-      barSocketRef.current = null;
-    };
-  }, [selectedSymbol, chartInterval]);
-
   const currentBar = useMemo<CurrentBar | null>(() => {
     if (candles.length === 0) {
       return null;
@@ -275,23 +273,6 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
       }
     }
     const last = candles[candles.length - 1];
-    const lastStartMs = last.time >= 1e12 ? last.time : last.time * 1000;
-    const liveStartMs = liveBarUpdate
-      ? liveBarUpdate.start >= 1e12
-        ? liveBarUpdate.start
-        : liveBarUpdate.start * 1000
-      : 0;
-    const isSameBar = liveBarUpdate != null && liveStartMs === lastStartMs;
-
-    if (isSameBar) {
-      return {
-        open: liveBarUpdate.open,
-        high: liveBarUpdate.high,
-        low: liveBarUpdate.low,
-        close: liveBarUpdate.close,
-        volume: liveBarUpdate.volume,
-      };
-    }
     const close = latestTick ? latestTick.price : last.close;
     const high = latestTick ? Math.max(last.high, latestTick.price) : last.high;
     const low = latestTick ? Math.min(last.low, latestTick.price) : last.low;
@@ -302,7 +283,7 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
       close,
       volume: last.volume,
     };
-  }, [candles, latestTick, hoveredBarTime, liveBarUpdate]);
+  }, [candles, latestTick, hoveredBarTime]);
 
   const value = useMemo<MarketDataContextValue>(
     () => ({
@@ -316,7 +297,6 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
       logScaleEnabled,
       setLogScaleEnabled,
       candles,
-      liveBarUpdate,
       currentBar,
       hoveredBarTime,
       setHoveredBarTime,
@@ -332,7 +312,6 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
       autoScaleEnabled,
       logScaleEnabled,
       candles,
-      liveBarUpdate,
       currentBar,
       hoveredBarTime,
       tickers,

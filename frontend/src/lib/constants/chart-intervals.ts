@@ -29,3 +29,27 @@ export const CHART_INTERVAL_OPTIONS: ChartIntervalOption[] = [
 ];
 
 export const DEFAULT_CHART_INTERVAL: ChartIntervalValue = "1";
+
+/** Interval duration in seconds for bar boundary checks. */
+export function chartIntervalSeconds(interval: ChartIntervalValue): number {
+  switch (interval) {
+    case "1":
+      return 60;
+    case "5":
+      return 5 * 60;
+    case "15":
+      return 15 * 60;
+    case "60":
+      return 60 * 60;
+    case "240":
+      return 240 * 60;
+    case "D":
+      return 86400;
+    case "W":
+      return 7 * 86400;
+    case "M":
+      return 30 * 86400;
+    default:
+      return 60;
+  }
+}
