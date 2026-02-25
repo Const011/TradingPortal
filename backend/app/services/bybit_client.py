@@ -111,9 +111,10 @@ class BybitClient:
     async def stream_kline(
         self, symbol: str, interval: str
     ) -> AsyncGenerator[BarUpdate, None]:
-        """Stream real-time kline updates for the current bar (volume accumulates until confirm=true)."""
+        """Stream real-time kline updates for the current bar (volume accumulates until confirm=true).
+        Uses linear stream; spot may not expose kline topic (same symbols e.g. BTCUSDT work on linear)."""
         topic = f"kline.{interval}.{symbol}"
-        async with websockets.connect(settings.bybit_ws_public_spot_url) as connection:
+        async with websockets.connect(settings.bybit_ws_public_linear_url) as connection:
             subscribe_message = json.dumps({"op": "subscribe", "args": [topic]})
             await connection.send(subscribe_message)
 

@@ -275,10 +275,15 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
       }
     }
     const last = candles[candles.length - 1];
-    if (
-      liveBarUpdate &&
-      liveBarUpdate.start === last.time
-    ) {
+    const lastStartMs = last.time >= 1e12 ? last.time : last.time * 1000;
+    const liveStartMs = liveBarUpdate
+      ? liveBarUpdate.start >= 1e12
+        ? liveBarUpdate.start
+        : liveBarUpdate.start * 1000
+      : 0;
+    const isSameBar = liveBarUpdate != null && liveStartMs === lastStartMs;
+
+    if (isSameBar) {
       return {
         open: liveBarUpdate.open,
         high: liveBarUpdate.high,

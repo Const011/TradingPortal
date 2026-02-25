@@ -1,10 +1,14 @@
 import asyncio
+import logging
 
+import httpx
 from fastapi import APIRouter, Depends, Query, WebSocket, WebSocketDisconnect, HTTPException
 
 from app.schemas.market import BarUpdate, Candle, SymbolInfo, TickerSnapshot
 from app.services.bybit_client import BybitClient
 from app.services.market_stream import MarketStreamHub
+
+logger = logging.getLogger(__name__)
 
 # Bybit spot kline intervals: 1,3,5,15,30,60,120,240,360,720 (minutes), D, W, M
 CANDLE_INTERVALS = frozenset({"1", "3", "5", "15", "30", "60", "120", "240", "360", "720", "D", "W", "M"})
@@ -40,8 +44,15 @@ def _interval_sort_key(s: str) -> tuple[int, int]:
 
 @router.get("/symbols", response_model=list[SymbolInfo])
 async def list_symbols(bybit_client: BybitClient = Depends(get_bybit_client)) -> list[SymbolInfo]:
-    symbols = await bybit_client.list_spot_symbols()
-    return [item for item in symbols if item.status == "Trading"]
+    try:
+        symbols = await bybit_client.list_spot_symbols()
+        return [item for item in symbols if item.status == "Trading"]
+    except (httpx.ConnectError, httpx.TimeoutException) as e:
+        logger.warning("Bybit API unreachable: %s", e)
+        raise HTTPException(
+            status_code=503,
+            detail="Market data temporarily unavailable. Check network or try again later.",
+        ) from e
 
 
 @router.get("/candles", response_model=list[Candle])
@@ -56,7 +67,14 @@ async def list_candles(
             status_code=400,
             detail=f"Invalid interval. Allowed: {sorted(CANDLE_INTERVALS)}",
         )
-    return await bybit_client.get_klines(symbol=symbol.upper(), interval=interval, limit=limit)
+    try:
+        return await bybit_client.get_klines(symbol=symbol.upper(), interval=interval, limit=limit)
+    except (httpx.ConnectError, httpx.TimeoutException) as e:
+        logger.warning("Bybit API unreachable: %s", e)
+        raise HTTPException(
+            status_code=503,
+            detail="Market data temporarily unavailable. Check network or try again later.",
+        ) from e
 
 
 @router.get("/tickers", response_model=list[TickerSnapshot])
@@ -65,7 +83,14 @@ async def list_tickers(
     bybit_client: BybitClient = Depends(get_bybit_client),
 ) -> list[TickerSnapshot]:
     requested_symbols = [item.strip().upper() for item in symbols.split(",")] if symbols else None
-    return await bybit_client.get_tickers(symbols=requested_symbols)
+    try:
+        return await bybit_client.get_tickers(symbols=requested_symbols)
+    except (httpx.ConnectError, httpx.TimeoutException) as e:
+        logger.warning("Bybit API unreachable: %s", e)
+        raise HTTPException(
+            status_code=503,
+            detail="Market data temporarily unavailable. Check network or try again later.",
+        ) from e
 
 
 @router.websocket("/stream/bar-updates/{symbol}")
