@@ -1,14 +1,17 @@
 "use client";
 
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   CandlestickData,
   CandlestickSeries,
   ColorType,
+  HistogramSeries,
   createChart,
   IChartApi,
   ISeriesApi,
   Time,
+  PriceScaleMode,
+  type HistogramData,
 } from "lightweight-charts";
 
 import { CHART_INTERVAL_OPTIONS } from "@/lib/constants/chart-intervals";
@@ -21,7 +24,9 @@ function toChartTime(milliseconds: number): Time {
 const intervalButtonStyle = {
   padding: "8px 16px",
   fontSize: 14,
-  border: "1px solid #2a3b54",
+  borderWidth: 1,
+  borderStyle: "solid",
+  borderColor: "#2a3b54",
   borderRadius: 6,
   cursor: "pointer" as const,
   background: "#111a2b",
@@ -38,6 +43,9 @@ export function PriceChart() {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
+  const volumeSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
+  const [autoScaleEnabled, setAutoScaleEnabled] = useState<boolean>(true);
+  const [logScaleEnabled, setLogScaleEnabled] = useState<boolean>(false);
 
   const chartData = useMemo<CandlestickData<Time>[]>(() => {
     return candles.map((item) => ({
@@ -47,6 +55,18 @@ export function PriceChart() {
       low: item.low,
       close: item.close,
     }));
+  }, [candles]);
+
+  const volumeData = useMemo<HistogramData<Time>[]>(() => {
+    return candles.map((item, index, all) => {
+      const previousClose = index > 0 ? all[index - 1].close : item.open;
+      const isUp = item.close >= previousClose;
+      return {
+        time: toChartTime(item.time),
+        value: item.volume,
+        color: isUp ? "#2ecc71" : "#e74c3c",
+      };
+    });
   }, [candles]);
 
   useEffect(() => {
@@ -82,8 +102,21 @@ export function PriceChart() {
       wickDownColor: "#e74c3c",
     });
 
+    const volumeSeries = chart.addSeries(HistogramSeries, {
+      priceFormat: { type: "volume" },
+      priceScaleId: "",
+    });
+
+    volumeSeries.priceScale().applyOptions({
+      scaleMargins: {
+        top: 0.7,
+        bottom: 0,
+      },
+    });
+
     chartRef.current = chart;
     seriesRef.current = candlestickSeries;
+    volumeSeriesRef.current = volumeSeries;
 
     const observer = new ResizeObserver(() => {
       if (!containerRef.current || !chartRef.current) {
@@ -105,9 +138,22 @@ export function PriceChart() {
     if (!seriesRef.current) {
       return;
     }
-    seriesRef.current.setData(chartData);
+    const mode = logScaleEnabled ? PriceScaleMode.Logarithmic : PriceScaleMode.Normal;
+    seriesRef.current.priceScale().applyOptions({
+      autoScale: autoScaleEnabled,
+      mode,
+    });
+  }, [autoScaleEnabled, logScaleEnabled]);
+
+  useEffect(() => {
+    if (seriesRef.current) {
+      seriesRef.current.setData(chartData);
+    }
+    if (volumeSeriesRef.current) {
+      volumeSeriesRef.current.setData(volumeData);
+    }
     chartRef.current?.timeScale().fitContent();
-  }, [chartData, selectedSymbol]);
+  }, [chartData, volumeData, selectedSymbol]);
 
   useEffect(() => {
     if (!seriesRef.current || !latestTick) {
@@ -128,37 +174,43 @@ export function PriceChart() {
       <div
         style={{
           display: "flex",
-          flexWrap: "wrap",
           gap: 8,
           marginBottom: 12,
           alignItems: "center",
+          flexWrap: "wrap",
         }}
       >
-        {CHART_INTERVAL_OPTIONS.map((option) => {
-          const isActive = chartInterval === option.value;
-          return (
-            <button
-              key={option.value}
-              type="button"
-              onClick={() => setChartInterval(option.value)}
-              style={isActive ? intervalButtonActiveStyle : intervalButtonStyle}
-              onMouseOver={(e) => {
-                if (!isActive) {
-                  e.currentTarget.style.background = "#1a2538";
-                  e.currentTarget.style.borderColor = "#3b82f6";
-                }
-              }}
-              onMouseOut={(e) => {
-                if (!isActive) {
-                  e.currentTarget.style.background = "#111a2b";
-                  e.currentTarget.style.borderColor = "#2a3b54";
-                }
-              }}
-            >
-              {option.label}
-            </button>
-          );
-        })}
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+          {CHART_INTERVAL_OPTIONS.map((option) => {
+            const isActive = chartInterval === option.value;
+            return (
+              <button
+                key={option.value}
+                type="button"
+                onClick={() => setChartInterval(option.value)}
+                style={isActive ? intervalButtonActiveStyle : intervalButtonStyle}
+              >
+                {option.label}
+              </button>
+            );
+          })}
+        </div>
+        <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+          <button
+            type="button"
+            onClick={() => setAutoScaleEnabled((current) => !current)}
+            style={autoScaleEnabled ? intervalButtonActiveStyle : intervalButtonStyle}
+          >
+            Auto
+          </button>
+          <button
+            type="button"
+            onClick={() => setLogScaleEnabled((current) => !current)}
+            style={logScaleEnabled ? intervalButtonActiveStyle : intervalButtonStyle}
+          >
+            Log
+          </button>
+        </div>
       </div>
       <div ref={containerRef} style={{ width: "100%" }} />
     </div>
