@@ -1,0 +1,6 @@
+# Backend-specific (root .gitignore also applies __pycache__/, .venv/, .env)
+.venv/
+.env
+.next/
+__pycache__/
+node_modules/
