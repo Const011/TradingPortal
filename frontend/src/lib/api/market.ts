@@ -13,11 +13,15 @@ export async function fetchSymbols(): Promise<SymbolInfo[]> {
 }
 
 /** [Backend] GET /candles. Fetches historical klines; used for initial chart load or standalone fetch. */
-export async function fetchCandles(symbol: string, interval: string): Promise<Candle[]> {
+export async function fetchCandles(
+  symbol: string,
+  interval: string,
+  limit: number = 2000
+): Promise<Candle[]> {
   const searchParams = new URLSearchParams({
     symbol,
     interval,
-    limit: "1500",
+    limit: String(Math.min(2000, Math.max(50, limit))),
   });
   const response = await fetch(`${backendBaseUrl}/api/v1/candles?${searchParams.toString()}`);
   if (!response.ok) {

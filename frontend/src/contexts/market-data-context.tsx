@@ -17,6 +17,7 @@ import {
 import {
   getStoredChartPreferences,
   setStoredChartPreferences,
+  VOLUME_PROFILE_WINDOW_DEFAULT,
 } from "@/lib/chart-preferences-storage";
 import {
   fetchSymbols,
@@ -44,6 +45,8 @@ type MarketDataContextValue = {
   setLogScaleEnabled: (enabled: boolean) => void;
   volumeProfileEnabled: boolean;
   setVolumeProfileEnabled: (enabled: boolean) => void;
+  volumeProfileWindow: number;
+  setVolumeProfileWindow: (window: number) => void;
   candles: Candle[];
   currentBar: CurrentBar | null;
   hoveredBarTime: number | null;
@@ -67,6 +70,7 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
   const [autoScaleEnabled, setAutoScaleEnabled] = useState<boolean>(true);
   const [logScaleEnabled, setLogScaleEnabled] = useState<boolean>(false);
   const [volumeProfileEnabled, setVolumeProfileEnabled] = useState<boolean>(false);
+  const [volumeProfileWindow, setVolumeProfileWindow] = useState<number>(VOLUME_PROFILE_WINDOW_DEFAULT);
   const [candles, setCandles] = useState<Candle[]>([]);
   const [tickers, setTickers] = useState<Record<string, TickerSnapshot>>({});
   const [latestTick, setLatestTick] = useState<TickerTick | null>(null);
@@ -84,6 +88,7 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
     setAutoScaleEnabled(prefs.autoScale);
     setLogScaleEnabled(prefs.logScale);
     setVolumeProfileEnabled(prefs.volumeProfileEnabled);
+    setVolumeProfileWindow(prefs.volumeProfileWindow);
   }, []);
 
   useEffect(() => {
@@ -93,8 +98,9 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
       autoScale: autoScaleEnabled,
       logScale: logScaleEnabled,
       volumeProfileEnabled,
+      volumeProfileWindow,
     });
-  }, [selectedSymbol, chartInterval, autoScaleEnabled, logScaleEnabled, volumeProfileEnabled]);
+  }, [selectedSymbol, chartInterval, autoScaleEnabled, logScaleEnabled, volumeProfileEnabled, volumeProfileWindow]);
 
   useEffect(() => {
     let mounted = true;
@@ -303,6 +309,8 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
       setLogScaleEnabled,
       volumeProfileEnabled,
       setVolumeProfileEnabled,
+      volumeProfileWindow,
+      setVolumeProfileWindow,
       candles,
       currentBar,
       hoveredBarTime,
@@ -319,6 +327,7 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
       autoScaleEnabled,
       logScaleEnabled,
       volumeProfileEnabled,
+      volumeProfileWindow,
       candles,
       currentBar,
       hoveredBarTime,

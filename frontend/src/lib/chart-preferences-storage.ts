@@ -10,12 +10,15 @@ const VALID_INTERVALS = new Set<string>(
   CHART_INTERVAL_OPTIONS.map((o) => o.value)
 );
 
+export const VOLUME_PROFILE_WINDOW_DEFAULT = 2000;
+
 export type StoredChartPreferences = {
   selectedSymbol: string;
   chartInterval: ChartIntervalValue;
   autoScale: boolean;
   logScale: boolean;
   volumeProfileEnabled: boolean;
+  volumeProfileWindow: number;
 };
 
 const DEFAULTS: StoredChartPreferences = {
@@ -24,6 +27,7 @@ const DEFAULTS: StoredChartPreferences = {
   autoScale: true,
   logScale: false,
   volumeProfileEnabled: false,
+  volumeProfileWindow: VOLUME_PROFILE_WINDOW_DEFAULT,
 };
 
 function parseStored(raw: string | null): Partial<StoredChartPreferences> {
@@ -49,6 +53,13 @@ function parseStored(raw: string | null): Partial<StoredChartPreferences> {
     if (typeof parsed.volumeProfileEnabled === "boolean") {
       out.volumeProfileEnabled = parsed.volumeProfileEnabled;
     }
+    if (
+      typeof parsed.volumeProfileWindow === "number" &&
+      parsed.volumeProfileWindow >= 100 &&
+      parsed.volumeProfileWindow <= 10000
+    ) {
+      out.volumeProfileWindow = parsed.volumeProfileWindow;
+    }
     return out;
   } catch {
     return {};
@@ -72,6 +83,10 @@ export function getStoredChartPreferences(): StoredChartPreferences {
       partial.volumeProfileEnabled !== undefined
         ? partial.volumeProfileEnabled
         : DEFAULTS.volumeProfileEnabled,
+    volumeProfileWindow:
+      partial.volumeProfileWindow !== undefined
+        ? partial.volumeProfileWindow
+        : DEFAULTS.volumeProfileWindow,
   };
 }
 
@@ -87,6 +102,8 @@ export function setStoredChartPreferences(
     logScale: prefs.logScale ?? current.logScale,
     volumeProfileEnabled:
       prefs.volumeProfileEnabled ?? current.volumeProfileEnabled,
+    volumeProfileWindow:
+      prefs.volumeProfileWindow ?? current.volumeProfileWindow,
   };
   window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
 }

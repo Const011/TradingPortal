@@ -85,7 +85,7 @@ async def list_tickers(
 async def list_candles(
     symbol: str = Query(min_length=6, max_length=20),
     interval: str = Query(default="1", description="Kline interval: 1,3,5,15,30,60,120,240,360,720,D,W,M"),
-    limit: int = Query(default=1500, ge=50, le=1500),
+    limit: int = Query(default=2000, ge=50, le=2000),
     bybit_client: BybitClient = Depends(get_bybit_client),
 ) -> list[Candle]:
     """[Frontend] Return historical kline (candle) data for a symbol and interval.

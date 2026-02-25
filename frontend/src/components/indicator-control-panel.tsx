@@ -20,8 +20,20 @@ const toggleButtonActiveStyle = {
   borderColor: "#3b82f6",
 };
 
+const inputStyle = {
+  ...toggleButtonStyle,
+  padding: "6px 10px",
+  width: 72,
+  fontSize: 13,
+};
+
 export function IndicatorControlPanel() {
-  const { volumeProfileEnabled, setVolumeProfileEnabled } = useMarketData();
+  const {
+    volumeProfileEnabled,
+    setVolumeProfileEnabled,
+    volumeProfileWindow,
+    setVolumeProfileWindow,
+  } = useMarketData();
 
   return (
     <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
@@ -35,6 +47,25 @@ export function IndicatorControlPanel() {
       >
         Volume Profile
       </button>
+      {volumeProfileEnabled && (
+        <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <span style={{ fontSize: 12, color: "#8b9bb4" }}>Window:</span>
+          <input
+            type="number"
+            min={100}
+            max={10000}
+            step={100}
+            value={volumeProfileWindow}
+            onChange={(e) => {
+              const v = parseInt(e.target.value, 10);
+              if (!Number.isNaN(v) && v >= 100 && v <= 10000) {
+                setVolumeProfileWindow(v);
+              }
+            }}
+            style={inputStyle}
+          />
+        </label>
+      )}
     </div>
   );
 }

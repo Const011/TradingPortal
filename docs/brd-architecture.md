@@ -280,14 +280,14 @@ Lightweight Charts does not provide built-in box, line, label, or shape primitiv
 | **Line** | Structure lines (BOS/CHoCH), S/R horizontals, OB boundaries | Trend Line, Vertical Line primitives; custom for horizontal extend.both |
 | **Label** | Swing labels (HH, HL, LH, LL), BOS/CHoCH, EQH/EQL | Anchored Text or custom primitive for price/time-anchored labels |
 | **Shape** | Bar markers (triangle, diamond) | `setMarkers()` on series or custom primitive |
-| **Volume profile** | Price-level histogram | Official Volume Profile plugin example |
+| **Volume profile** | Price-level histogram | Official Volume Profile plugin example. **Display:** Must be rendered in **inverse** orientation (bars extend leftward) and positioned **to the right** of the main chart. |
 | **Custom candle colors** | 4 colors (bright/dark green, bright/dark red) by trend | Per-point `color`, `wickColor`, `borderColor` on `CandlestickData`; each bar overrides series defaults |
 
 **Official plugin examples** (TradingView): Rectangle Drawing Tool, Trend Line, Vertical Line, Volume Profile, Anchored Text, Bands Indicator. Source: `tradingview.github.io/lightweight-charts/plugin-examples` and `github.com/tradingview/lightweight-charts/plugin-examples`.
 
 **Implementation strategy:**
 - Use series primitives for boxes, lines, labels; reuse/adapt official plugins.
-- Volume profile: official Volume Profile primitive.
+- Volume profile: official Volume Profile primitive; displayed in inverse orientation, to the right of the main chart. Uses a configurable **window** (default 2000 bars) with recency weighting: `weight = (window - positionFromNewest) / window`, so older bars contribute less. Window is a frontend-settable parameter.
 - Custom candle colors: set `color`, `wickColor`, `borderColor` per data point in `CandlestickData`; supports 4-way coloring (e.g. swing×internal trend: bright/dark green, bright/dark red).
 - Status/metric tables: render outside the chart (e.g. sidebar or panel) when needed.
 - Keep drawing objects in backend-serializable format (`shapeType`, `points`, `style`, `label`) for reproducibility and auditability.

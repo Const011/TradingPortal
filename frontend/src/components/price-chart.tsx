@@ -57,6 +57,7 @@ export function PriceChart() {
     logScaleEnabled,
     setLogScaleEnabled,
     volumeProfileEnabled,
+    volumeProfileWindow,
   } = useMarketData();
   const containerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -232,7 +233,13 @@ export function PriceChart() {
       chartData.length > 0
         ? (chartData[anchorIndex].time as Time)
         : (Math.floor(Date.now() / 1000) as Time);
-    const vpData = buildVolumeProfileFromCandles(candles, anchorTime, vpWidth);
+    const vpData = buildVolumeProfileFromCandles(
+      candles,
+      anchorTime,
+      vpWidth,
+      undefined,
+      volumeProfileWindow
+    );
     if (!vpData) return;
 
     const primitive = volumeProfilePrimitiveRef.current;
@@ -242,7 +249,7 @@ export function PriceChart() {
     const newPrimitive = new VolumeProfile(chart, series, vpData);
     series.attachPrimitive(newPrimitive);
     volumeProfilePrimitiveRef.current = newPrimitive;
-  }, [volumeProfileEnabled, candles, chartData]);
+  }, [volumeProfileEnabled, volumeProfileWindow, candles, chartData]);
 
   return (
     <div
