@@ -33,6 +33,8 @@ export function IndicatorControlPanel() {
     setVolumeProfileEnabled,
     volumeProfileWindow,
     setVolumeProfileWindow,
+    supportResistanceEnabled,
+    setSupportResistanceEnabled,
   } = useMarketData();
 
   return (
@@ -46,6 +48,13 @@ export function IndicatorControlPanel() {
         style={volumeProfileEnabled ? toggleButtonActiveStyle : toggleButtonStyle}
       >
         Volume Profile
+      </button>
+      <button
+        type="button"
+        onClick={() => setSupportResistanceEnabled(!supportResistanceEnabled)}
+        style={supportResistanceEnabled ? toggleButtonActiveStyle : toggleButtonStyle}
+      >
+        S/R
       </button>
       {volumeProfileEnabled && (
         <label style={{ display: "flex", alignItems: "center", gap: 6 }}>

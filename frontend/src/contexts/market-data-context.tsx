@@ -32,6 +32,7 @@ import {
   TickerSnapshot,
   TickerTick,
   type VolumeProfileData,
+  type SupportResistanceData,
 } from "@/lib/types/market";
 
 type MarketDataContextValue = {
@@ -48,8 +49,11 @@ type MarketDataContextValue = {
   setVolumeProfileEnabled: (enabled: boolean) => void;
   volumeProfileWindow: number;
   setVolumeProfileWindow: (window: number) => void;
+  supportResistanceEnabled: boolean;
+  setSupportResistanceEnabled: (enabled: boolean) => void;
   candles: Candle[];
   volumeProfile: VolumeProfileData | null;
+  supportResistance: SupportResistanceData | null;
   currentBar: CurrentBar | null;
   hoveredBarTime: number | null;
   setHoveredBarTime: (time: number | null) => void;
@@ -73,8 +77,10 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
   const [logScaleEnabled, setLogScaleEnabled] = useState<boolean>(false);
   const [volumeProfileEnabled, setVolumeProfileEnabled] = useState<boolean>(false);
   const [volumeProfileWindow, setVolumeProfileWindow] = useState<number>(VOLUME_PROFILE_WINDOW_DEFAULT);
+  const [supportResistanceEnabled, setSupportResistanceEnabled] = useState<boolean>(false);
   const [candles, setCandles] = useState<Candle[]>([]);
   const [volumeProfile, setVolumeProfile] = useState<VolumeProfileData | null>(null);
+  const [supportResistance, setSupportResistance] = useState<SupportResistanceData | null>(null);
   const [tickers, setTickers] = useState<Record<string, TickerSnapshot>>({});
   const [latestTick, setLatestTick] = useState<TickerTick | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
@@ -92,6 +98,7 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
     setLogScaleEnabled(prefs.logScale);
     setVolumeProfileEnabled(prefs.volumeProfileEnabled);
     setVolumeProfileWindow(prefs.volumeProfileWindow);
+    setSupportResistanceEnabled(prefs.supportResistanceEnabled);
   }, []);
 
   useEffect(() => {
@@ -102,8 +109,9 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
       logScale: logScaleEnabled,
       volumeProfileEnabled,
       volumeProfileWindow,
+      supportResistanceEnabled,
     });
-  }, [selectedSymbol, chartInterval, autoScaleEnabled, logScaleEnabled, volumeProfileEnabled, volumeProfileWindow]);
+  }, [selectedSymbol, chartInterval, autoScaleEnabled, logScaleEnabled, volumeProfileEnabled, volumeProfileWindow, supportResistanceEnabled]);
 
   useEffect(() => {
     let mounted = true;
@@ -146,6 +154,7 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
     }
     setCandles([]);
     setVolumeProfile(null);
+    setSupportResistance(null);
     const ws = new WebSocket(
       getCandlesWebSocketUrl(selectedSymbol, chartInterval, volumeProfileWindow)
     );
@@ -154,19 +163,22 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
     ws.onmessage = (event: MessageEvent<string>) => {
       try {
         const payload = JSON.parse(event.data) as
-          | { event: "snapshot"; candles: Candle[]; volumeProfile?: VolumeProfileData }
-          | { event: "upsert"; candle: Candle; volumeProfile?: VolumeProfileData }
+          | { event: "snapshot"; candles: Candle[]; graphics?: { volumeProfile?: VolumeProfileData; supportResistance?: SupportResistanceData }; volumeProfile?: VolumeProfileData }
+          | { event: "upsert"; candle: Candle; graphics?: { volumeProfile?: VolumeProfileData; supportResistance?: SupportResistanceData }; volumeProfile?: VolumeProfileData }
           | { event: "heartbeat" };
         if (payload.event === "heartbeat") {
           return;
         }
+        const graphics = payload.graphics ?? (payload.volumeProfile ? { volumeProfile: payload.volumeProfile } : undefined);
         if (payload.event === "snapshot") {
           setCandles(payload.candles);
-          setVolumeProfile(payload.volumeProfile ?? null);
+          setVolumeProfile(graphics?.volumeProfile ?? null);
+          setSupportResistance(graphics?.supportResistance ?? null);
           return;
         }
-        if ("volumeProfile" in payload) {
-          setVolumeProfile(payload.volumeProfile ?? null);
+        if (graphics) {
+          if (graphics.volumeProfile !== undefined) setVolumeProfile(graphics.volumeProfile ?? null);
+          if (graphics.supportResistance !== undefined) setSupportResistance(graphics.supportResistance ?? null);
         }
         setCandles((current) => {
           if (current.length === 0) {
@@ -321,8 +333,11 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
       setVolumeProfileEnabled,
       volumeProfileWindow,
       setVolumeProfileWindow,
+      supportResistanceEnabled,
+      setSupportResistanceEnabled,
       candles,
       volumeProfile,
+      supportResistance,
       currentBar,
       hoveredBarTime,
       setHoveredBarTime,
@@ -339,8 +354,10 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
       logScaleEnabled,
       volumeProfileEnabled,
       volumeProfileWindow,
+      supportResistanceEnabled,
       candles,
       volumeProfile,
+      supportResistance,
       currentBar,
       hoveredBarTime,
       tickers,

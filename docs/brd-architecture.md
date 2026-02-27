@@ -33,7 +33,7 @@ This document is intentionally scoped to **Spot trading only** for v1 to reduce 
 - Bybit Spot market data ingestion (symbols, tickers, candles via REST; optional websocket later).
 - Bybit Spot order lifecycle via REST (place/cancel/query).
 - Position and balance tracking for Spot assets.
-- Indicator computation and persistence for frontend overlays.
+- Indicator computation and persistence **on the backend**; frontend receives and displays pre-calculated values.
 - OpenRouter integration to analyze historical trade results and propose parameter updates.
 - Simulation/backtest tool to evaluate proposed strategy changes before approval.
 - Next.js portal with:
@@ -106,13 +106,14 @@ This document is intentionally scoped to **Spot trading only** for v1 to reduce 
 - Compare candidate vs baseline and generate decision-ready report.
 - Feed simulation summary back to AI review loop for iterative improvement.
 
-### FR-7: Frontend Portal (Next.js)
+### FR-7: Frontend Portal (Next.js) — Visualization Only
 
+- **Display-only:** Frontend receives pre-calculated candles, indicators, and trade data from the backend; it does not compute indicators or strategy logic.
 - Dashboard with symbol list, latest prices, and daily changes.
 - Chart page using Lightweight Charts with:
-  - Candle series.
-  - Indicator overlays.
-  - Trade markers (entry/exit).
+  - Candle series (from backend stream).
+  - Indicator overlays (pre-calculated on backend, e.g. volume profile).
+  - Trade markers (entry/exit from execution service).
   - Basic shapes/annotations (lines, rectangles, text).
 - Strategy review panel for showing AI suggestions and simulation deltas.
 
@@ -160,6 +161,16 @@ This document is intentionally scoped to **Spot trading only** for v1 to reduce 
 
 ## 9) System Architecture
 
+### Architectural Principle: Backend Computation, Frontend Visualization
+
+**All indicator and trade strategy calculations run on the backend.** The frontend is a thin visualization layer and does not compute indicators, signals, or strategy logic.
+
+- **Indicators** (e.g. volume profile, SMA, RSI, order blocks) are computed in the backend market data or indicator pipeline and streamed/served to the frontend.
+- **Trade strategy logic** runs exclusively on the backend (paper/live execution, simulation, backtest).
+- **Frontend responsibilities:** display candles, indicator overlays, trade markers, and UI controls; stream data via WebSocket/REST; persist user preferences (e.g. chart interval, volume profile window).
+
+This ensures a single source of truth for indicators and strategy state, consistency between chart display and live/simulation logic, and enables future headless or API-only clients.
+
 ```mermaid
 flowchart LR
   nextjsUI[NextjsPortal] --> apiGateway[FastApiGateway]
@@ -193,9 +204,9 @@ flowchart LR
 ### Service Responsibilities
 
 - **API Gateway (FastAPI):** auth, request validation, external API contracts, websocket fanout.
-- **Market Data Service:** symbol/ticker/candle ingestion and normalization.
+- **Market Data Service:** symbol/ticker/candle ingestion, normalization, and indicator computation (e.g. volume profile in CandleStreamHub).
 - **Execution Service:** order intent -> exchange execution -> state updates.
-- **Indicator Service:** compute and publish indicator time series.
+- **Indicator Service:** compute and publish indicator time series (single source of truth for strategies and frontend).
 - **Strategy Service:** parameter versioning, approval workflow, strategy metadata.
 - **AI Advisor Service:** OpenRouter calls, schema-validated suggestions, explainability metadata.
 - **Simulator Service:** deterministic backtests for baseline vs candidate strategies.
@@ -208,12 +219,13 @@ flowchart LR
 
 ## 10) Data Flow
 
-### Candle Stream (Chart Data + Indicators)
+### Candle Stream (Chart Data + Graphics)
 
 1. Frontend subscribes to `WS /api/v1/stream/candles/{symbol}?interval=...&volume_profile_window=2000`.
-2. Backend `CandleStreamHub` fetches REST kline (spot), computes indicators (e.g. volume profile), broadcasts snapshot with `candles` and `volumeProfile`.
-3. Backend subscribes to Bybit kline WebSocket (spot); for each bar update: replace last candle or append new bar; recompute indicators; on new bar start, refetch REST and broadcast fresh snapshot.
-4. Frontend applies snapshot/upsert events to local candle state and indicator data; chart renders from candles and displays pre-calculated indicators. No client-side indicator computation.
+2. Backend `CandleStreamHub` fetches REST kline (spot), computes indicators, builds a **graphics** object (volume profile, support/resistance lines, etc.), broadcasts snapshot with `candles` and `graphics`.
+3. Backend subscribes to Bybit kline WebSocket (spot); for each bar update: replace last candle or append new bar; recompute graphics; on new bar start, refetch REST and broadcast fresh snapshot.
+4. `graphics` structure: `{ volumeProfile: {...}, supportResistance: { lines: [...] } }`. Volume profile is a specific object; S/R lines use generic `horizontalLine` primitives. Frontend renders each type accordingly.
+5. Frontend applies snapshot/upsert events; chart renders candles and graphics. No client-side indicator computation.
 
 ### Ticker Stream (Ticker List Only)
 
@@ -222,8 +234,8 @@ flowchart LR
 
 ### General
 
-1. Indicator job computes values per configured symbol/timeframe and writes `IndicatorValue`.
-2. Strategy generates `OrderIntent`; Execution Service submits to Bybit.
+1. **Backend** indicator job computes values per configured symbol/timeframe and writes `IndicatorValue`; chart indicators (e.g. volume profile) are computed in the candle stream pipeline and included in stream payloads.
+2. **Backend** strategy generates `OrderIntent`; Execution Service submits to Bybit.
 3. Order updates and fills are persisted and reflected in positions.
 4. Historical trades + indicators feed AI Advisor request.
 5. AI Advisor returns schema-valid parameter proposals.
@@ -238,7 +250,7 @@ flowchart LR
 - `GET /api/v1/intervals` — supported kline intervals.
 - `GET /api/v1/tickers?symbols=BTCUSDT,ETHUSDT` — 24h snapshots for ticker list.
 - `GET /api/v1/candles?symbol=BTCUSDT&interval=1m&limit=300` — historical klines (standalone fetch).
-- `WS /api/v1/stream/candles/{symbol}?interval=1` — **primary chart stream:** merged snapshot + live bar upserts.
+- `WS /api/v1/stream/candles/{symbol}?interval=1&volume_profile_window=2000` — **primary chart stream:** merged snapshot + live bar upserts + pre-calculated indicators (e.g. volume profile).
 - `WS /api/v1/stream/ticks/{symbol}` — ticker stream for ticker list only (last price, volume24h, change%); not used for chart bar updates.
 
 ### Trading
@@ -258,6 +270,15 @@ flowchart LR
 - `GET /api/v1/ai-suggestions?strategyId=...`
 
 ## 12) Frontend Architecture (Next.js + Lightweight Charts)
+
+### Computation Boundary
+
+The frontend **does not** compute indicators, signals, or strategy logic. It:
+- Subscribes to backend streams (candles, ticks) and displays data.
+- Receives indicator data (e.g. `volumeProfile`) within stream payloads or via dedicated endpoints.
+- Renders trade markers and annotations from backend-provided coordinates.
+
+All indicator and strategy calculations run on the backend.
 
 ### UI Modules
 
@@ -292,6 +313,7 @@ Lightweight Charts does not provide built-in box, line, label, or shape primitiv
 - Custom candle colors: set `color`, `wickColor`, `borderColor` per data point in `CandlestickData`; supports 4-way coloring (e.g. swing×internal trend: bright/dark green, bright/dark red).
 - Status/metric tables: render outside the chart (e.g. sidebar or panel) when needed.
 - Keep drawing objects in backend-serializable format (`shapeType`, `points`, `style`, `label`) for reproducibility and auditability.
+- **Graphics objects extension:** Backend returns a `graphics` object containing chart primitives. Volume profile remains a specific object (drawn as-is). Generic primitives (e.g. `horizontalLine` for S/R) use a chart-agnostic schema: `{ type, price, width, extend, style }`. Frontend maps each type to Lightweight Charts drawing. See `docs/indicators-support-resistance-plan.md` and `app/schemas/chart_primitives.py`.
 
 ## 13) AI Suggestion + Simulation Guardrails
 

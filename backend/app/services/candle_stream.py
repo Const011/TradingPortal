@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from app.schemas.market import Candle
 from app.services.bybit_client import BybitClient
 from app.services.indicators.volume_profile import build_volume_profile_from_candles
+from app.services.indicators.support_resistance import compute_support_resistance_lines
 
 DEFAULT_VOLUME_PROFILE_WINDOW = 2000
 
@@ -26,7 +27,11 @@ def _make_snapshot_payload(candles: list[Candle], volume_profile_window: int) ->
             window_size=volume_profile_window,
         )
         if vp:
-            payload["volumeProfile"] = vp
+            sr_lines = compute_support_resistance_lines(vp["profile"])
+            payload["graphics"] = {
+                "volumeProfile": vp,
+                "supportResistance": {"lines": sr_lines},
+            }
     return payload
 
 
@@ -43,7 +48,11 @@ def _make_upsert_payload(candle: Candle, candles: list[Candle], volume_profile_w
             window_size=volume_profile_window,
         )
         if vp:
-            payload["volumeProfile"] = vp
+            sr_lines = compute_support_resistance_lines(vp["profile"])
+            payload["graphics"] = {
+                "volumeProfile": vp,
+                "supportResistance": {"lines": sr_lines},
+            }
     return payload
 
 

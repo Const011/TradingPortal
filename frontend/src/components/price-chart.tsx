@@ -8,7 +8,9 @@ import {
   HistogramSeries,
   createChart,
   IChartApi,
+  IPriceLine,
   ISeriesApi,
+  LineStyle,
   Time,
   PriceScaleMode,
   type HistogramData,
@@ -57,12 +59,15 @@ export function PriceChart() {
     setLogScaleEnabled,
     volumeProfileEnabled,
     volumeProfile,
+    supportResistanceEnabled,
+    supportResistance,
   } = useMarketData();
   const containerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const volumeSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
   const volumeProfilePrimitiveRef = useRef<VolumeProfile | null>(null);
+  const supportResistancePriceLinesRef = useRef<IPriceLine[]>([]);
   const lastFittedKeyRef = useRef<string | null>(null);
 
   const chartData = useMemo<CandlestickData<Time>[]>(() => {
@@ -152,6 +157,10 @@ export function PriceChart() {
 
     return () => {
       observer.disconnect();
+      for (const pl of supportResistancePriceLinesRef.current) {
+        candlestickSeries.removePriceLine(pl);
+      }
+      supportResistancePriceLinesRef.current = [];
       chart.remove();
       chartRef.current = null;
       seriesRef.current = null;
@@ -238,6 +247,43 @@ export function PriceChart() {
     series.attachPrimitive(newPrimitive);
     volumeProfilePrimitiveRef.current = newPrimitive;
   }, [volumeProfileEnabled, volumeProfile]);
+
+  useEffect(() => {
+    const series = seriesRef.current;
+    if (!series) return;
+
+    // Remove existing S/R price lines
+    for (const pl of supportResistancePriceLinesRef.current) {
+      series.removePriceLine(pl);
+    }
+    supportResistancePriceLinesRef.current = [];
+
+    if (
+      !supportResistanceEnabled ||
+      !supportResistance ||
+      supportResistance.lines.length === 0
+    ) {
+      return;
+    }
+
+    const styleToLineStyle: Record<string, LineStyle> = {
+      solid: LineStyle.Solid,
+      dotted: LineStyle.Dotted,
+      dashed: LineStyle.Dashed,
+    };
+
+    for (const line of supportResistance.lines) {
+      if (line.type !== "horizontalLine") continue;
+      const priceLine = series.createPriceLine({
+        price: line.price,
+        color: "rgba(190, 185, 245, 0.42)", // line.color ??
+        lineWidth: Math.min(4, Math.max(1, Math.round(line.width))) as 1 | 2 | 3 | 4,
+        lineStyle: styleToLineStyle[line.style ?? "solid"] ?? LineStyle.Solid,
+        axisLabelVisible: false,
+      });
+      supportResistancePriceLinesRef.current.push(priceLine);
+    }
+  }, [supportResistanceEnabled, supportResistance]);
 
   return (
     <div

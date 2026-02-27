@@ -90,6 +90,18 @@ To avoid unstable early complexity, v1 must prioritize safety, observability, an
 - **Why:** LWC has no built-in box/line/label primitives; primitives pattern is the supported extension mechanism.
 - **Consequence:** Order Blocks, FVG, S/R, volume profile require custom or adapted primitives. Custom candle colors (4-way by trend) use per-point `color`/`wickColor`/`borderColor` on `CandlestickData`. Status/metric tables render outside the chart when needed.
 
+### D14: Backend-only computation for indicators and strategy
+
+- **Decision:** All indicator and trade strategy calculations run on the backend. Frontend is a thin visualization layer: it receives pre-calculated data and renders it.
+- **Why:** Single source of truth for indicators and strategy state; consistency between chart display and live/simulation logic; same indicator data powers strategy execution and frontend; enables future headless/API-only clients.
+- **Consequence:** Indicators (volume profile, SMA, RSI, etc.) are computed in the backend market data or indicator pipeline and streamed/served to the frontend. Trade strategy logic runs exclusively on the backend. Frontend does not implement indicator or strategy algorithms.
+
+### D15: Graphics objects extension
+
+- **Decision:** Backend returns a `graphics` object grouping all chart-drawing primitives. Volume profile stays as a specific object (structure unchanged). New primitives (e.g. S/R horizontal lines) use a generic chart-agnostic schema: `{ type, price, width, extend, style }`.
+- **Why:** Extensible output format; frontend maps each type to LWC drawing; volume profile remains optimized for its use case; new primitives (boxes, labels, vertical lines) can be added without changing VP.
+- **Consequence:** Stream payload has `graphics: { volumeProfile, supportResistance: { lines } }`. Frontend consumes `graphics.volumeProfile` and `graphics.supportResistance.lines`; draws VP as before and S/R as horizontal line primitives.
+
 ## Alternatives Considered
 
 - **Microservices from day one:** rejected for early operational complexity.
@@ -112,4 +124,5 @@ Revisit this ADR when one of the following occurs:
 - Multi-exchange routing becomes an explicit requirement.
 - Annotation UX requirements exceed primitive-based implementation limits.
 - Indicator overlays (Order Blocks, S/R, volume profile) require different drawing approach than series primitives.
+- Frontend needs to run indicator or strategy logic (would require revisiting D14).
 

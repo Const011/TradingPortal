@@ -19,6 +19,7 @@ export type StoredChartPreferences = {
   logScale: boolean;
   volumeProfileEnabled: boolean;
   volumeProfileWindow: number;
+  supportResistanceEnabled: boolean;
 };
 
 const DEFAULTS: StoredChartPreferences = {
@@ -28,6 +29,7 @@ const DEFAULTS: StoredChartPreferences = {
   logScale: false,
   volumeProfileEnabled: false,
   volumeProfileWindow: VOLUME_PROFILE_WINDOW_DEFAULT,
+  supportResistanceEnabled: false,
 };
 
 function parseStored(raw: string | null): Partial<StoredChartPreferences> {
@@ -60,6 +62,9 @@ function parseStored(raw: string | null): Partial<StoredChartPreferences> {
     ) {
       out.volumeProfileWindow = parsed.volumeProfileWindow;
     }
+    if (typeof parsed.supportResistanceEnabled === "boolean") {
+      out.supportResistanceEnabled = parsed.supportResistanceEnabled;
+    }
     return out;
   } catch {
     return {};
@@ -87,6 +92,10 @@ export function getStoredChartPreferences(): StoredChartPreferences {
       partial.volumeProfileWindow !== undefined
         ? partial.volumeProfileWindow
         : DEFAULTS.volumeProfileWindow,
+    supportResistanceEnabled:
+      partial.supportResistanceEnabled !== undefined
+        ? partial.supportResistanceEnabled
+        : DEFAULTS.supportResistanceEnabled,
   };
 }
 
@@ -104,6 +113,8 @@ export function setStoredChartPreferences(
       prefs.volumeProfileEnabled ?? current.volumeProfileEnabled,
     volumeProfileWindow:
       prefs.volumeProfileWindow ?? current.volumeProfileWindow,
+    supportResistanceEnabled:
+      prefs.supportResistanceEnabled ?? current.supportResistanceEnabled,
   };
   window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
 }

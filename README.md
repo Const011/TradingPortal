@@ -2,9 +2,9 @@
 
 Spot-first trading portal skeleton with:
 
-- `backend/`: FastAPI service with Bybit REST + WebSocket market integration.
-- `frontend/`: Next.js portal with ticker switcher and Lightweight Charts view.
-- `docs/`: BRD and architecture/ADR documents.
+- `backend/`: FastAPI service with Bybit REST + WebSocket market integration; **computes all indicators and runs trade strategy logic**.
+- `frontend/`: Next.js portal with ticker switcher and Lightweight Charts view; **visualization only** (displays pre-calculated data).
+- `docs/`: BRD (`brd-architecture.md`) and architecture decisions (`adr/001-v1-architecture-decisions.md`).
 
 ## Backend
 
