@@ -9,7 +9,7 @@ import type {
   SeriesAttachedParameter,
   Time,
 } from "lightweight-charts";
-import type { OrderBlocksData } from "@/lib/types/market";
+import type { OrderBlockData, OrderBlocksData } from "@/lib/types/market";
 
 interface BoxToDraw {
   x1: number;
@@ -78,43 +78,25 @@ class OrderBlocksPaneView implements IPrimitivePaneView {
       }
     }
 
-    for (const ob of data.bullish) {
-      const tStart = ob.startTime;
-      const tEnd = ob.endTime;
-      const top = ob.top;
-      const bottom = ob.bottom;
-      if (ob.breaker && ob.breakTime != null) {
-        addBox(tStart, top, ob.breakTime, bottom, ob.fillColor);
-        addBox(
-          ob.breakTime,
-          top,
-          tEnd,
-          bottom,
-          ob.breakColor ?? ob.fillColor
-        );
-      } else {
-        addBox(tStart, top, tEnd, bottom, ob.fillColor);
+    function drawOrderBlocks(blocks: OrderBlockData[]): void {
+      for (const ob of blocks) {
+        const tStart = ob.startTime;
+        const tEnd = ob.endTime;
+        const top = ob.top;
+        const bottom = ob.bottom;
+        if (ob.breaker && ob.breakTime != null) {
+          addBox(tStart, top, ob.breakTime, bottom, ob.fillColor);
+          addBox(ob.breakTime, top, tEnd, bottom, ob.fillColor);
+        } else {
+          addBox(tStart, top, tEnd, bottom, ob.fillColor);
+        }
       }
     }
 
-    for (const ob of data.bearish) {
-      const tStart = ob.startTime;
-      const tEnd = ob.endTime;
-      const top = ob.top;
-      const bottom = ob.bottom;
-      if (ob.breaker && ob.breakTime != null) {
-        addBox(tStart, top, ob.breakTime, bottom, ob.fillColor);
-        addBox(
-          ob.breakTime,
-          top,
-          tEnd,
-          bottom,
-          ob.breakColor ?? ob.fillColor
-        );
-      } else {
-        addBox(tStart, top, tEnd, bottom, ob.fillColor);
-      }
-    }
+    drawOrderBlocks(data.bullish ?? []);
+    drawOrderBlocks(data.bearish ?? []);
+    drawOrderBlocks(data.bullishBreakers ?? []);
+    drawOrderBlocks(data.bearishBreakers ?? []);
 
     return new OrderBlocksRenderer(boxes);
   }

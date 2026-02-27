@@ -42,3 +42,41 @@ def horizontal_line(
         "color": color,
         "style": style,
     }
+
+
+def line_segment(
+    from_pt: dict,
+    to_pt: dict,
+    color: str,
+    width: float = 1,
+    style: LineStyle = "solid",
+) -> dict:
+    """Build a line segment primitive. from_pt/to_pt: { time: int, price: float }."""
+    return {
+        "type": "lineSegment",
+        "from": from_pt,
+        "to": to_pt,
+        "color": color,
+        "width": width,
+        "style": style,
+    }
+
+
+def label(
+    time: int,
+    price: float,
+    text: str,
+    color: str,
+    style: Literal["up", "down"] = "up",
+    size: Literal["tiny", "small", "normal"] = "small",
+) -> dict:
+    """Build a label primitive anchored to time/price."""
+    return {
+        "type": "label",
+        "time": time,
+        "price": price,
+        "text": text,
+        "color": color,
+        "style": style,
+        "size": size,
+    }

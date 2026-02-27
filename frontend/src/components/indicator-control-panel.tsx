@@ -37,6 +37,8 @@ export function IndicatorControlPanel() {
     setSupportResistanceEnabled,
     orderBlocksEnabled,
     setOrderBlocksEnabled,
+    structureEnabled,
+    setStructureEnabled,
   } = useMarketData();
 
   return (
@@ -64,6 +66,13 @@ export function IndicatorControlPanel() {
         style={orderBlocksEnabled ? toggleButtonActiveStyle : toggleButtonStyle}
       >
         OB
+      </button>
+      <button
+        type="button"
+        onClick={() => setStructureEnabled(!structureEnabled)}
+        style={structureEnabled ? toggleButtonActiveStyle : toggleButtonStyle}
+      >
+        Structure
       </button>
       {volumeProfileEnabled && (
         <label style={{ display: "flex", alignItems: "center", gap: 6 }}>

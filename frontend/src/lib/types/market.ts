@@ -66,7 +66,34 @@ export type SupportResistanceData = {
   lines: HorizontalLineData[];
 };
 
-/** Order block box from backend. */
+/** Line segment primitive (BOS/CHoCH structure). */
+export type LineSegmentData = {
+  type: "lineSegment";
+  from: { time: number; price: number };
+  to: { time: number; price: number };
+  color: string;
+  width?: number;
+  style?: "solid" | "dashed" | "dotted";
+};
+
+/** Label primitive (BOS/CHoCH tag). */
+export type LabelData = {
+  type: "label";
+  time: number;
+  price: number;
+  text: string;
+  color: string;
+  style?: "up" | "down";
+  size?: "tiny" | "small" | "normal";
+};
+
+/** Smart Money structure (BOS/CHoCH lines and labels). */
+export type SmartMoneyStructureData = {
+  lines: LineSegmentData[];
+  labels: LabelData[];
+};
+
+/** Order block box from backend (fillColor depends on list: bullish/bearish/bullishBreakers/bearishBreakers). */
 export type OrderBlockData = {
   top: number;
   bottom: number;
@@ -75,13 +102,14 @@ export type OrderBlockData = {
   breakTime: number | null;
   breaker: boolean;
   fillColor: string;
-  breakColor: string | null;
 };
 
-/** Order blocks from backend. */
+/** Order blocks from backend (active = not crossed; breakers = crossed by price). */
 export type OrderBlocksData = {
   bullish: OrderBlockData[];
   bearish: OrderBlockData[];
+  bullishBreakers?: OrderBlockData[];
+  bearishBreakers?: OrderBlockData[];
 };
 
 /** Graphics object in stream payload (volume profile + S/R + OB primitives). */
@@ -89,6 +117,7 @@ export type GraphicsData = {
   volumeProfile?: VolumeProfileData;
   supportResistance?: SupportResistanceData;
   orderBlocks?: OrderBlocksData;
+  smartMoney?: { structure?: SmartMoneyStructureData };
 };
 
 /** Real-time kline update (current bar OHLCV; confirm=false while bar is open). */
@@ -103,4 +132,3 @@ export type BarUpdate = {
   confirm: boolean;
   timestamp: number;
 };
-

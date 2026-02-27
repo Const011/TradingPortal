@@ -3,15 +3,17 @@
 from dataclasses import dataclass
 from app.schemas.market import Candle
 
-DEFAULT_SWING_LENGTH = 10
-DEFAULT_SHOW_BULL = 3
-DEFAULT_SHOW_BEAR = 3
-MAX_LOOKBACK = 380
+DEFAULT_SWING_LENGTH = 20
+DEFAULT_SHOW_BULL = 5
+DEFAULT_SHOW_BEAR = 5
+MAX_LOOKBACK = 1000
 
-BULL_FILL = "rgba(33, 87, 243, 0.2)"
-BULL_BREAK = "rgba(212, 255, 0, 0.2)"
-BEAR_FILL = "rgba(212, 255, 0, 0.2)"
-BEAR_BREAK = "rgba(33, 87, 243, 0.2)"
+# Valid order blocks: bullish = greenish, bearish = reddish
+BULL_FILL = "rgba(34, 197, 94, 0.2)"
+BEAR_FILL = "rgba(239, 68, 68, 0.15)"
+# Breakers: bullish = violetish, bearish = yellowish
+BULL_BREAKER_FILL = "rgba(139, 92, 246, 0.05)"
+BEAR_BREAKER_FILL = "rgba(234, 179, 8, 0.05)"
 
 
 @dataclass
@@ -22,7 +24,6 @@ class OrderBlock:
     breaker: bool
     break_loc: int | None
     fill_color: str
-    break_color: str
 
 
 def _swings(
@@ -32,12 +33,15 @@ def _swings(
     os_prev: int,
 ) -> tuple[float | None, int | None, float | None, int | None, int]:
     """
-    Pine: os=0 when high[len]>ta.highest(len), os=1 when low[len]<ta.lowest(len).
+    Swing detection (Pine-inspired leg/oscillator logic).
+    os=0 when bar[i-length] made a new high; os=1 when it made a new low.
+    We emit a swing only when os *transitions* (e.g. new_swing_high = os_new==0 and os_prev!=0).
     Return (swing_high_price, swing_high_idx, swing_low_price, swing_low_idx, os_new).
     """
     if i < length + 1 or i >= len(candles):
         return None, None, None, None, os_prev
 
+    # Lookback bar: bar at index (i - length) is checked against neighbors
     high_at_len = candles[i - length].high
     low_at_len = candles[i - length].low
     highest = max(candles[j].high for j in range(i - length + 1, i + 1))
@@ -45,6 +49,7 @@ def _swings(
 
     os_new = 0 if high_at_len > highest else (1 if low_at_len < lowest else os_prev)
 
+    # Only emit swing when os changes: new high requires prior low leg; new low requires prior high leg
     new_swing_high = os_new == 0 and os_prev != 0
     new_swing_low = os_new == 1 and os_prev != 1
 
@@ -59,13 +64,15 @@ def compute_order_blocks(
     show_bull: int = DEFAULT_SHOW_BULL,
     show_bear: int = DEFAULT_SHOW_BEAR,
     use_body: bool = False,
+    keep_breakers: bool = True,
 ) -> dict:
     """
     Compute bullish and bearish order blocks from candle data.
     Returns dict with bullish/bearish lists of OB primitives for graphics.
+    keep_breakers: if True (default), breaker OBs stay visible; if False, they are removed when price closes beyond.
     """
     if len(candles) < swing_length + 2:
-        return {"bullish": [], "bearish": []}
+        return {"bullish": [], "bearish": [], "bullishBreakers": [], "bearishBreakers": []}
 
     n = len(candles)
     bullish_ob: list[OrderBlock] = []
@@ -76,7 +83,8 @@ def compute_order_blocks(
     swing_top_x: int | None = None
     swing_btm_y: float | None = None
     swing_btm_x: int | None = None
-    os = 1  # Pine init: var os = 0, but first transition matters
+    # os alternates: 0 = bearish leg (swing high), 1 = bullish leg (swing low). Start 1 so first swing can be high.
+    os = 1
 
     for i in range(swing_length + 1, n):
         c = candles[i]
@@ -85,6 +93,7 @@ def compute_order_blocks(
 
         sh_y, sh_x, sl_y, sl_x, os = _swings(candles, swing_length, i, os)
 
+        # Update swing pivots when detected; reset crossed flags so we can form new OBs on next break
         if sh_y is not None and sh_x is not None:
             swing_top_y = sh_y
             swing_top_x = sh_x
@@ -95,7 +104,13 @@ def compute_order_blocks(
             btm_crossed = False
 
         close = c.close
-        if swing_top_y is not None and swing_top_x is not None and close > swing_top_y and not top_crossed and len(bullish_ob) < show_bull:
+
+        # Bullish OB: form when price breaks *above* swing high. OB zone = (max high, min low) of bars between swing and current; we pick the bar with the lowest low.
+        # No formation cap here — we form all, then take last show_bull within MAX_LOOKBACK at the end.
+        if (swing_top_y is not None
+          and swing_top_x is not None
+          and close > swing_top_y
+          and not top_crossed):
             top_crossed = True
             start_idx = swing_top_x + 1
             end_idx = i - 1
@@ -108,9 +123,14 @@ def compute_order_blocks(
                         minima = candles[j].low
                         maxima = candles[j].high
                         loc_bar = j
-                bullish_ob.insert(0, OrderBlock(top=maxima, bottom=minima, loc=loc_bar, breaker=False, break_loc=None, fill_color=BULL_FILL, break_color=BULL_BREAK))
+                bullish_ob.insert(0, OrderBlock(top=maxima, bottom=minima, loc=loc_bar, breaker=False, break_loc=None, fill_color=BULL_FILL))
 
-        if swing_btm_y is not None and swing_btm_x is not None and close < swing_btm_y and not btm_crossed and len(bearish_ob) < show_bear:
+        # Bearish OB: form when price breaks *below* swing low. OB zone = (max high, min low) of bars between swing and current; we pick the bar with the highest high.
+        # No formation cap here — we form all, then take last show_bear within MAX_LOOKBACK at the end.
+        if (swing_btm_y is not None
+          and swing_btm_x is not None
+          and close < swing_btm_y
+          and not btm_crossed):
             btm_crossed = True
             start_idx = swing_btm_x + 1
             end_idx = i - 1
@@ -123,31 +143,36 @@ def compute_order_blocks(
                         maxima = candles[j].high
                         minima = candles[j].low
                         loc_bar = j
-                bearish_ob.insert(0, OrderBlock(top=maxima, bottom=minima, loc=loc_bar, breaker=False, break_loc=None, fill_color=BEAR_FILL, break_color=BEAR_BREAK))
+                bearish_ob.insert(0, OrderBlock(top=maxima, bottom=minima, loc=loc_bar, breaker=False, break_loc=None, fill_color=BEAR_FILL))
 
+        # Mark bullish OBs as breakers if price wicks below bottom; remove if (breaker or loc>=i) and close > top (unless keep_breakers)
         for ob in list(bullish_ob):
             if not ob.breaker and ob.loc < i:
                 if min(c.close, c.open) < ob.bottom:
                     ob.breaker = True
                     ob.break_loc = i
-            else:
-                if c.close > ob.top:
-                    bullish_ob.remove(ob)
+            elif not keep_breakers and c.close > ob.top:
+                bullish_ob.remove(ob)
 
+        # Mark bearish OBs as breakers if price wicks above top; remove if (breaker or loc>=i) and close < bottom (unless keep_breakers)
         for ob in list(bearish_ob):
             if not ob.breaker and ob.loc < i:
                 if max(c.close, c.open) > ob.top:
                     ob.breaker = True
                     ob.break_loc = i
-            else:
-                if c.close < ob.bottom:
-                    bearish_ob.remove(ob)
+            elif not keep_breakers and c.close < ob.bottom:
+                bearish_ob.remove(ob)
 
+    # Split into active (not crossed) vs breakers (crossed); keep within MAX_LOOKBACK; take show_* most recent of each
     last_bar = n - 1
-    bullish_ob = [ob for ob in bullish_ob if last_bar - ob.loc <= MAX_LOOKBACK]
-    bearish_ob = [ob for ob in bearish_ob if last_bar - ob.loc <= MAX_LOOKBACK]
+    in_range = lambda ob: last_bar - ob.loc <= MAX_LOOKBACK
 
-    def ob_to_primitive(ob: OrderBlock) -> dict:
+    bullish_active = [ob for ob in bullish_ob if in_range(ob) and not ob.breaker][:show_bull]
+    bullish_breakers = [ob for ob in bullish_ob if in_range(ob) and ob.breaker][:show_bull]
+    bearish_active = [ob for ob in bearish_ob if in_range(ob) and not ob.breaker][:show_bear]
+    bearish_breakers = [ob for ob in bearish_ob if in_range(ob) and ob.breaker][:show_bear]
+
+    def ob_to_primitive(ob: OrderBlock, fill: str) -> dict:
         loc_candle = candles[ob.loc]
         start_time = loc_candle.time // 1000
         end_time = candles[-1].time // 1000
@@ -159,11 +184,12 @@ def compute_order_blocks(
             "endTime": end_time,
             "breakTime": break_time,
             "breaker": ob.breaker,
-            "fillColor": ob.fill_color,
-            "breakColor": ob.break_color if ob.breaker else None,
+            "fillColor": fill,
         }
 
     return {
-        "bullish": [ob_to_primitive(ob) for ob in bullish_ob[:show_bull]],
-        "bearish": [ob_to_primitive(ob) for ob in bearish_ob[:show_bear]],
+        "bullish": [ob_to_primitive(ob, BULL_FILL) for ob in bullish_active],
+        "bearish": [ob_to_primitive(ob, BEAR_FILL) for ob in bearish_active],
+        "bullishBreakers": [ob_to_primitive(ob, BULL_BREAKER_FILL) for ob in bullish_breakers],
+        "bearishBreakers": [ob_to_primitive(ob, BEAR_BREAKER_FILL) for ob in bearish_breakers],
     }

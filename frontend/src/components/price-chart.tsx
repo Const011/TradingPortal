@@ -22,6 +22,7 @@ import {
 } from "@/lib/constants/chart-intervals";
 import { useMarketData } from "@/contexts/market-data-context";
 import { OrderBlocks } from "@/lib/chart-plugins/order-blocks";
+import { StructurePrimitive } from "@/lib/chart-plugins/structure";
 import { VolumeProfile } from "@/lib/chart-plugins/volume-profile";
 import { IndicatorControlPanel } from "@/components/indicator-control-panel";
 
@@ -64,6 +65,8 @@ export function PriceChart() {
     supportResistance,
     orderBlocksEnabled,
     orderBlocks,
+    structureEnabled,
+    structure,
   } = useMarketData();
   const containerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -72,6 +75,7 @@ export function PriceChart() {
   const volumeProfilePrimitiveRef = useRef<VolumeProfile | null>(null);
   const supportResistancePriceLinesRef = useRef<IPriceLine[]>([]);
   const orderBlocksPrimitiveRef = useRef<OrderBlocks | null>(null);
+  const structurePrimitiveRef = useRef<StructurePrimitive | null>(null);
   const lastFittedKeyRef = useRef<string | null>(null);
 
   const chartData = useMemo<CandlestickData<Time>[]>(() => {
@@ -169,6 +173,11 @@ export function PriceChart() {
       if (obPrim) {
         candlestickSeries.detachPrimitive(obPrim);
         orderBlocksPrimitiveRef.current = null;
+      }
+      const structPrim = structurePrimitiveRef.current;
+      if (structPrim) {
+        candlestickSeries.detachPrimitive(structPrim);
+        structurePrimitiveRef.current = null;
       }
       chart.remove();
       chartRef.current = null;
@@ -309,7 +318,10 @@ export function PriceChart() {
     }
 
     const hasBlocks =
-      orderBlocks.bullish.length > 0 || orderBlocks.bearish.length > 0;
+      orderBlocks.bullish.length > 0 ||
+      orderBlocks.bearish.length > 0 ||
+      (orderBlocks.bullishBreakers?.length ?? 0) > 0 ||
+      (orderBlocks.bearishBreakers?.length ?? 0) > 0;
     const primitive = orderBlocksPrimitiveRef.current;
     if (primitive) {
       series.detachPrimitive(primitive);
@@ -321,6 +333,34 @@ export function PriceChart() {
       orderBlocksPrimitiveRef.current = newPrimitive;
     }
   }, [orderBlocksEnabled, orderBlocks]);
+
+  useEffect(() => {
+    const series = seriesRef.current;
+    const chart = chartRef.current;
+    if (!series || !chart) return;
+
+    if (!structureEnabled || !structure) {
+      const primitive = structurePrimitiveRef.current;
+      if (primitive) {
+        series.detachPrimitive(primitive);
+        structurePrimitiveRef.current = null;
+      }
+      return;
+    }
+
+    const hasStructure =
+      (structure.lines?.length ?? 0) > 0 || (structure.labels?.length ?? 0) > 0;
+    const primitive = structurePrimitiveRef.current;
+    if (primitive) {
+      series.detachPrimitive(primitive);
+      structurePrimitiveRef.current = null;
+    }
+    if (hasStructure) {
+      const newPrimitive = new StructurePrimitive(chart, series, structure);
+      series.attachPrimitive(newPrimitive);
+      structurePrimitiveRef.current = newPrimitive;
+    }
+  }, [structureEnabled, structure]);
 
   return (
     <div
