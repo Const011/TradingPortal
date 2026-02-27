@@ -207,14 +207,20 @@ def compute_order_blocks(
         bearish_ob = bear
 
     n = len(candles)
-    # Split into active (not crossed) vs breakers (crossed); keep within MAX_LOOKBACK; take show_* most recent of each
+    # Split into active (not crossed) vs breakers (crossed); keep within MAX_LOOKBACK
+    # show_bull/show_bear=0 means return all; otherwise take most recent N
     last_bar = n - 1
     in_range = lambda ob: last_bar - ob.loc <= MAX_LOOKBACK
 
-    bullish_active = [ob for ob in bullish_ob if in_range(ob) and not ob.breaker][:show_bull]
-    bullish_breakers = [ob for ob in bullish_ob if in_range(ob) and ob.breaker][:show_bull]
-    bearish_active = [ob for ob in bearish_ob if in_range(ob) and not ob.breaker][:show_bear]
-    bearish_breakers = [ob for ob in bearish_ob if in_range(ob) and ob.breaker][:show_bear]
+    bullish_in_range = [ob for ob in bullish_ob if in_range(ob) and not ob.breaker]
+    bullish_breakers_in_range = [ob for ob in bullish_ob if in_range(ob) and ob.breaker]
+    bearish_in_range = [ob for ob in bearish_ob if in_range(ob) and not ob.breaker]
+    bearish_breakers_in_range = [ob for ob in bearish_ob if in_range(ob) and ob.breaker]
+
+    bullish_active = bullish_in_range if show_bull <= 0 else bullish_in_range[:show_bull]
+    bullish_breakers = bullish_breakers_in_range if show_bull <= 0 else bullish_breakers_in_range[:show_bull]
+    bearish_active = bearish_in_range if show_bear <= 0 else bearish_in_range[:show_bear]
+    bearish_breakers = bearish_breakers_in_range if show_bear <= 0 else bearish_breakers_in_range[:show_bear]
 
     def ob_to_primitive(ob: OrderBlock, fill: str) -> dict:
         loc_candle = candles[ob.loc]

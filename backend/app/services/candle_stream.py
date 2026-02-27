@@ -28,8 +28,10 @@ def _make_snapshot_payload(
         "candles": [c.model_dump() for c in candles],
     }
     if candles:
-        ob_result = compute_order_blocks(candles)
-        structure_result = compute_structure(candles, include_candle_colors=True)
+        ob_result = compute_order_blocks(candles, show_bull=0, show_bear=0)
+        structure_result = compute_structure(
+            candles, include_candle_colors=True, max_swing_labels=50
+        )
         graphics: dict = {
             "orderBlocks": ob_result,
             "smartMoney": {"structure": structure_result},
@@ -66,8 +68,10 @@ def _make_upsert_payload(
         "candle": candle.model_dump(),
     }
     if candles:
-        ob_result = compute_order_blocks(candles)
-        structure_result = compute_structure(candles, include_candle_colors=True)
+        ob_result = compute_order_blocks(candles, show_bull=0, show_bear=0)
+        structure_result = compute_structure(
+            candles, include_candle_colors=True, max_swing_labels=50
+        )
         graphics: dict = {
             "orderBlocks": ob_result,
             "smartMoney": {"structure": structure_result},

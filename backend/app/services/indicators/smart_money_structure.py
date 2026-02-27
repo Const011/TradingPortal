@@ -98,6 +98,7 @@ def compute_structure(
     show_internal_bull: str = "ALL",
     show_internal_bear: str = "ALL",
     include_candle_colors: bool = False,
+    max_swing_labels: int | None = None,
 ) -> dict:
     """
     Compute BOS/CHoCH structure, swing labels (HH/HL/LH/LL), EQH/EQL.
@@ -317,10 +318,11 @@ def compute_structure(
         if include_candle_colors:
             candle_colors[c.time] = _trend_to_color(swing_trend, internal_trend)
 
+    swing_limit = max_swing_labels if max_swing_labels is not None else MAX_SWING_LABELS
     out = {
         "lines": lines[-MAX_STRUCTURE_ELEMENTS:],
         "labels": labels[-MAX_STRUCTURE_ELEMENTS:],
-        "swingLabels": swing_labels[-MAX_SWING_LABELS:],
+        "swingLabels": swing_labels[-swing_limit:],
         "equalHighsLows": {
             "lines": equal_lines[-MAX_EQUAL_ELEMENTS:],
             "labels": equal_labels[-MAX_EQUAL_ELEMENTS:],

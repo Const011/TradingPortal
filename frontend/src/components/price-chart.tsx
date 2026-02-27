@@ -67,12 +67,37 @@ export function PriceChart() {
     supportResistance,
     orderBlocksEnabled,
     orderBlocks,
+    obShowBull,
+    obShowBear,
     structureEnabled,
     structure,
+    swingLabelsShow,
     candleColoringEnabled,
     strategyMarkers,
     strategySignals,
   } = useMarketData();
+
+  const orderBlocksForDisplay = useMemo(() => {
+    if (!orderBlocks) return null;
+    const sliceBull = obShowBull > 0 ? obShowBull : 999;
+    const sliceBear = obShowBear > 0 ? obShowBear : 999;
+    return {
+      ...orderBlocks,
+      bullish: (orderBlocks.bullish ?? []).slice(0, sliceBull),
+      bearish: (orderBlocks.bearish ?? []).slice(0, sliceBear),
+      bullishBreakers: (orderBlocks.bullishBreakers ?? []).slice(0, sliceBull),
+      bearishBreakers: (orderBlocks.bearishBreakers ?? []).slice(0, sliceBear),
+    };
+  }, [orderBlocks, obShowBull, obShowBear]);
+
+  const structureForDisplay = useMemo(() => {
+    if (!structure) return null;
+    const limit = swingLabelsShow > 0 ? swingLabelsShow : 999;
+    return {
+      ...structure,
+      swingLabels: (structure.swingLabels ?? []).slice(-limit),
+    };
+  }, [structure, swingLabelsShow]);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
@@ -334,7 +359,7 @@ export function PriceChart() {
     const chart = chartRef.current;
     if (!series || !chart) return;
 
-    if (!orderBlocksEnabled || !orderBlocks) {
+    if (!orderBlocksEnabled || !orderBlocksForDisplay) {
       const primitive = orderBlocksPrimitiveRef.current;
       if (primitive) {
         series.detachPrimitive(primitive);
@@ -344,21 +369,21 @@ export function PriceChart() {
     }
 
     const hasBlocks =
-      orderBlocks.bullish.length > 0 ||
-      orderBlocks.bearish.length > 0 ||
-      (orderBlocks.bullishBreakers?.length ?? 0) > 0 ||
-      (orderBlocks.bearishBreakers?.length ?? 0) > 0;
+      (orderBlocksForDisplay.bullish?.length ?? 0) > 0 ||
+      (orderBlocksForDisplay.bearish?.length ?? 0) > 0 ||
+      (orderBlocksForDisplay.bullishBreakers?.length ?? 0) > 0 ||
+      (orderBlocksForDisplay.bearishBreakers?.length ?? 0) > 0;
     const primitive = orderBlocksPrimitiveRef.current;
     if (primitive) {
       series.detachPrimitive(primitive);
       orderBlocksPrimitiveRef.current = null;
     }
     if (hasBlocks) {
-      const newPrimitive = new OrderBlocks(chart, series, orderBlocks);
+      const newPrimitive = new OrderBlocks(chart, series, orderBlocksForDisplay);
       series.attachPrimitive(newPrimitive);
       orderBlocksPrimitiveRef.current = newPrimitive;
     }
-  }, [orderBlocksEnabled, orderBlocks]);
+  }, [orderBlocksEnabled, orderBlocksForDisplay]);
 
   useEffect(() => {
     const series = seriesRef.current;
@@ -397,7 +422,7 @@ export function PriceChart() {
     const chart = chartRef.current;
     if (!series || !chart) return;
 
-    if (!structureEnabled || !structure) {
+    if (!structureEnabled || !structureForDisplay) {
       const primitive = structurePrimitiveRef.current;
       if (primitive) {
         series.detachPrimitive(primitive);
@@ -407,22 +432,22 @@ export function PriceChart() {
     }
 
     const hasStructure =
-      (structure.lines?.length ?? 0) > 0 ||
-      (structure.labels?.length ?? 0) > 0 ||
-      (structure.swingLabels?.length ?? 0) > 0 ||
-      (structure.equalHighsLows?.lines?.length ?? 0) > 0 ||
-      (structure.equalHighsLows?.labels?.length ?? 0) > 0;
+      (structureForDisplay.lines?.length ?? 0) > 0 ||
+      (structureForDisplay.labels?.length ?? 0) > 0 ||
+      (structureForDisplay.swingLabels?.length ?? 0) > 0 ||
+      (structureForDisplay.equalHighsLows?.lines?.length ?? 0) > 0 ||
+      (structureForDisplay.equalHighsLows?.labels?.length ?? 0) > 0;
     const primitive = structurePrimitiveRef.current;
     if (primitive) {
       series.detachPrimitive(primitive);
       structurePrimitiveRef.current = null;
     }
     if (hasStructure) {
-      const newPrimitive = new StructurePrimitive(chart, series, structure);
+      const newPrimitive = new StructurePrimitive(chart, series, structureForDisplay);
       series.attachPrimitive(newPrimitive);
       structurePrimitiveRef.current = newPrimitive;
     }
-  }, [structureEnabled, structure]);
+  }, [structureEnabled, structureForDisplay]);
 
   useEffect(() => {
     const series = seriesRef.current;

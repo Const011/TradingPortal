@@ -62,6 +62,12 @@ type MarketDataContextValue = {
   setCandleColoringEnabled: (enabled: boolean) => void;
   strategyMarkers: "off" | "simulation" | "trade";
   setStrategyMarkers: (mode: "off" | "simulation" | "trade") => void;
+  obShowBull: number;
+  setObShowBull: (n: number) => void;
+  obShowBear: number;
+  setObShowBear: (n: number) => void;
+  swingLabelsShow: number;
+  setSwingLabelsShow: (n: number) => void;
   candles: Candle[];
   volumeProfile: VolumeProfileData | null;
   supportResistance: SupportResistanceData | null;
@@ -96,6 +102,9 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
   const [structureEnabled, setStructureEnabled] = useState<boolean>(false);
   const [candleColoringEnabled, setCandleColoringEnabled] = useState<boolean>(false);
   const [strategyMarkers, setStrategyMarkers] = useState<"off" | "simulation" | "trade">("off");
+  const [obShowBull, setObShowBull] = useState<number>(5);
+  const [obShowBear, setObShowBear] = useState<number>(5);
+  const [swingLabelsShow, setSwingLabelsShow] = useState<number>(15);
   const [candles, setCandles] = useState<Candle[]>([]);
   const [volumeProfile, setVolumeProfile] = useState<VolumeProfileData | null>(null);
   const [supportResistance, setSupportResistance] = useState<SupportResistanceData | null>(null);
@@ -124,6 +133,9 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
     setStructureEnabled(prefs.structureEnabled);
     setCandleColoringEnabled(prefs.candleColoringEnabled);
     setStrategyMarkers(prefs.strategyMarkers);
+    setObShowBull(prefs.obShowBull);
+    setObShowBear(prefs.obShowBear);
+    setSwingLabelsShow(prefs.swingLabelsShow);
   }, []);
 
   useEffect(() => {
@@ -139,8 +151,11 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
       structureEnabled,
       candleColoringEnabled,
       strategyMarkers,
+      obShowBull,
+      obShowBear,
+      swingLabelsShow,
     });
-  }, [selectedSymbol, chartInterval, autoScaleEnabled, logScaleEnabled, volumeProfileEnabled, volumeProfileWindow, supportResistanceEnabled, orderBlocksEnabled, structureEnabled, candleColoringEnabled, strategyMarkers]);
+  }, [selectedSymbol, chartInterval, autoScaleEnabled, logScaleEnabled, volumeProfileEnabled, volumeProfileWindow, supportResistanceEnabled, orderBlocksEnabled, structureEnabled, candleColoringEnabled, strategyMarkers, obShowBull, obShowBear, swingLabelsShow]);
 
   useEffect(() => {
     let mounted = true;
@@ -386,6 +401,12 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
       setCandleColoringEnabled,
       strategyMarkers,
       setStrategyMarkers,
+      obShowBull,
+      setObShowBull,
+      obShowBear,
+      setObShowBear,
+      swingLabelsShow,
+      setSwingLabelsShow,
       candles,
       volumeProfile,
       supportResistance,
@@ -413,6 +434,9 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
       structureEnabled,
       candleColoringEnabled,
       strategyMarkers,
+      obShowBull,
+      obShowBear,
+      swingLabelsShow,
       candles,
       volumeProfile,
       supportResistance,

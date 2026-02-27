@@ -24,6 +24,9 @@ export type StoredChartPreferences = {
   structureEnabled: boolean;
   candleColoringEnabled: boolean;
   strategyMarkers: "off" | "simulation" | "trade";
+  obShowBull: number;
+  obShowBear: number;
+  swingLabelsShow: number;
 };
 
 const DEFAULTS: StoredChartPreferences = {
@@ -38,6 +41,9 @@ const DEFAULTS: StoredChartPreferences = {
   structureEnabled: false,
   candleColoringEnabled: false,
   strategyMarkers: "off",
+  obShowBull: 5,
+  obShowBear: 5,
+  swingLabelsShow: 15,
 };
 
 function parseStored(raw: string | null): Partial<StoredChartPreferences> {
@@ -89,6 +95,27 @@ function parseStored(raw: string | null): Partial<StoredChartPreferences> {
     ) {
       out.strategyMarkers = parsed.strategyMarkers;
     }
+    if (
+      typeof parsed.obShowBull === "number" &&
+      parsed.obShowBull >= 0 &&
+      parsed.obShowBull <= 100
+    ) {
+      out.obShowBull = parsed.obShowBull;
+    }
+    if (
+      typeof parsed.obShowBear === "number" &&
+      parsed.obShowBear >= 0 &&
+      parsed.obShowBear <= 100
+    ) {
+      out.obShowBear = parsed.obShowBear;
+    }
+    if (
+      typeof parsed.swingLabelsShow === "number" &&
+      parsed.swingLabelsShow >= 0 &&
+      parsed.swingLabelsShow <= 100
+    ) {
+      out.swingLabelsShow = parsed.swingLabelsShow;
+    }
     return out;
   } catch {
     return {};
@@ -136,6 +163,14 @@ export function getStoredChartPreferences(): StoredChartPreferences {
       partial.strategyMarkers !== undefined
         ? partial.strategyMarkers
         : DEFAULTS.strategyMarkers,
+    obShowBull:
+      partial.obShowBull !== undefined ? partial.obShowBull : DEFAULTS.obShowBull,
+    obShowBear:
+      partial.obShowBear !== undefined ? partial.obShowBear : DEFAULTS.obShowBear,
+    swingLabelsShow:
+      partial.swingLabelsShow !== undefined
+        ? partial.swingLabelsShow
+        : DEFAULTS.swingLabelsShow,
   };
 }
 
@@ -162,6 +197,9 @@ export function setStoredChartPreferences(
     candleColoringEnabled:
       prefs.candleColoringEnabled ?? current.candleColoringEnabled,
     strategyMarkers: prefs.strategyMarkers ?? current.strategyMarkers,
+    obShowBull: prefs.obShowBull ?? current.obShowBull,
+    obShowBear: prefs.obShowBear ?? current.obShowBear,
+    swingLabelsShow: prefs.swingLabelsShow ?? current.swingLabelsShow,
   };
   window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
 }

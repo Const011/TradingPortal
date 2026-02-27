@@ -147,10 +147,32 @@ export type StrategyStopLineData = {
   style?: string;
 };
 
-/** Strategy output for chart (markers + stop lines). */
+/** Full trade event for AI export (from strategy). */
+export type StrategyTradeEventData = {
+  time: number;
+  barIndex: number;
+  type: string;
+  side: string | null;
+  price: number;
+  targetPrice: number | null;
+  initialStopPrice: number;
+  context: Record<string, unknown>;
+};
+
+/** Trailing stop segment for AI export. */
+export type StrategyStopSegmentData = {
+  startTime: number;
+  endTime: number;
+  price: number;
+  side: string;
+};
+
+/** Strategy output for chart (markers + stop lines + full data for AI). */
 export type StrategySignalsData = {
   markers?: StrategyMarkerData[];
   stopLines?: StrategyStopLineData[];
+  events?: StrategyTradeEventData[];
+  stopSegments?: StrategyStopSegmentData[];
 };
 
 /** Graphics object in stream payload (volume profile + S/R + OB primitives). */

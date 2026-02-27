@@ -286,6 +286,7 @@ The module itself is mode-agnostic: it receives candles and indicators and outpu
 
 ### Strategy + AI + Simulation
 
+- **Strategy data export (frontend):** User downloads bar data, indicators, orders, and trailing stops via "Export for AI" button. The Markdown file with captioned sections is fed to AI for strategy review and improvement proposals.
 - `POST /api/v1/strategies/{strategyId}/review`
 - `POST /api/v1/strategies/{strategyId}/simulate`
 - `GET /api/v1/simulations/{runId}`
@@ -308,6 +309,24 @@ All indicator and strategy calculations run on the backend.
 - `MarketOverview`: watchlist/ticker table with sorting and filtering.
 - `ChartWorkspace`: chart container with series, overlays, and annotation primitives.
 - `StrategyWorkbench`: AI recommendation and simulation comparison panel.
+
+### Strategy Data Export for AI Review
+
+A **data download control** in the chart/indicators area allows exporting the current view's data for AI review and improvement proposals. The export includes:
+
+1. **Bar data (OHLCV)** — Candle open, high, low, close, volume per bar.
+2. **Calculated indicators** — Volume profile, support/resistance levels, order blocks, smart money structure (including candle trend colors).
+3. **Trade orders** — Strategy-generated entry signals with price, target, initial stop, and context.
+4. **Trailing stop events** — Stop level segments over time (start/end time, price, side).
+
+Each section has a **proper caption** so that an AI can parse the document, understand the strategy context, and propose improvements. The export format is Markdown (`.md`), suitable for pasting into AI chat or feeding to the AI Advisor workflow.
+
+### Order Blocks and Swing Labels: Full Data, Frontend Display Control
+
+To simplify data analysis and AI export:
+- **Backend** outputs all order blocks and breaker blocks (within lookback); structure returns up to 50 swing labels.
+- **Frontend** indicators panel lets the user choose how many to **draw**: Bull OB count, Bear OB count, Swing labels count. Defaults: 5, 5, 15.
+- Full data remains available for export and strategy; only the chart rendering is limited.
 
 ### State Approach
 
@@ -334,6 +353,7 @@ Lightweight Charts does not provide built-in box, line, label, or shape primitiv
 - Use series primitives for boxes, lines, labels; reuse/adapt official plugins.
 - Volume profile: official Volume Profile primitive; displayed in inverse orientation, to the right of the main chart. **Computed on the backend** (indicator engine); frontend only displays pre-calculated data. Uses a configurable **window** (default 2000 bars) with recency weighting: `weight = (window - positionFromNewest) / window`. Window is passed via WebSocket query param and persisted in chart preferences.
 - Custom candle colors: set `color`, `wickColor`, `borderColor` per data point in `CandlestickData`; supports 4-way coloring (e.g. swing×internal trend: bright/dark green, bright/dark red).
+- **Order blocks and swing labels display limits:** Backend returns **all** order blocks and breaker blocks (within lookback). Structure returns up to 50 swing labels. The **frontend** controls how many to draw via the indicators panel: "Bull" / "Bear" (order blocks to display) and "Swings" (swing labels). This simplifies data analysis and export while keeping the chart readable.
 - Status/metric tables: render outside the chart (e.g. sidebar or panel) when needed.
 - Keep drawing objects in backend-serializable format (`shapeType`, `points`, `style`, `label`) for reproducibility and auditability.
 - **Graphics objects extension:** Backend returns a `graphics` object containing chart primitives. Volume profile remains a specific object (drawn as-is). Generic primitives (e.g. `horizontalLine` for S/R) use a chart-agnostic schema: `{ type, price, width, extend, style }`. Frontend maps each type to Lightweight Charts drawing. See `docs/indicators-support-resistance-plan.md` and `app/schemas/chart_primitives.py`.
