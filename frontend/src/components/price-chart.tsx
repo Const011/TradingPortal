@@ -24,6 +24,7 @@ import {
 import { useMarketData } from "@/contexts/market-data-context";
 import { OrderBlocks } from "@/lib/chart-plugins/order-blocks";
 import { StructurePrimitive } from "@/lib/chart-plugins/structure";
+import { StrategySignalsPrimitive } from "@/lib/chart-plugins/strategy-signals";
 import { VolumeProfile } from "@/lib/chart-plugins/volume-profile";
 import { IndicatorControlPanel } from "@/components/indicator-control-panel";
 
@@ -69,6 +70,8 @@ export function PriceChart() {
     structureEnabled,
     structure,
     candleColoringEnabled,
+    strategyMarkers,
+    strategySignals,
   } = useMarketData();
   const containerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -78,6 +81,7 @@ export function PriceChart() {
   const supportResistancePriceLinesRef = useRef<IPriceLine[]>([]);
   const orderBlocksPrimitiveRef = useRef<OrderBlocks | null>(null);
   const structurePrimitiveRef = useRef<StructurePrimitive | null>(null);
+  const strategySignalsPrimitiveRef = useRef<StrategySignalsPrimitive | null>(null);
   const seriesMarkersRef = useRef<ReturnType<typeof createSeriesMarkers<Time>> | null>(null);
   const lastFittedKeyRef = useRef<string | null>(null);
 
@@ -195,6 +199,11 @@ export function PriceChart() {
       if (structPrim) {
         candlestickSeries.detachPrimitive(structPrim);
         structurePrimitiveRef.current = null;
+      }
+      const strategyPrim = strategySignalsPrimitiveRef.current;
+      if (strategyPrim) {
+        candlestickSeries.detachPrimitive(strategyPrim);
+        strategySignalsPrimitiveRef.current = null;
       }
       chart.remove();
       chartRef.current = null;
@@ -355,14 +364,23 @@ export function PriceChart() {
     const series = seriesRef.current;
     if (!series) return;
 
-    const markers = orderBlocksEnabled && orderBlocks?.barMarkers && orderBlocks.barMarkers.length > 0
-      ? orderBlocks.barMarkers.map((m) => ({
-          time: m.time as Time,
-          position: m.position === "below" ? "belowBar" as const : "aboveBar" as const,
-          shape: (m.shape === "triangleUp" ? "arrowUp" : m.shape === "triangleDown" ? "arrowDown" : "circle") as "arrowUp" | "arrowDown" | "circle",
-          color: m.color,
-        }))
-      : [];
+    const markers =
+      strategyMarkers !== "off" &&
+      strategySignals?.markers &&
+      strategySignals.markers.length > 0
+        ? strategySignals.markers.map((m) => ({
+            time: m.time as Time,
+            position: (m.position === "below" ? "belowBar" : "aboveBar") as
+              | "belowBar"
+              | "aboveBar",
+            shape: (m.shape === "arrowUp"
+              ? "arrowUp"
+              : m.shape === "arrowDown"
+                ? "arrowDown"
+                : "circle") as "arrowUp" | "arrowDown" | "circle",
+            color: m.color,
+          }))
+        : [];
 
     if (seriesMarkersRef.current) {
       seriesMarkersRef.current.setMarkers(markers);
@@ -372,7 +390,7 @@ export function PriceChart() {
     if (markers.length === 0 && seriesMarkersRef.current) {
       seriesMarkersRef.current.setMarkers([]);
     }
-  }, [orderBlocksEnabled, orderBlocks?.barMarkers]);
+  }, [strategyMarkers, strategySignals?.markers]);
 
   useEffect(() => {
     const series = seriesRef.current;
@@ -405,6 +423,34 @@ export function PriceChart() {
       structurePrimitiveRef.current = newPrimitive;
     }
   }, [structureEnabled, structure]);
+
+  useEffect(() => {
+    const series = seriesRef.current;
+    const chart = chartRef.current;
+    if (!series || !chart) return;
+
+    const showStopLines =
+      strategyMarkers !== "off" &&
+      strategySignals?.stopLines &&
+      strategySignals.stopLines.length > 0;
+
+    if (!showStopLines) {
+      const primitive = strategySignalsPrimitiveRef.current;
+      if (primitive) {
+        series.detachPrimitive(primitive);
+        strategySignalsPrimitiveRef.current = null;
+      }
+      return;
+    }
+
+    const primitive = strategySignalsPrimitiveRef.current;
+    if (primitive) {
+      series.detachPrimitive(primitive);
+    }
+    const newPrimitive = new StrategySignalsPrimitive(chart, series, strategySignals);
+    series.attachPrimitive(newPrimitive);
+    strategySignalsPrimitiveRef.current = newPrimitive;
+  }, [strategyMarkers, strategySignals]);
 
   return (
     <div

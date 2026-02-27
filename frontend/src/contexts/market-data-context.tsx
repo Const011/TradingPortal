@@ -35,6 +35,7 @@ import {
   type SupportResistanceData,
   type OrderBlocksData,
   type SmartMoneyStructureData,
+  type StrategySignalsData,
 } from "@/lib/types/market";
 
 type MarketDataContextValue = {
@@ -59,11 +60,14 @@ type MarketDataContextValue = {
   setStructureEnabled: (enabled: boolean) => void;
   candleColoringEnabled: boolean;
   setCandleColoringEnabled: (enabled: boolean) => void;
+  strategyMarkers: "off" | "simulation" | "trade";
+  setStrategyMarkers: (mode: "off" | "simulation" | "trade") => void;
   candles: Candle[];
   volumeProfile: VolumeProfileData | null;
   supportResistance: SupportResistanceData | null;
   orderBlocks: OrderBlocksData | null;
   structure: SmartMoneyStructureData | null;
+  strategySignals: StrategySignalsData | null;
   currentBar: CurrentBar | null;
   hoveredBarTime: number | null;
   setHoveredBarTime: (time: number | null) => void;
@@ -91,11 +95,13 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
   const [orderBlocksEnabled, setOrderBlocksEnabled] = useState<boolean>(false);
   const [structureEnabled, setStructureEnabled] = useState<boolean>(false);
   const [candleColoringEnabled, setCandleColoringEnabled] = useState<boolean>(false);
+  const [strategyMarkers, setStrategyMarkers] = useState<"off" | "simulation" | "trade">("off");
   const [candles, setCandles] = useState<Candle[]>([]);
   const [volumeProfile, setVolumeProfile] = useState<VolumeProfileData | null>(null);
   const [supportResistance, setSupportResistance] = useState<SupportResistanceData | null>(null);
   const [orderBlocks, setOrderBlocks] = useState<OrderBlocksData | null>(null);
   const [structure, setStructure] = useState<SmartMoneyStructureData | null>(null);
+  const [strategySignals, setStrategySignals] = useState<StrategySignalsData | null>(null);
   const [tickers, setTickers] = useState<Record<string, TickerSnapshot>>({});
   const [latestTick, setLatestTick] = useState<TickerTick | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
@@ -117,6 +123,7 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
     setOrderBlocksEnabled(prefs.orderBlocksEnabled);
     setStructureEnabled(prefs.structureEnabled);
     setCandleColoringEnabled(prefs.candleColoringEnabled);
+    setStrategyMarkers(prefs.strategyMarkers);
   }, []);
 
   useEffect(() => {
@@ -131,8 +138,9 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
       orderBlocksEnabled,
       structureEnabled,
       candleColoringEnabled,
+      strategyMarkers,
     });
-  }, [selectedSymbol, chartInterval, autoScaleEnabled, logScaleEnabled, volumeProfileEnabled, volumeProfileWindow, supportResistanceEnabled, orderBlocksEnabled, structureEnabled, candleColoringEnabled]);
+  }, [selectedSymbol, chartInterval, autoScaleEnabled, logScaleEnabled, volumeProfileEnabled, volumeProfileWindow, supportResistanceEnabled, orderBlocksEnabled, structureEnabled, candleColoringEnabled, strategyMarkers]);
 
   useEffect(() => {
     let mounted = true;
@@ -178,16 +186,22 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
     setSupportResistance(null);
     setOrderBlocks(null);
     setStructure(null);
+    setStrategySignals(null);
     const ws = new WebSocket(
-      getCandlesWebSocketUrl(selectedSymbol, chartInterval, volumeProfileWindow)
+      getCandlesWebSocketUrl(
+        selectedSymbol,
+        chartInterval,
+        volumeProfileWindow,
+        strategyMarkers
+      )
     );
     candleSocketRef.current = ws;
 
     ws.onmessage = (event: MessageEvent<string>) => {
       try {
         const payload = JSON.parse(event.data) as
-          | { event: "snapshot"; candles: Candle[]; graphics?: { volumeProfile?: VolumeProfileData; supportResistance?: SupportResistanceData; orderBlocks?: OrderBlocksData; smartMoney?: { structure?: SmartMoneyStructureData } }; volumeProfile?: VolumeProfileData }
-          | { event: "upsert"; candle: Candle; graphics?: { volumeProfile?: VolumeProfileData; supportResistance?: SupportResistanceData; orderBlocks?: OrderBlocksData; smartMoney?: { structure?: SmartMoneyStructureData } }; volumeProfile?: VolumeProfileData }
+          | { event: "snapshot"; candles: Candle[]; graphics?: { volumeProfile?: VolumeProfileData; supportResistance?: SupportResistanceData; orderBlocks?: OrderBlocksData; smartMoney?: { structure?: SmartMoneyStructureData }; strategySignals?: StrategySignalsData }; volumeProfile?: VolumeProfileData }
+          | { event: "upsert"; candle: Candle; graphics?: { volumeProfile?: VolumeProfileData; supportResistance?: SupportResistanceData; orderBlocks?: OrderBlocksData; smartMoney?: { structure?: SmartMoneyStructureData }; strategySignals?: StrategySignalsData }; volumeProfile?: VolumeProfileData }
           | { event: "heartbeat" };
         if (payload.event === "heartbeat") {
           return;
@@ -199,6 +213,7 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
           setSupportResistance(graphics?.supportResistance ?? null);
           setOrderBlocks(graphics?.orderBlocks ?? null);
           setStructure(graphics?.smartMoney?.structure ?? null);
+          setStrategySignals(graphics?.strategySignals ?? null);
           return;
         }
         if (graphics) {
@@ -206,6 +221,7 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
           if (graphics.supportResistance !== undefined) setSupportResistance(graphics.supportResistance ?? null);
           if (graphics.orderBlocks !== undefined) setOrderBlocks(graphics.orderBlocks ?? null);
           if (graphics.smartMoney?.structure !== undefined) setStructure(graphics.smartMoney.structure ?? null);
+          if (graphics.strategySignals !== undefined) setStrategySignals(graphics.strategySignals ?? null);
         }
         setCandles((current) => {
           if (current.length === 0) {
@@ -237,7 +253,7 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
       ws.close();
       candleSocketRef.current = null;
     };
-  }, [selectedSymbol, chartInterval, volumeProfileWindow]);
+  }, [selectedSymbol, chartInterval, volumeProfileWindow, strategyMarkers]);
 
   useEffect(() => {
     if (symbols.length === 0) {
@@ -366,13 +382,16 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
   setOrderBlocksEnabled,
   structureEnabled,
   setStructureEnabled,
-  candleColoringEnabled,
-  setCandleColoringEnabled,
-  candles,
+      candleColoringEnabled,
+      setCandleColoringEnabled,
+      strategyMarkers,
+      setStrategyMarkers,
+      candles,
       volumeProfile,
       supportResistance,
       orderBlocks,
       structure,
+      strategySignals,
       currentBar,
       hoveredBarTime,
       setHoveredBarTime,
@@ -393,11 +412,13 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
       orderBlocksEnabled,
       structureEnabled,
       candleColoringEnabled,
+      strategyMarkers,
       candles,
       volumeProfile,
       supportResistance,
       orderBlocks,
       structure,
+      strategySignals,
       currentBar,
       hoveredBarTime,
       tickers,

@@ -155,6 +155,7 @@ This document is intentionally scoped to **Spot trading only** for v1 to reduce 
 - `Fill` (orderId, price, qty, fee, feeAsset, ts).
 - `Position` (symbol, qty, avgCost, marketValue, unrealizedPnl).
 - `IndicatorValue` (symbol, timeframe, indicator, paramsHash, value, ts).
+- `TradeEvent` (time, barIndex, type, side, price, targetPrice?, initialStopPrice, context) — output of Trading Strategy module; consumed by simulation and live signal modules. `initialStopPrice` is required for any order; `targetPrice` optional for close-on-target.
 - `StrategyVersion` (strategyId, version, parameters, indicators, approvalState).
 - `SimulationRun` (strategyVersion, datasetRange, metrics, artifacts, verdict).
 - `AiSuggestion` (model, inputSummary, proposedChanges, confidence, risks).
@@ -199,6 +200,10 @@ flowchart LR
   aiAdvisorSvc --> openrouterApi[OpenRouterApi]
   aiAdvisorSvc --> simulatorSvc
   strategySvc --> simulatorSvc
+
+  marketDataSvc --> tradingStrategy[TradingStrategyModule]
+  indicatorSvc --> tradingStrategy
+  tradingStrategy --> simulatorSvc
 ```
 
 ### Service Responsibilities
@@ -206,10 +211,27 @@ flowchart LR
 - **API Gateway (FastAPI):** auth, request validation, external API contracts, websocket fanout.
 - **Market Data Service:** symbol/ticker/candle ingestion, normalization, and indicator computation (e.g. volume profile in CandleStreamHub).
 - **Execution Service:** order intent -> exchange execution -> state updates.
-- **Indicator Service:** compute and publish indicator time series (single source of truth for strategies and frontend).
+- **Indicator Service:** compute and publish indicator time series (single source of truth for strategies and frontend). Indicators are pure computation (OB zones, structure, volume profile, S/R).
+- **Trading Strategy Module:** consumes candles and pre-calculated indicators; produces **trade events** (signals) in a unified format. Strategy-agnostic: same output for historic simulation and live signal generation. See *Trading Strategy Module* below.
 - **Strategy Service:** parameter versioning, approval workflow, strategy metadata.
 - **AI Advisor Service:** OpenRouter calls, schema-validated suggestions, explainability metadata.
-- **Simulator Service:** deterministic backtests for baseline vs candidate strategies.
+- **Simulator Service:** consumes trade events from Trading Strategy; deterministic backtests for baseline vs candidate strategies.
+
+### Trading Strategy Module
+
+The **Trading Strategy** module is the core signal engine. It runs at the backend and is consumed by two modes:
+
+1. **Historic simulation + evaluation** — Simulator replays historical candles, runs strategy, maps trade events to entries/exits, computes PnL and metrics.
+2. **Live trade signal generation** — A live runner subscribes to candle stream, invokes strategy on each update, produces `OrderIntent` for applicable events.
+
+The module itself is mode-agnostic: it receives candles and indicators and outputs **TradeEvent[]** (time, type, side, price, context). Simulation and live execution are implemented in separate modules that consume these events.
+
+**Design principles:**
+- Indicators (order blocks, structure, volume profile) remain pure computation; no trade logic.
+- Bar markers (boundary cross, breaker created) are **trade events** produced by the strategy module, not by indicators. Chart bar markers, when displayed, are derived from strategy output.
+- Strategy output format supports both backtest (bar-by-bar replay) and live (event-driven) consumption.
+
+**Module structure:** `backend/app/services/trading_strategy/` — types (`TradeEvent`), strategy implementations (e.g. order-block signals), optional conversion to bar markers for chart display. See `docs/trading-strategy-module-plan.md` for implementation details.
 
 ### Runtime Pattern
 
@@ -222,9 +244,9 @@ flowchart LR
 ### Candle Stream (Chart Data + Graphics)
 
 1. Frontend subscribes to `WS /api/v1/stream/candles/{symbol}?interval=...&volume_profile_window=2000`.
-2. Backend `CandleStreamHub` fetches REST kline (spot), computes indicators, builds a **graphics** object (volume profile, support/resistance lines, etc.), broadcasts snapshot with `candles` and `graphics`.
+2. Backend `CandleStreamHub` fetches REST kline (spot), computes indicators (volume profile, order blocks, structure, S/R), builds a **graphics** object, broadcasts snapshot with `candles` and `graphics`.
 3. Backend subscribes to Bybit kline WebSocket (spot); for each bar update: replace last candle or append new bar; recompute graphics; on new bar start, refetch REST and broadcast fresh snapshot.
-4. `graphics` structure: `{ volumeProfile: {...}, supportResistance: { lines: [...] } }`. Volume profile is a specific object; S/R lines use generic `horizontalLine` primitives. Frontend renders each type accordingly.
+4. `graphics` structure: `{ volumeProfile: {...}, supportResistance: { lines: [...] }, orderBlocks: {...}, smartMoney: { structure: {...} } }`. Order blocks are pure indicator output (OB zones only). Bar markers (boundary cross, breaker), when included, come from the **Trading Strategy** module (trade events → chart markers).
 5. Frontend applies snapshot/upsert events; chart renders candles and graphics. No client-side indicator computation.
 
 ### Ticker Stream (Ticker List Only)
@@ -235,7 +257,8 @@ flowchart LR
 ### General
 
 1. **Backend** indicator job computes values per configured symbol/timeframe and writes `IndicatorValue`; chart indicators (e.g. volume profile) are computed in the candle stream pipeline and included in stream payloads.
-2. **Backend** strategy generates `OrderIntent`; Execution Service submits to Bybit.
+2. **Trading Strategy** consumes candles and indicators and produces `TradeEvent[]`. Simulation and live modules consume these events.
+3. **Backend** live signal flow: strategy emits events → mapped to `OrderIntent` → Execution Service submits to Bybit.
 3. Order updates and fills are persisted and reflected in positions.
 4. Historical trades + indicators feed AI Advisor request.
 5. AI Advisor returns schema-valid parameter proposals.
@@ -357,6 +380,12 @@ Lightweight Charts does not provide built-in box, line, label, or shape primitiv
 - OpenRouter integration with structured outputs.
 - Simulation comparison reports and strategy proposal UX.
 - Feedback loop from simulation results back into AI review prompts.
+
+### Trading Strategy Module (see docs/trading-strategy-module-plan.md)
+
+- Extract bar marker logic from Order Blocks into Trading Strategy module.
+- Order Blocks becomes pure indicator; strategy produces `TradeEvent[]`.
+- Wire strategy output for chart bar markers (optional); prepare for simulation and live signal consumption.
 
 ## 15) Risks and Mitigations
 

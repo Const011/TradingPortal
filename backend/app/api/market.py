@@ -111,6 +111,7 @@ async def stream_candles(
     symbol: str,
     interval: str = Query(default="1", description="Kline interval (e.g. 1, 5, 15, 60, D)"),
     volume_profile_window: int = Query(default=2000, ge=100, le=10000),
+    strategy_markers: str = Query(default="off", description="Strategy markers: off, simulation, trade"),
     candle_stream_hub: CandleStreamHub = Depends(get_candle_stream_hub),
 ) -> None:
     """[Frontend] Stream merged candle data: initial snapshot + live bar updates + indicators.
@@ -122,7 +123,10 @@ async def stream_candles(
     await websocket.accept()
     normalized_symbol = symbol.upper()
     queue = await candle_stream_hub.subscribe(
-        normalized_symbol, interval, volume_profile_window=volume_profile_window
+        normalized_symbol,
+        interval,
+        volume_profile_window=volume_profile_window,
+        strategy_markers=strategy_markers if strategy_markers in ("simulation", "trade") else "off",
     )
     try:
         while True:

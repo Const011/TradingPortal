@@ -100,11 +100,13 @@ The Pine script combines several SMC (Smart Money Concepts) and Order Block comp
 
 ### 1.7 Position Indicators (Shapes)
 
-**Logic:**
+**Logic:** Boundary cross and breaker events (trade signals):
 - `bullish_boundary_crossed` → triangle up, below bar
 - `bearish_boundary_crossed` → triangle down, above bar
 - `bullish_breaker_created` → diamond, below bar
 - `bearish_breaker_created` → diamond, above bar
+
+**Architecture note:** As of the Trading Strategy module plan, these events are **trade events** produced by the Trading Strategy module (not by Order Blocks). Order Blocks remains a pure indicator (OB zones only). Bar markers for chart display are derived from strategy output when wired. See `docs/trading-strategy-module-plan.md`.
 
 ---
 
@@ -226,6 +228,8 @@ All indicator logic runs on the backend. Frontend receives:
   }
 }
 ```
+
+**Note:** `barMarkers` are produced by the **Trading Strategy** module (trade events → chart markers), not by the Order Blocks indicator. When wired, they may appear under `graphics.tradeSignals` or `graphics.orderBlocks.barMarkers` (sourced from strategy).
 
 ### 3.3 Candle Color Overrides
 

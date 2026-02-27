@@ -23,6 +23,7 @@ export type StoredChartPreferences = {
   orderBlocksEnabled: boolean;
   structureEnabled: boolean;
   candleColoringEnabled: boolean;
+  strategyMarkers: "off" | "simulation" | "trade";
 };
 
 const DEFAULTS: StoredChartPreferences = {
@@ -36,6 +37,7 @@ const DEFAULTS: StoredChartPreferences = {
   orderBlocksEnabled: false,
   structureEnabled: false,
   candleColoringEnabled: false,
+  strategyMarkers: "off",
 };
 
 function parseStored(raw: string | null): Partial<StoredChartPreferences> {
@@ -80,6 +82,13 @@ function parseStored(raw: string | null): Partial<StoredChartPreferences> {
     if (typeof parsed.candleColoringEnabled === "boolean") {
       out.candleColoringEnabled = parsed.candleColoringEnabled;
     }
+    if (
+      parsed.strategyMarkers === "off" ||
+      parsed.strategyMarkers === "simulation" ||
+      parsed.strategyMarkers === "trade"
+    ) {
+      out.strategyMarkers = parsed.strategyMarkers;
+    }
     return out;
   } catch {
     return {};
@@ -123,6 +132,10 @@ export function getStoredChartPreferences(): StoredChartPreferences {
       partial.candleColoringEnabled !== undefined
         ? partial.candleColoringEnabled
         : DEFAULTS.candleColoringEnabled,
+    strategyMarkers:
+      partial.strategyMarkers !== undefined
+        ? partial.strategyMarkers
+        : DEFAULTS.strategyMarkers,
   };
 }
 
@@ -148,6 +161,7 @@ export function setStoredChartPreferences(
       prefs.structureEnabled ?? current.structureEnabled,
     candleColoringEnabled:
       prefs.candleColoringEnabled ?? current.candleColoringEnabled,
+    strategyMarkers: prefs.strategyMarkers ?? current.strategyMarkers,
   };
   window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
 }

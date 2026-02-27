@@ -58,24 +58,20 @@ def _swings(
     return sh[0], sh[1], sl[0], sl[1], os_new
 
 
-def compute_order_blocks(
+def _iter_order_blocks_with_events(
     candles: list[Candle],
     swing_length: int = DEFAULT_SWING_LENGTH,
-    show_bull: int = DEFAULT_SHOW_BULL,
-    show_bear: int = DEFAULT_SHOW_BEAR,
     use_body: bool = False,
     keep_breakers: bool = True,
-) -> dict:
+):
     """
-    Compute bullish and bearish order blocks from candle data.
-    Returns dict with bullish/bearish lists of OB primitives for graphics.
-    keep_breakers: if True (default), breaker OBs stay visible; if False, they are removed when price closes beyond.
+    Generator yielding per-bar OB state and raw events (boundary cross, breaker created).
+    Yields: (bar_index, candle, bullish_ob_list, bearish_ob_list, events_this_bar).
     """
     if len(candles) < swing_length + 2:
-        return {"bullish": [], "bearish": [], "bullishBreakers": [], "bearishBreakers": [], "barMarkers": []}
+        return
 
     n = len(candles)
-    bar_markers: list[dict] = []
     bullish_ob: list[OrderBlock] = []
     bearish_ob: list[OrderBlock] = []
     top_crossed = False
@@ -146,30 +142,71 @@ def compute_order_blocks(
                         loc_bar = j
                 bearish_ob.insert(0, OrderBlock(top=maxima, bottom=minima, loc=loc_bar, breaker=False, break_loc=None, fill_color=BEAR_FILL))
 
-        # Mark bullish OBs as breakers if price wicks below bottom; collect bar markers
+        # Mark bullish OBs as breakers; detect boundary cross; collect events
+        events_this_bar: list[dict] = []
         for ob in list(bullish_ob):
             if not ob.breaker and ob.loc < i:
                 if min(c.close, c.open) < ob.bottom:
                     ob.breaker = True
                     ob.break_loc = i
-                    bar_markers.append({"time": c.time // 1000, "type": "bullish_breaker_created", "position": "below", "shape": "diamond", "color": "#9333ea"})
+                    events_this_bar.append({
+                        "type": "bullish_breaker_created",
+                        "ob_top": ob.top, "ob_bottom": ob.bottom, "ob_loc": ob.loc,
+                    })
                 elif c.open >= ob.bottom and c.open <= ob.top and c.close > ob.top and c.close > c.open:
-                    bar_markers.append({"time": c.time // 1000, "type": "bullish_boundary_crossed", "position": "below", "shape": "triangleUp", "color": "#2563eb"})
+                    events_this_bar.append({
+                        "type": "bullish_boundary_crossed",
+                        "ob_top": ob.top, "ob_bottom": ob.bottom, "ob_loc": ob.loc,
+                    })
             elif not keep_breakers and c.close > ob.top:
                 bullish_ob.remove(ob)
 
-        # Mark bearish OBs as breakers if price wicks above top; collect bar markers
+        # Mark bearish OBs as breakers; detect boundary cross
         for ob in list(bearish_ob):
             if not ob.breaker and ob.loc < i:
                 if max(c.close, c.open) > ob.top:
                     ob.breaker = True
                     ob.break_loc = i
-                    bar_markers.append({"time": c.time // 1000, "type": "bearish_breaker_created", "position": "above", "shape": "diamond", "color": "#9333ea"})
+                    events_this_bar.append({
+                        "type": "bearish_breaker_created",
+                        "ob_top": ob.top, "ob_bottom": ob.bottom, "ob_loc": ob.loc,
+                    })
                 elif c.open >= ob.bottom and c.open <= ob.top and c.close < ob.bottom and c.close < c.open:
-                    bar_markers.append({"time": c.time // 1000, "type": "bearish_boundary_crossed", "position": "above", "shape": "triangleDown", "color": "#dc2626"})
+                    events_this_bar.append({
+                        "type": "bearish_boundary_crossed",
+                        "ob_top": ob.top, "ob_bottom": ob.bottom, "ob_loc": ob.loc,
+                    })
             elif not keep_breakers and c.close < ob.bottom:
                 bearish_ob.remove(ob)
 
+        yield (i, c, list(bullish_ob), list(bearish_ob), events_this_bar)
+
+
+def compute_order_blocks(
+    candles: list[Candle],
+    swing_length: int = DEFAULT_SWING_LENGTH,
+    show_bull: int = DEFAULT_SHOW_BULL,
+    show_bear: int = DEFAULT_SHOW_BEAR,
+    use_body: bool = False,
+    keep_breakers: bool = True,
+) -> dict:
+    """
+    Compute bullish and bearish order blocks from candle data.
+    Returns dict with bullish/bearish lists of OB primitives for graphics.
+    keep_breakers: if True (default), breaker OBs stay visible; if False, they are removed when price closes beyond.
+    """
+    if len(candles) < swing_length + 2:
+        return {"bullish": [], "bearish": [], "bullishBreakers": [], "bearishBreakers": []}
+
+    bullish_ob: list[OrderBlock] = []
+    bearish_ob: list[OrderBlock] = []
+    for _i, _c, bull, bear, _ev in _iter_order_blocks_with_events(
+        candles, swing_length=swing_length, use_body=use_body, keep_breakers=keep_breakers
+    ):
+        bullish_ob = bull
+        bearish_ob = bear
+
+    n = len(candles)
     # Split into active (not crossed) vs breakers (crossed); keep within MAX_LOOKBACK; take show_* most recent of each
     last_bar = n - 1
     in_range = lambda ob: last_bar - ob.loc <= MAX_LOOKBACK
@@ -199,5 +236,4 @@ def compute_order_blocks(
         "bearish": [ob_to_primitive(ob, BEAR_FILL) for ob in bearish_active],
         "bullishBreakers": [ob_to_primitive(ob, BULL_BREAKER_FILL) for ob in bullish_breakers],
         "bearishBreakers": [ob_to_primitive(ob, BEAR_BREAKER_FILL) for ob in bearish_breakers],
-        "barMarkers": bar_markers,
     }

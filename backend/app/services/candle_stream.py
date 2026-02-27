@@ -8,6 +8,8 @@ from app.services.indicators.volume_profile import build_volume_profile_from_can
 from app.services.indicators.support_resistance import compute_support_resistance_lines
 from app.services.indicators.order_blocks import compute_order_blocks
 from app.services.indicators.smart_money_structure import compute_structure
+from app.services.trading_strategy.order_block_trend_following import compute_order_block_trend_following
+from app.services.trading_strategy.chart_format import strategy_output_to_chart
 
 DEFAULT_VOLUME_PROFILE_WINDOW = 2000
 
@@ -16,7 +18,11 @@ def _candle_from_bar(start: int, open_: float, high: float, low: float, close: f
     return Candle(time=start, open=open_, high=high, low=low, close=close, volume=volume)
 
 
-def _make_snapshot_payload(candles: list[Candle], volume_profile_window: int) -> dict:
+def _make_snapshot_payload(
+    candles: list[Candle],
+    volume_profile_window: int,
+    strategy_markers: str = "off",
+) -> dict:
     payload: dict = {
         "event": "snapshot",
         "candles": [c.model_dump() for c in candles],
@@ -36,12 +42,25 @@ def _make_snapshot_payload(candles: list[Candle], volume_profile_window: int) ->
         )
         if vp:
             graphics["volumeProfile"] = vp
-            graphics["supportResistance"] = {"lines": compute_support_resistance_lines(vp["profile"])}
+            sr_lines = compute_support_resistance_lines(vp["profile"])
+            graphics["supportResistance"] = {"lines": sr_lines}
+            if strategy_markers in ("simulation", "trade"):
+                trade_events, stop_segments = compute_order_block_trend_following(
+                    candles,
+                    candle_colors=structure_result.get("candleColors"),
+                    sr_lines=sr_lines,
+                )
+                graphics["strategySignals"] = strategy_output_to_chart(trade_events, stop_segments)
         payload["graphics"] = graphics
     return payload
 
 
-def _make_upsert_payload(candle: Candle, candles: list[Candle], volume_profile_window: int) -> dict:
+def _make_upsert_payload(
+    candle: Candle,
+    candles: list[Candle],
+    volume_profile_window: int,
+    strategy_markers: str = "off",
+) -> dict:
     payload: dict = {
         "event": "upsert",
         "candle": candle.model_dump(),
@@ -61,7 +80,15 @@ def _make_upsert_payload(candle: Candle, candles: list[Candle], volume_profile_w
         )
         if vp:
             graphics["volumeProfile"] = vp
-            graphics["supportResistance"] = {"lines": compute_support_resistance_lines(vp["profile"])}
+            sr_lines = compute_support_resistance_lines(vp["profile"])
+            graphics["supportResistance"] = {"lines": sr_lines}
+            if strategy_markers in ("simulation", "trade"):
+                trade_events, stop_segments = compute_order_block_trend_following(
+                    candles,
+                    candle_colors=structure_result.get("candleColors"),
+                    sr_lines=sr_lines,
+                )
+                graphics["strategySignals"] = strategy_output_to_chart(trade_events, stop_segments)
         payload["graphics"] = graphics
     return payload
 
@@ -72,6 +99,7 @@ class CandleStreamState:
     candles: list[Candle] = field(default_factory=list)
     task: asyncio.Task[None] | None = None
     volume_profile_window: int = DEFAULT_VOLUME_PROFILE_WINDOW
+    strategy_markers: str = "off"
 
 
 class CandleStreamHub:
@@ -86,6 +114,7 @@ class CandleStreamHub:
         symbol: str,
         interval: str,
         volume_profile_window: int = DEFAULT_VOLUME_PROFILE_WINDOW,
+        strategy_markers: str = "off",
     ) -> asyncio.Queue[dict]:
         queue: asyncio.Queue[dict] = asyncio.Queue(maxsize=200)
         stream_key = (symbol, interval)
@@ -94,10 +123,12 @@ class CandleStreamHub:
             state = self._streams[stream_key]
             state.queues.add(queue)
             state.volume_profile_window = volume_profile_window
+            state.strategy_markers = strategy_markers
             if state.candles:
                 snapshot_payload = _make_snapshot_payload(
                     state.candles,
                     state.volume_profile_window,
+                    state.strategy_markers,
                 )
             if state.task is None or state.task.done():
                 state.task = asyncio.create_task(self._run_stream(symbol, interval))
@@ -132,7 +163,9 @@ class CandleStreamHub:
                     if state is None:
                         return
                     state.candles = candles
-                payload = _make_snapshot_payload(candles, state.volume_profile_window)
+                payload = _make_snapshot_payload(
+                    candles, state.volume_profile_window, state.strategy_markers
+                )
                 await self._broadcast(stream_key, payload)
 
                 async for bar in self._bybit_client.stream_kline(symbol, interval):
@@ -154,7 +187,10 @@ class CandleStreamHub:
                         if not state.candles:
                             state.candles = [candidate]
                             event_payload = _make_upsert_payload(
-                                candidate, state.candles, state.volume_profile_window
+                                candidate,
+                                state.candles,
+                                state.volume_profile_window,
+                                state.strategy_markers,
                             )
                         else:
                             last = state.candles[-1]
@@ -163,20 +199,29 @@ class CandleStreamHub:
                                 if len(state.candles) > self._snapshot_limit:
                                     state.candles = state.candles[-self._snapshot_limit :]
                                 event_payload = _make_upsert_payload(
-                                    candidate, state.candles, state.volume_profile_window
+                                    candidate,
+                                    state.candles,
+                                    state.volume_profile_window,
+                                    state.strategy_markers,
                                 )
                                 do_resync = True
                             elif candidate.time == last.time:
                                 state.candles[-1] = candidate
                                 event_payload = _make_upsert_payload(
-                                    candidate, state.candles, state.volume_profile_window
+                                    candidate,
+                                    state.candles,
+                                    state.volume_profile_window,
+                                    state.strategy_markers,
                                 )
                             else:
                                 for idx, candle in enumerate(state.candles):
                                     if candle.time == candidate.time:
                                         state.candles[idx] = candidate
                                         event_payload = _make_upsert_payload(
-                                            candidate, state.candles, state.volume_profile_window
+                                            candidate,
+                                            state.candles,
+                                            state.volume_profile_window,
+                                            state.strategy_markers,
                                         )
                                         break
 
@@ -203,7 +248,10 @@ class CandleStreamHub:
                 return
             state.candles = candles
             vp_window = state.volume_profile_window
-        await self._broadcast(stream_key, _make_snapshot_payload(candles, vp_window))
+            strategy_markers = state.strategy_markers
+        await self._broadcast(
+            stream_key, _make_snapshot_payload(candles, vp_window, strategy_markers)
+        )
 
     async def _broadcast(self, stream_key: tuple[str, str], payload: dict) -> None:
         async with self._lock:

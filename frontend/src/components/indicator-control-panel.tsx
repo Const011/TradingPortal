@@ -41,6 +41,8 @@ export function IndicatorControlPanel() {
     setStructureEnabled,
     candleColoringEnabled,
     setCandleColoringEnabled,
+    strategyMarkers,
+    setStrategyMarkers,
   } = useMarketData();
 
   return (
@@ -83,6 +85,19 @@ export function IndicatorControlPanel() {
       >
         Candle Coloring
       </button>
+      <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+        <span style={{ fontSize: 12, color: "#5f6368" }}>Markers:</span>
+        {(["off", "simulation", "trade"] as const).map((mode) => (
+          <button
+            key={mode}
+            type="button"
+            onClick={() => setStrategyMarkers(mode)}
+            style={strategyMarkers === mode ? toggleButtonActiveStyle : toggleButtonStyle}
+          >
+            {mode === "off" ? "Off" : mode === "simulation" ? "Sim" : "Trade"}
+          </button>
+        ))}
+      </div>
       {volumeProfileEnabled && (
         <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
           <span style={{ fontSize: 12, color: "#5f6368" }}>Window:</span>

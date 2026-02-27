@@ -25,8 +25,8 @@ INTERNAL_BEAR_COLOR = "rgba(239, 68, 68, 0.6)"
 # Candle trend colors (swing × internal): bright/dark green, bright/dark red
 CANDLE_SWING_BULL_INTERNAL_BULL = "#22c55e"
 CANDLE_SWING_BULL_INTERNAL_BEAR = "#15803d"
-CANDLE_SWING_BEAR_INTERNAL_BULL = "#dc2626"
-CANDLE_SWING_BEAR_INTERNAL_BEAR = "#b91c1c"
+CANDLE_SWING_BEAR_INTERNAL_BULL = "#b91c1c"
+CANDLE_SWING_BEAR_INTERNAL_BEAR = "#dc2626"
 
 
 def _trend_to_color(swing: int, internal: int) -> str:

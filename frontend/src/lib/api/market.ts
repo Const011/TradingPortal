@@ -52,11 +52,14 @@ export function getTicksWebSocketUrl(symbol: string): string {
   return `${normalizedBaseUrl}/api/v1/stream/ticks/${symbol}`;
 }
 
+export type StrategyMarkersMode = "off" | "simulation" | "trade";
+
 /** [Backend] WS /stream/candles. Merged snapshot + live bar updates + indicators; use for chart data. */
 export function getCandlesWebSocketUrl(
   symbol: string,
   interval: string,
-  volumeProfileWindow: number = 2000
+  volumeProfileWindow: number = 2000,
+  strategyMarkers: StrategyMarkersMode = "off"
 ): string {
   const normalizedBaseUrl = backendBaseUrl.replace("https://", "wss://").replace(
     "http://",
@@ -65,6 +68,7 @@ export function getCandlesWebSocketUrl(
   const params = new URLSearchParams({
     interval,
     volume_profile_window: String(volumeProfileWindow),
+    strategy_markers: strategyMarkers,
   });
   return `${normalizedBaseUrl}/api/v1/stream/candles/${symbol}?${params.toString()}`;
 }

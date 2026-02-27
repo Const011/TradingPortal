@@ -129,12 +129,37 @@ export type OrderBlocksData = {
   barMarkers?: BarMarkerData[];
 };
 
+/** Strategy signal marker (buy/sell arrow). */
+export type StrategyMarkerData = {
+  time: number;
+  position: "above" | "below";
+  shape: string;
+  color: string;
+};
+
+/** Strategy stop line segment (horizontal dashed). */
+export type StrategyStopLineData = {
+  type: "lineSegment";
+  from: { time: number; price: number };
+  to: { time: number; price: number };
+  color: string;
+  width?: number;
+  style?: string;
+};
+
+/** Strategy output for chart (markers + stop lines). */
+export type StrategySignalsData = {
+  markers?: StrategyMarkerData[];
+  stopLines?: StrategyStopLineData[];
+};
+
 /** Graphics object in stream payload (volume profile + S/R + OB primitives). */
 export type GraphicsData = {
   volumeProfile?: VolumeProfileData;
   supportResistance?: SupportResistanceData;
   orderBlocks?: OrderBlocksData;
   smartMoney?: { structure?: SmartMoneyStructureData };
+  strategySignals?: StrategySignalsData;
 };
 
 /** Real-time kline update (current bar OHLCV; confirm=false while bar is open). */
