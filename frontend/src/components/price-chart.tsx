@@ -21,6 +21,7 @@ import {
   chartIntervalSeconds,
 } from "@/lib/constants/chart-intervals";
 import { useMarketData } from "@/contexts/market-data-context";
+import { OrderBlocks } from "@/lib/chart-plugins/order-blocks";
 import { VolumeProfile } from "@/lib/chart-plugins/volume-profile";
 import { IndicatorControlPanel } from "@/components/indicator-control-panel";
 
@@ -36,12 +37,12 @@ const intervalButtonStyle = {
   borderColor: "#2a3b54",
   borderRadius: 6,
   cursor: "pointer" as const,
-  background: "#111a2b",
-  color: "#d6dfeb",
+  background: "#ffffff",
+  color: "#000000",
 };
 const intervalButtonActiveStyle = {
   ...intervalButtonStyle,
-  background: "#1f3b65",
+  background: "#e8f0fe",
   borderColor: "#3b82f6",
 };
 
@@ -61,6 +62,8 @@ export function PriceChart() {
     volumeProfile,
     supportResistanceEnabled,
     supportResistance,
+    orderBlocksEnabled,
+    orderBlocks,
   } = useMarketData();
   const containerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -68,6 +71,7 @@ export function PriceChart() {
   const volumeSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
   const volumeProfilePrimitiveRef = useRef<VolumeProfile | null>(null);
   const supportResistancePriceLinesRef = useRef<IPriceLine[]>([]);
+  const orderBlocksPrimitiveRef = useRef<OrderBlocks | null>(null);
   const lastFittedKeyRef = useRef<string | null>(null);
 
   const chartData = useMemo<CandlestickData<Time>[]>(() => {
@@ -99,20 +103,20 @@ export function PriceChart() {
 
     const chart = createChart(containerRef.current, {
       layout: {
-        background: { type: ColorType.Solid, color: "#0c111d" },
-        textColor: "#d6dfeb",
+        background: { type: ColorType.Solid, color: "#ffffff" },
+        textColor: "#000000",
       },
       grid: {
-        vertLines: { color: "#1a2538" },
-        horzLines: { color: "#1a2538" },
+        vertLines: { color: "#e0e0e0" },
+        horzLines: { color: "#e0e0e0" },
       },
       width: containerRef.current.clientWidth,
       height: 800,
       rightPriceScale: {
-        borderColor: "#253349",
+        borderColor: "#cccccc",
       },
       timeScale: {
-        borderColor: "#253349",
+        borderColor: "#cccccc",
         timeVisible: true,
       },
     });
@@ -161,6 +165,11 @@ export function PriceChart() {
         candlestickSeries.removePriceLine(pl);
       }
       supportResistancePriceLinesRef.current = [];
+      const obPrim = orderBlocksPrimitiveRef.current;
+      if (obPrim) {
+        candlestickSeries.detachPrimitive(obPrim);
+        orderBlocksPrimitiveRef.current = null;
+      }
       chart.remove();
       chartRef.current = null;
       seriesRef.current = null;
@@ -276,7 +285,7 @@ export function PriceChart() {
       if (line.type !== "horizontalLine") continue;
       const priceLine = series.createPriceLine({
         price: line.price,
-        color: "rgba(190, 185, 245, 0.42)", // line.color ??
+        color: line.color ?? "rgba(51, 33, 243, 0.24)",
         lineWidth: Math.min(4, Math.max(1, Math.round(line.width))) as 1 | 2 | 3 | 4,
         lineStyle: styleToLineStyle[line.style ?? "solid"] ?? LineStyle.Solid,
         axisLabelVisible: false,
@@ -284,6 +293,34 @@ export function PriceChart() {
       supportResistancePriceLinesRef.current.push(priceLine);
     }
   }, [supportResistanceEnabled, supportResistance]);
+
+  useEffect(() => {
+    const series = seriesRef.current;
+    const chart = chartRef.current;
+    if (!series || !chart) return;
+
+    if (!orderBlocksEnabled || !orderBlocks) {
+      const primitive = orderBlocksPrimitiveRef.current;
+      if (primitive) {
+        series.detachPrimitive(primitive);
+        orderBlocksPrimitiveRef.current = null;
+      }
+      return;
+    }
+
+    const hasBlocks =
+      orderBlocks.bullish.length > 0 || orderBlocks.bearish.length > 0;
+    const primitive = orderBlocksPrimitiveRef.current;
+    if (primitive) {
+      series.detachPrimitive(primitive);
+      orderBlocksPrimitiveRef.current = null;
+    }
+    if (hasBlocks) {
+      const newPrimitive = new OrderBlocks(chart, series, orderBlocks);
+      series.attachPrimitive(newPrimitive);
+      orderBlocksPrimitiveRef.current = newPrimitive;
+    }
+  }, [orderBlocksEnabled, orderBlocks]);
 
   return (
     <div

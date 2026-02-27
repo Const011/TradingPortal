@@ -10,13 +10,13 @@ const toggleButtonStyle = {
   borderColor: "#2a3b54",
   borderRadius: 6,
   cursor: "pointer" as const,
-  background: "#111a2b",
-  color: "#d6dfeb",
+  background: "#ffffff",
+  color: "#000000",
 };
 
 const toggleButtonActiveStyle = {
   ...toggleButtonStyle,
-  background: "#1f3b65",
+  background: "#e8f0fe",
   borderColor: "#3b82f6",
 };
 
@@ -35,11 +35,13 @@ export function IndicatorControlPanel() {
     setVolumeProfileWindow,
     supportResistanceEnabled,
     setSupportResistanceEnabled,
+    orderBlocksEnabled,
+    setOrderBlocksEnabled,
   } = useMarketData();
 
   return (
     <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
-      <span style={{ fontSize: 12, color: "#8b9bb4", marginRight: 4 }}>
+      <span style={{ fontSize: 12, color: "#5f6368", marginRight: 4 }}>
         Indicators:
       </span>
       <button
@@ -56,9 +58,16 @@ export function IndicatorControlPanel() {
       >
         S/R
       </button>
+      <button
+        type="button"
+        onClick={() => setOrderBlocksEnabled(!orderBlocksEnabled)}
+        style={orderBlocksEnabled ? toggleButtonActiveStyle : toggleButtonStyle}
+      >
+        OB
+      </button>
       {volumeProfileEnabled && (
         <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          <span style={{ fontSize: 12, color: "#8b9bb4" }}>Window:</span>
+          <span style={{ fontSize: 12, color: "#5f6368" }}>Window:</span>
           <input
             type="number"
             min={100}

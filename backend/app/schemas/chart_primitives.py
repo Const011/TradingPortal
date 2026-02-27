@@ -3,8 +3,27 @@
 from typing import Literal
 
 HorizontalLineType = Literal["horizontalLine"]
-ExtendOption = Literal["left", "right", "both"]
+BoxType = Literal["box"]
+ExtendOption = Literal["left", "right", "both", "none"]
 LineStyle = Literal["solid", "dashed", "dotted"]
+
+
+def box(
+    top_left: dict,
+    bottom_right: dict,
+    fill_color: str,
+    border_color: str | None = None,
+    extend: ExtendOption = "none",
+) -> dict:
+    """Build a box primitive. top_left/bottom_right: { time: int, price: float }."""
+    return {
+        "type": "box",
+        "topLeft": top_left,
+        "bottomRight": bottom_right,
+        "fillColor": fill_color,
+        "borderColor": border_color,
+        "extend": extend,
+    }
 
 
 def horizontal_line(

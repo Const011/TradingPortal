@@ -6,6 +6,7 @@ from app.schemas.market import Candle
 from app.services.bybit_client import BybitClient
 from app.services.indicators.volume_profile import build_volume_profile_from_candles
 from app.services.indicators.support_resistance import compute_support_resistance_lines
+from app.services.indicators.order_blocks import compute_order_blocks
 
 DEFAULT_VOLUME_PROFILE_WINDOW = 2000
 
@@ -20,6 +21,7 @@ def _make_snapshot_payload(candles: list[Candle], volume_profile_window: int) ->
         "candles": [c.model_dump() for c in candles],
     }
     if candles:
+        graphics: dict = {"orderBlocks": compute_order_blocks(candles)}
         vp = build_volume_profile_from_candles(
             candles,
             time=candles[-1].time // 1000,
@@ -27,11 +29,9 @@ def _make_snapshot_payload(candles: list[Candle], volume_profile_window: int) ->
             window_size=volume_profile_window,
         )
         if vp:
-            sr_lines = compute_support_resistance_lines(vp["profile"])
-            payload["graphics"] = {
-                "volumeProfile": vp,
-                "supportResistance": {"lines": sr_lines},
-            }
+            graphics["volumeProfile"] = vp
+            graphics["supportResistance"] = {"lines": compute_support_resistance_lines(vp["profile"])}
+        payload["graphics"] = graphics
     return payload
 
 
@@ -41,6 +41,7 @@ def _make_upsert_payload(candle: Candle, candles: list[Candle], volume_profile_w
         "candle": candle.model_dump(),
     }
     if candles:
+        graphics: dict = {"orderBlocks": compute_order_blocks(candles)}
         vp = build_volume_profile_from_candles(
             candles,
             time=candles[-1].time // 1000,
@@ -48,11 +49,9 @@ def _make_upsert_payload(candle: Candle, candles: list[Candle], volume_profile_w
             window_size=volume_profile_window,
         )
         if vp:
-            sr_lines = compute_support_resistance_lines(vp["profile"])
-            payload["graphics"] = {
-                "volumeProfile": vp,
-                "supportResistance": {"lines": sr_lines},
-            }
+            graphics["volumeProfile"] = vp
+            graphics["supportResistance"] = {"lines": compute_support_resistance_lines(vp["profile"])}
+        payload["graphics"] = graphics
     return payload
 
 

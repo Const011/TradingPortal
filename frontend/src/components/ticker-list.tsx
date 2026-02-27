@@ -15,7 +15,7 @@ export function TickerList() {
     <aside
       style={{
         width: 280,
-        borderRight: "1px solid #243247",
+        borderRight: "1px solid #e0e0e0",
         padding: 12,
         overflowY: "auto",
       }}
@@ -41,8 +41,8 @@ export function TickerList() {
                 borderWidth: 1,
                 borderStyle: "solid",
                 borderColor: "#2a3b54",
-                background: active ? "#1f3b65" : "#111a2b",
-                color: "#f1f6ff",
+                background: active ? "#e8f0fe" : "#ffffff",
+                color: "#000000",
                 borderRadius: 6,
                 padding: "6px 10px",
                 textAlign: "left",
@@ -51,7 +51,7 @@ export function TickerList() {
               }}
             >
               <strong style={{ flexShrink: 0 }}>{item.symbol}</strong>
-              <span style={{ color: "#e9edf8", fontSize: 13 }}>
+              <span style={{ color: "#000000", fontSize: 13 }}>
                 {snapshot ? formatPrice(snapshot.price) : "--"}
               </span>
               <span style={{ color: changeColor, fontSize: 13, minWidth: 52, textAlign: "right" }}>

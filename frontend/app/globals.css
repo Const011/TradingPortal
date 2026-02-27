@@ -1,5 +1,5 @@
 :root {
-  color-scheme: dark;
+  color-scheme: light;
 }
 
 * {
@@ -10,8 +10,8 @@ html,
 body {
   margin: 0;
   font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
-  background: #0c111d;
-  color: #e9edf8;
+  background: #ffffff;
+  color: #000000;
 }
 
 

@@ -8,7 +8,7 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  colorScheme: "dark",
+  colorScheme: "light",
 };
 
 type RootLayoutProps = {
@@ -17,8 +17,8 @@ type RootLayoutProps = {
 
 export default function RootLayout({ children }: RootLayoutProps) {
   return (
-    <html lang="en" style={{ colorScheme: "dark" }}>
-      <body style={{ background: "#0c111d", color: "#e9edf8" }}>{children}</body>
+    <html lang="en" style={{ colorScheme: "light" }}>
+      <body style={{ background: "#ffffff", color: "#000000" }}>{children}</body>
     </html>
   );
 }

@@ -66,10 +66,29 @@ export type SupportResistanceData = {
   lines: HorizontalLineData[];
 };
 
-/** Graphics object in stream payload (volume profile + S/R primitives). */
+/** Order block box from backend. */
+export type OrderBlockData = {
+  top: number;
+  bottom: number;
+  startTime: number;
+  endTime: number;
+  breakTime: number | null;
+  breaker: boolean;
+  fillColor: string;
+  breakColor: string | null;
+};
+
+/** Order blocks from backend. */
+export type OrderBlocksData = {
+  bullish: OrderBlockData[];
+  bearish: OrderBlockData[];
+};
+
+/** Graphics object in stream payload (volume profile + S/R + OB primitives). */
 export type GraphicsData = {
   volumeProfile?: VolumeProfileData;
   supportResistance?: SupportResistanceData;
+  orderBlocks?: OrderBlocksData;
 };
 
 /** Real-time kline update (current bar OHLCV; confirm=false while bar is open). */
