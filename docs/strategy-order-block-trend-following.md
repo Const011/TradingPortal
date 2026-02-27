@@ -18,7 +18,7 @@ Strategy that generates buy/sell signals based on order blocks, candle trend col
 
 A **buy** signal can originate from:
 
-1. **Price broke up from a bullish order block** — Close above bullish OB top (boundary cross).
+1. **Price broke up from a bullish order block** — Price interacted with the OB zone (low ≤ OB top) and closed above the OB top with a bullish candle. Captures retests (open in zone), breakouts from below, and breakouts with wicks into the zone.
 2. **Trend continued and crossed a breaker block** — A bearish OB that became a breaker (price wicked above it) now acts as support; price crosses back above it in line with bullish trend.
 
 Both cases are treated as breakout/continuation above a significant level.
@@ -66,13 +66,16 @@ For a **short** entry: use OB top or above resistance with the same logic revers
 
 ## 6. Trailing Stop
 
-When price crosses a **higher** level (support line, higher OB, or breaker block acting as support):
+When price crosses a **higher** level (support line, OB top, or breaker block acting as support):
 
+- **Levels considered:** S/R support lines, bullish OB tops, bearish breaker bottoms (support when broken).
+- **Confirmation required** before moving stop (reduces false moves from noise):
+  - **Option A:** Unusual volume on the crossing bar (`volume ≥ N × avg volume`).
+  - **Option B:** N consecutive closes above the level (`trail_consecutive_closes`, default 2–3).
 - **New stop** = `level − trail_param × (level − previous_stop)`
 - Default `trail_param` = 0.75 (3/4).
-- Interpretation: keep a cushion below the level; move stop up by trailing it toward the crossed level.
 
-For **short**: level is below entry; stop moves down with symmetric formula.
+For **short**: levels = S/R resistance, bearish OB bottoms, bullish breaker tops. Confirmation by volume spike or N consecutive closes below the level.
 
 ---
 
@@ -81,7 +84,8 @@ For **short**: level is below entry; stop moves down with symmetric formula.
 | Parameter                 | Default | Description                                                |
 |---------------------------|---------|------------------------------------------------------------|
 | `volume_spike_mult`       | 2.0     | Volume on crossing bar ≥ N × avg volume for confirmation  |
-| `consecutive_closes`      | 2       | Number of consecutive closes above block for confirmation  |
+| `consecutive_closes`        | 2       | Consecutive closes above block for entry confirmation     |
+| `trail_consecutive_closes`  | 2       | Consecutive closes above/below level for trail confirmation|
 | `block_ob_distance_mult`  | 2.0     | Block if bearish OB within N × trigger OB width           |
 | `block_sr_distance_mult`  | 2.0     | Block if strong support within N × trigger OB width       |
 | `min_sr_strength`         | 4.0     | Min S/R line width to count as “strong” support            |
@@ -105,7 +109,7 @@ For **short**: level is below entry; stop moves down with symmetric formula.
 
 For **sell** signals:
 
-- Trigger: price broke down from bearish OB, or crossed below a breaker that acts as resistance.
+- Trigger: price interacted with bearish OB zone (high ≥ OB bottom) and closed below with bearish candle, or crossed below a breaker that acts as resistance.
 - Confirmation: 2 consecutive closes below, or volume spike.
 - Blocking: nearby bullish OB, strong resistance above.
 - Initial stop: OB top or above closest resistance with gap/2.

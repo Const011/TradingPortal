@@ -13,6 +13,7 @@ BEARISH_COLORS = {"#dc2626", "#b91c1c"}
 # Default parameters
 DEFAULT_VOLUME_SPIKE_MULT = 2.0
 DEFAULT_CONSECUTIVE_CLOSES = 2
+DEFAULT_TRAIL_CONSECUTIVE_CLOSES = 2
 DEFAULT_BLOCK_OB_DISTANCE_MULT = 2.0
 DEFAULT_BLOCK_SR_DISTANCE_MULT = 2.0
 DEFAULT_MIN_SR_STRENGTH = 4.0
@@ -146,25 +147,93 @@ def _compute_initial_stop_short(
     return min(ob_top, stop_above_res)
 
 
-def _crossed_higher_level_long(
-    close: float,
-    prev_low: float,
+def _confirmed_level_cross_long(
+    candles: list[Candle],
+    bar_index: int,
+    prev_candle: Candle | None,
     levels: list[float],
     current_stop: float,
+    volume_spike_mult: float,
+    consecutive_closes: int,
+    vol_lookback: int,
 ) -> float | None:
-    """Check if price crossed a level above current stop; return the highest crossed level."""
-    crossed = [p for p in levels if p > current_stop and prev_low < p <= close]
-    return max(crossed) if crossed else None
+    """
+    Return highest level above current_stop that is confirmed by either:
+    - Unusual volume on the crossing bar, OR
+    - N consecutive closes above the level.
+    """
+    if prev_candle is None or bar_index < 0:
+        return None
+    c = candles[bar_index]
+    vol_avg = _volume_average(candles, vol_lookback, bar_index + 1)
+    has_vol_spike = vol_avg > 0 and c.volume >= volume_spike_mult * vol_avg
+
+    candidates: list[float] = []
+    for L in levels:
+        if L <= current_stop:
+            continue
+        # Must be above level: close > L for long
+        if c.close <= L:
+            continue
+
+        # Confirmation path A: crossed this bar with volume spike
+        crossed_this_bar = prev_candle.low < L <= c.close
+        if crossed_this_bar and has_vol_spike:
+            candidates.append(L)
+            continue
+
+        # Confirmation path B: N consecutive closes above
+        start = max(0, bar_index - consecutive_closes + 1)
+        if bar_index - start + 1 < consecutive_closes:
+            continue
+        all_above = all(candles[j].close > L for j in range(start, bar_index + 1))
+        if all_above:
+            candidates.append(L)
+
+    return max(candidates) if candidates else None
 
 
-def _crossed_lower_level_short(
-    close: float,
-    prev_high: float,
+def _confirmed_level_cross_short(
+    candles: list[Candle],
+    bar_index: int,
+    prev_candle: Candle | None,
     levels: list[float],
     current_stop: float,
+    volume_spike_mult: float,
+    consecutive_closes: int,
+    vol_lookback: int,
 ) -> float | None:
-    crossed = [p for p in levels if p < current_stop and prev_high > p >= close]
-    return min(crossed) if crossed else None
+    """
+    Return lowest level below current_stop that is confirmed by either:
+    - Unusual volume on the crossing bar, OR
+    - N consecutive closes below the level.
+    """
+    if prev_candle is None or bar_index < 0:
+        return None
+    c = candles[bar_index]
+    vol_avg = _volume_average(candles, vol_lookback, bar_index + 1)
+    has_vol_spike = vol_avg > 0 and c.volume >= volume_spike_mult * vol_avg
+
+    candidates: list[float] = []
+    for L in levels:
+        if L >= current_stop:
+            continue
+        if c.close >= L:
+            continue
+
+        crossed_this_bar = prev_candle.high > L >= c.close
+        if crossed_this_bar and has_vol_spike:
+            candidates.append(L)
+            continue
+
+        start = max(0, bar_index - consecutive_closes + 1)
+        if bar_index - start + 1 < consecutive_closes:
+            continue
+        all_below = all(candles[j].close < L for j in range(start, bar_index + 1))
+        if all_below:
+            candidates.append(L)
+
+    return min(candidates) if candidates else None
 
 
 def compute_order_block_trend_following(
@@ -174,6 +243,7 @@ def compute_order_block_trend_following(
     *,
     volume_spike_mult: float = DEFAULT_VOLUME_SPIKE_MULT,
     consecutive_closes: int = DEFAULT_CONSECUTIVE_CLOSES,
+    trail_consecutive_closes: int = DEFAULT_TRAIL_CONSECUTIVE_CLOSES,
     block_ob_distance_mult: float = DEFAULT_BLOCK_OB_DISTANCE_MULT,
     block_sr_distance_mult: float = DEFAULT_BLOCK_SR_DISTANCE_MULT,
     min_sr_strength: float = DEFAULT_MIN_SR_STRENGTH,
@@ -392,9 +462,14 @@ def compute_order_block_trend_following(
         # --- Trailing stop for active position ---
         if position and prev_candle is not None:
             if position.side == "long":
+                # S/R support + bullish OB tops + bearish breaker bottoms (act as support when broken)
                 levels = [l["price"] for l in sr_lines if l.get("width", 0) >= min_sr_strength]
                 levels.extend([ob.top for ob in bullish_ob])
-                crossed = _crossed_higher_level_long(c.close, prev_candle.low, levels, position.stop_price)
+                levels.extend([ob.bottom for ob in bearish_ob if ob.breaker])
+                crossed = _confirmed_level_cross_long(
+                    candles, i, prev_candle, levels, position.stop_price,
+                    volume_spike_mult, trail_consecutive_closes, vol_lookback,
+                )
                 if crossed is not None:
                     new_stop = crossed - trail_param * (crossed - position.stop_price)
                     if new_stop > position.stop_price:
@@ -413,9 +488,14 @@ def compute_order_block_trend_following(
                 if c.low <= position.stop_price:
                     position = None
             else:
+                # S/R resistance + bearish OB bottoms + bullish breaker tops (act as resistance when broken)
                 levels = [l["price"] for l in sr_lines if l.get("width", 0) >= min_sr_strength]
                 levels.extend([ob.bottom for ob in bearish_ob])
-                crossed = _crossed_lower_level_short(c.close, prev_candle.high, levels, position.stop_price)
+                levels.extend([ob.top for ob in bullish_ob if ob.breaker])
+                crossed = _confirmed_level_cross_short(
+                    candles, i, prev_candle, levels, position.stop_price,
+                    volume_spike_mult, trail_consecutive_closes, vol_lookback,
+                )
                 if crossed is not None:
                     new_stop = crossed + trail_param * (position.stop_price - crossed)
                     if new_stop < position.stop_price:

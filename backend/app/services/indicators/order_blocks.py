@@ -153,7 +153,9 @@ def _iter_order_blocks_with_events(
                         "type": "bullish_breaker_created",
                         "ob_top": ob.top, "ob_bottom": ob.bottom, "ob_loc": ob.loc,
                     })
-                elif c.open >= ob.bottom and c.open <= ob.top and c.close > ob.top and c.close > c.open:
+                elif c.low <= ob.top and c.close > ob.top and c.close > c.open:
+                    # Broader: price interacted with zone (low <= top) and closed above with bullish candle.
+                    # Subsumes retest (open in zone) and breakouts from below or with wicks into zone.
                     events_this_bar.append({
                         "type": "bullish_boundary_crossed",
                         "ob_top": ob.top, "ob_bottom": ob.bottom, "ob_loc": ob.loc,
@@ -171,7 +173,8 @@ def _iter_order_blocks_with_events(
                         "type": "bearish_breaker_created",
                         "ob_top": ob.top, "ob_bottom": ob.bottom, "ob_loc": ob.loc,
                     })
-                elif c.open >= ob.bottom and c.open <= ob.top and c.close < ob.bottom and c.close < c.open:
+                elif c.high >= ob.bottom and c.close < ob.bottom and c.close < c.open:
+                    # Broader: price interacted with zone (high >= bottom) and closed below with bearish candle.
                     events_this_bar.append({
                         "type": "bearish_boundary_crossed",
                         "ob_top": ob.top, "ob_bottom": ob.bottom, "ob_loc": ob.loc,
