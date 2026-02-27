@@ -87,10 +87,17 @@ export type LabelData = {
   size?: "tiny" | "small" | "normal";
 };
 
-/** Smart Money structure (BOS/CHoCH lines and labels). */
+/** Smart Money structure (BOS/CHoCH, swing labels, EQH/EQL). */
 export type SmartMoneyStructureData = {
   lines: LineSegmentData[];
   labels: LabelData[];
+  swingLabels?: LabelData[];
+  equalHighsLows?: {
+    lines: LineSegmentData[];
+    labels: LabelData[];
+  };
+  /** Per-bar candle color keyed by candle time (ms). */
+  candleColors?: Record<number, string>;
 };
 
 /** Order block box from backend (fillColor depends on list: bullish/bearish/bullishBreakers/bearishBreakers). */
@@ -104,12 +111,22 @@ export type OrderBlockData = {
   fillColor: string;
 };
 
+/** Bar marker from order blocks (boundary cross, breaker created). */
+export type BarMarkerData = {
+  time: number;
+  type: string;
+  position: "above" | "below";
+  shape: string;
+  color: string;
+};
+
 /** Order blocks from backend (active = not crossed; breakers = crossed by price). */
 export type OrderBlocksData = {
   bullish: OrderBlockData[];
   bearish: OrderBlockData[];
   bullishBreakers?: OrderBlockData[];
   bearishBreakers?: OrderBlockData[];
+  barMarkers?: BarMarkerData[];
 };
 
 /** Graphics object in stream payload (volume profile + S/R + OB primitives). */

@@ -22,9 +22,11 @@ def _make_snapshot_payload(candles: list[Candle], volume_profile_window: int) ->
         "candles": [c.model_dump() for c in candles],
     }
     if candles:
+        ob_result = compute_order_blocks(candles)
+        structure_result = compute_structure(candles, include_candle_colors=True)
         graphics: dict = {
-            "orderBlocks": compute_order_blocks(candles),
-            "smartMoney": {"structure": compute_structure(candles)},
+            "orderBlocks": ob_result,
+            "smartMoney": {"structure": structure_result},
         }
         vp = build_volume_profile_from_candles(
             candles,
@@ -45,9 +47,11 @@ def _make_upsert_payload(candle: Candle, candles: list[Candle], volume_profile_w
         "candle": candle.model_dump(),
     }
     if candles:
+        ob_result = compute_order_blocks(candles)
+        structure_result = compute_structure(candles, include_candle_colors=True)
         graphics: dict = {
-            "orderBlocks": compute_order_blocks(candles),
-            "smartMoney": {"structure": compute_structure(candles)},
+            "orderBlocks": ob_result,
+            "smartMoney": {"structure": structure_result},
         }
         vp = build_volume_profile_from_candles(
             candles,

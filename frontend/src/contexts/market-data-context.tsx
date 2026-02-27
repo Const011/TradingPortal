@@ -57,6 +57,8 @@ type MarketDataContextValue = {
   setOrderBlocksEnabled: (enabled: boolean) => void;
   structureEnabled: boolean;
   setStructureEnabled: (enabled: boolean) => void;
+  candleColoringEnabled: boolean;
+  setCandleColoringEnabled: (enabled: boolean) => void;
   candles: Candle[];
   volumeProfile: VolumeProfileData | null;
   supportResistance: SupportResistanceData | null;
@@ -88,6 +90,7 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
   const [supportResistanceEnabled, setSupportResistanceEnabled] = useState<boolean>(false);
   const [orderBlocksEnabled, setOrderBlocksEnabled] = useState<boolean>(false);
   const [structureEnabled, setStructureEnabled] = useState<boolean>(false);
+  const [candleColoringEnabled, setCandleColoringEnabled] = useState<boolean>(false);
   const [candles, setCandles] = useState<Candle[]>([]);
   const [volumeProfile, setVolumeProfile] = useState<VolumeProfileData | null>(null);
   const [supportResistance, setSupportResistance] = useState<SupportResistanceData | null>(null);
@@ -113,6 +116,7 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
     setSupportResistanceEnabled(prefs.supportResistanceEnabled);
     setOrderBlocksEnabled(prefs.orderBlocksEnabled);
     setStructureEnabled(prefs.structureEnabled);
+    setCandleColoringEnabled(prefs.candleColoringEnabled);
   }, []);
 
   useEffect(() => {
@@ -126,8 +130,9 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
       supportResistanceEnabled,
       orderBlocksEnabled,
       structureEnabled,
+      candleColoringEnabled,
     });
-  }, [selectedSymbol, chartInterval, autoScaleEnabled, logScaleEnabled, volumeProfileEnabled, volumeProfileWindow, supportResistanceEnabled, orderBlocksEnabled, structureEnabled]);
+  }, [selectedSymbol, chartInterval, autoScaleEnabled, logScaleEnabled, volumeProfileEnabled, volumeProfileWindow, supportResistanceEnabled, orderBlocksEnabled, structureEnabled, candleColoringEnabled]);
 
   useEffect(() => {
     let mounted = true;
@@ -357,11 +362,13 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
       setVolumeProfileWindow,
       supportResistanceEnabled,
       setSupportResistanceEnabled,
-      orderBlocksEnabled,
-      setOrderBlocksEnabled,
-      structureEnabled,
-      setStructureEnabled,
-      candles,
+  orderBlocksEnabled,
+  setOrderBlocksEnabled,
+  structureEnabled,
+  setStructureEnabled,
+  candleColoringEnabled,
+  setCandleColoringEnabled,
+  candles,
       volumeProfile,
       supportResistance,
       orderBlocks,
@@ -385,6 +392,7 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
       supportResistanceEnabled,
       orderBlocksEnabled,
       structureEnabled,
+      candleColoringEnabled,
       candles,
       volumeProfile,
       supportResistance,

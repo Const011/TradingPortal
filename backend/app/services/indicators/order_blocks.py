@@ -72,9 +72,10 @@ def compute_order_blocks(
     keep_breakers: if True (default), breaker OBs stay visible; if False, they are removed when price closes beyond.
     """
     if len(candles) < swing_length + 2:
-        return {"bullish": [], "bearish": [], "bullishBreakers": [], "bearishBreakers": []}
+        return {"bullish": [], "bearish": [], "bullishBreakers": [], "bearishBreakers": [], "barMarkers": []}
 
     n = len(candles)
+    bar_markers: list[dict] = []
     bullish_ob: list[OrderBlock] = []
     bearish_ob: list[OrderBlock] = []
     top_crossed = False
@@ -145,21 +146,27 @@ def compute_order_blocks(
                         loc_bar = j
                 bearish_ob.insert(0, OrderBlock(top=maxima, bottom=minima, loc=loc_bar, breaker=False, break_loc=None, fill_color=BEAR_FILL))
 
-        # Mark bullish OBs as breakers if price wicks below bottom; remove if (breaker or loc>=i) and close > top (unless keep_breakers)
+        # Mark bullish OBs as breakers if price wicks below bottom; collect bar markers
         for ob in list(bullish_ob):
             if not ob.breaker and ob.loc < i:
                 if min(c.close, c.open) < ob.bottom:
                     ob.breaker = True
                     ob.break_loc = i
+                    bar_markers.append({"time": c.time // 1000, "type": "bullish_breaker_created", "position": "below", "shape": "diamond", "color": "#9333ea"})
+                elif c.open >= ob.bottom and c.open <= ob.top and c.close > ob.top and c.close > c.open:
+                    bar_markers.append({"time": c.time // 1000, "type": "bullish_boundary_crossed", "position": "below", "shape": "triangleUp", "color": "#2563eb"})
             elif not keep_breakers and c.close > ob.top:
                 bullish_ob.remove(ob)
 
-        # Mark bearish OBs as breakers if price wicks above top; remove if (breaker or loc>=i) and close < bottom (unless keep_breakers)
+        # Mark bearish OBs as breakers if price wicks above top; collect bar markers
         for ob in list(bearish_ob):
             if not ob.breaker and ob.loc < i:
                 if max(c.close, c.open) > ob.top:
                     ob.breaker = True
                     ob.break_loc = i
+                    bar_markers.append({"time": c.time // 1000, "type": "bearish_breaker_created", "position": "above", "shape": "diamond", "color": "#9333ea"})
+                elif c.open >= ob.bottom and c.open <= ob.top and c.close < ob.bottom and c.close < c.open:
+                    bar_markers.append({"time": c.time // 1000, "type": "bearish_boundary_crossed", "position": "above", "shape": "triangleDown", "color": "#dc2626"})
             elif not keep_breakers and c.close < ob.bottom:
                 bearish_ob.remove(ob)
 
@@ -192,4 +199,5 @@ def compute_order_blocks(
         "bearish": [ob_to_primitive(ob, BEAR_FILL) for ob in bearish_active],
         "bullishBreakers": [ob_to_primitive(ob, BULL_BREAKER_FILL) for ob in bullish_breakers],
         "bearishBreakers": [ob_to_primitive(ob, BEAR_BREAKER_FILL) for ob in bearish_breakers],
+        "barMarkers": bar_markers,
     }

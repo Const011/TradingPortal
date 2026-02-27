@@ -22,6 +22,7 @@ export type StoredChartPreferences = {
   supportResistanceEnabled: boolean;
   orderBlocksEnabled: boolean;
   structureEnabled: boolean;
+  candleColoringEnabled: boolean;
 };
 
 const DEFAULTS: StoredChartPreferences = {
@@ -34,6 +35,7 @@ const DEFAULTS: StoredChartPreferences = {
   supportResistanceEnabled: false,
   orderBlocksEnabled: false,
   structureEnabled: false,
+  candleColoringEnabled: false,
 };
 
 function parseStored(raw: string | null): Partial<StoredChartPreferences> {
@@ -75,6 +77,9 @@ function parseStored(raw: string | null): Partial<StoredChartPreferences> {
     if (typeof parsed.structureEnabled === "boolean") {
       out.structureEnabled = parsed.structureEnabled;
     }
+    if (typeof parsed.candleColoringEnabled === "boolean") {
+      out.candleColoringEnabled = parsed.candleColoringEnabled;
+    }
     return out;
   } catch {
     return {};
@@ -114,6 +119,10 @@ export function getStoredChartPreferences(): StoredChartPreferences {
       partial.structureEnabled !== undefined
         ? partial.structureEnabled
         : DEFAULTS.structureEnabled,
+    candleColoringEnabled:
+      partial.candleColoringEnabled !== undefined
+        ? partial.candleColoringEnabled
+        : DEFAULTS.candleColoringEnabled,
   };
 }
 
@@ -137,6 +146,8 @@ export function setStoredChartPreferences(
       prefs.orderBlocksEnabled ?? current.orderBlocksEnabled,
     structureEnabled:
       prefs.structureEnabled ?? current.structureEnabled,
+    candleColoringEnabled:
+      prefs.candleColoringEnabled ?? current.candleColoringEnabled,
   };
   window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
 }

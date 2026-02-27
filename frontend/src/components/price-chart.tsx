@@ -7,6 +7,7 @@ import {
   ColorType,
   HistogramSeries,
   createChart,
+  createSeriesMarkers,
   IChartApi,
   IPriceLine,
   ISeriesApi,
@@ -67,6 +68,7 @@ export function PriceChart() {
     orderBlocks,
     structureEnabled,
     structure,
+    candleColoringEnabled,
   } = useMarketData();
   const containerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -76,17 +78,32 @@ export function PriceChart() {
   const supportResistancePriceLinesRef = useRef<IPriceLine[]>([]);
   const orderBlocksPrimitiveRef = useRef<OrderBlocks | null>(null);
   const structurePrimitiveRef = useRef<StructurePrimitive | null>(null);
+  const seriesMarkersRef = useRef<ReturnType<typeof createSeriesMarkers<Time>> | null>(null);
   const lastFittedKeyRef = useRef<string | null>(null);
 
   const chartData = useMemo<CandlestickData<Time>[]>(() => {
-    return candles.map((item) => ({
-      time: toChartTime(item.time),
-      open: item.open,
-      high: item.high,
-      low: item.low,
-      close: item.close,
-    }));
-  }, [candles]);
+    const candleColors = structure?.candleColors;
+    const applyColors = candleColoringEnabled && candleColors && Object.keys(candleColors).length > 0;
+
+    return candles.map((item) => {
+      const point: CandlestickData<Time> = {
+        time: toChartTime(item.time),
+        open: item.open,
+        high: item.high,
+        low: item.low,
+        close: item.close,
+      };
+      if (applyColors) {
+        const c = candleColors[item.time];
+        if (c) {
+          point.color = c;
+          point.wickColor = c;
+          point.borderColor = c;
+        }
+      }
+      return point;
+    });
+  }, [candles, structure?.candleColors, candleColoringEnabled]);
 
   const volumeData = useMemo<HistogramData<Time>[]>(() => {
     return candles.map((item, index, all) => {
@@ -336,6 +353,29 @@ export function PriceChart() {
 
   useEffect(() => {
     const series = seriesRef.current;
+    if (!series) return;
+
+    const markers = orderBlocksEnabled && orderBlocks?.barMarkers && orderBlocks.barMarkers.length > 0
+      ? orderBlocks.barMarkers.map((m) => ({
+          time: m.time as Time,
+          position: m.position === "below" ? "belowBar" as const : "aboveBar" as const,
+          shape: (m.shape === "triangleUp" ? "arrowUp" : m.shape === "triangleDown" ? "arrowDown" : "circle") as "arrowUp" | "arrowDown" | "circle",
+          color: m.color,
+        }))
+      : [];
+
+    if (seriesMarkersRef.current) {
+      seriesMarkersRef.current.setMarkers(markers);
+    } else if (markers.length > 0) {
+      seriesMarkersRef.current = createSeriesMarkers(series, markers);
+    }
+    if (markers.length === 0 && seriesMarkersRef.current) {
+      seriesMarkersRef.current.setMarkers([]);
+    }
+  }, [orderBlocksEnabled, orderBlocks?.barMarkers]);
+
+  useEffect(() => {
+    const series = seriesRef.current;
     const chart = chartRef.current;
     if (!series || !chart) return;
 
@@ -349,7 +389,11 @@ export function PriceChart() {
     }
 
     const hasStructure =
-      (structure.lines?.length ?? 0) > 0 || (structure.labels?.length ?? 0) > 0;
+      (structure.lines?.length ?? 0) > 0 ||
+      (structure.labels?.length ?? 0) > 0 ||
+      (structure.swingLabels?.length ?? 0) > 0 ||
+      (structure.equalHighsLows?.lines?.length ?? 0) > 0 ||
+      (structure.equalHighsLows?.labels?.length ?? 0) > 0;
     const primitive = structurePrimitiveRef.current;
     if (primitive) {
       series.detachPrimitive(primitive);
@@ -367,47 +411,49 @@ export function PriceChart() {
       style={{ width: "100%", minWidth: 400 }}
       onMouseLeave={() => setHoveredBarTime(null)}
     >
-      <div
-        style={{
-          display: "flex",
-          gap: 8,
-          marginBottom: 12,
-          alignItems: "center",
-          flexWrap: "wrap",
-        }}
-      >
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-          {CHART_INTERVAL_OPTIONS.map((option) => {
-            const isActive = chartInterval === option.value;
-            return (
-              <button
-                key={option.value}
-                type="button"
-                onClick={() => setChartInterval(option.value)}
-                style={isActive ? intervalButtonActiveStyle : intervalButtonStyle}
-              >
-                {option.label}
-              </button>
-            );
-          })}
+      <div style={{ marginBottom: 12 }}>
+        <div
+          style={{
+            display: "flex",
+            gap: 8,
+            alignItems: "center",
+            flexWrap: "wrap",
+            marginBottom: 8,
+          }}
+        >
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            {CHART_INTERVAL_OPTIONS.map((option) => {
+              const isActive = chartInterval === option.value;
+              return (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => setChartInterval(option.value)}
+                  style={isActive ? intervalButtonActiveStyle : intervalButtonStyle}
+                >
+                  {option.label}
+                </button>
+              );
+            })}
+          </div>
+          <div style={{ marginLeft: "auto", display: "flex", gap: 8, alignItems: "center" }}>
+            <button
+              type="button"
+              onClick={() => setAutoScaleEnabled(!autoScaleEnabled)}
+              style={autoScaleEnabled ? intervalButtonActiveStyle : intervalButtonStyle}
+            >
+              Auto
+            </button>
+            <button
+              type="button"
+              onClick={() => setLogScaleEnabled(!logScaleEnabled)}
+              style={logScaleEnabled ? intervalButtonActiveStyle : intervalButtonStyle}
+            >
+              Log
+            </button>
+          </div>
         </div>
-        <div style={{ marginLeft: "auto", display: "flex", gap: 8, alignItems: "center" }}>
-          <IndicatorControlPanel />
-          <button
-            type="button"
-            onClick={() => setAutoScaleEnabled(!autoScaleEnabled)}
-            style={autoScaleEnabled ? intervalButtonActiveStyle : intervalButtonStyle}
-          >
-            Auto
-          </button>
-          <button
-            type="button"
-            onClick={() => setLogScaleEnabled(!logScaleEnabled)}
-            style={logScaleEnabled ? intervalButtonActiveStyle : intervalButtonStyle}
-          >
-            Log
-          </button>
-        </div>
+        <IndicatorControlPanel />
       </div>
       <div ref={containerRef} style={{ width: "100%" }} />
     </div>

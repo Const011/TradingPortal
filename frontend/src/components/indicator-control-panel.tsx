@@ -39,6 +39,8 @@ export function IndicatorControlPanel() {
     setOrderBlocksEnabled,
     structureEnabled,
     setStructureEnabled,
+    candleColoringEnabled,
+    setCandleColoringEnabled,
   } = useMarketData();
 
   return (
@@ -73,6 +75,13 @@ export function IndicatorControlPanel() {
         style={structureEnabled ? toggleButtonActiveStyle : toggleButtonStyle}
       >
         Structure
+      </button>
+      <button
+        type="button"
+        onClick={() => setCandleColoringEnabled(!candleColoringEnabled)}
+        style={candleColoringEnabled ? toggleButtonActiveStyle : toggleButtonStyle}
+      >
+        Candle Coloring
       </button>
       {volumeProfileEnabled && (
         <label style={{ display: "flex", alignItems: "center", gap: 6 }}>

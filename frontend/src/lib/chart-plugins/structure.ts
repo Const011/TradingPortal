@@ -22,7 +22,9 @@ class StructureRenderer implements IPrimitivePaneRenderer {
       for (const line of this._lines) {
         ctx.strokeStyle = line.color;
         ctx.lineWidth = 1.5;
-        ctx.setLineDash(line.style === "dashed" ? [4, 4] : []);
+        ctx.setLineDash(
+          line.style === "dashed" ? [4, 4] : line.style === "dotted" ? [2, 2] : []
+        );
         ctx.beginPath();
         ctx.moveTo(line.x1, line.y1);
         ctx.lineTo(line.x2, line.y2);
@@ -55,7 +57,16 @@ class StructurePaneView implements IPrimitivePaneView {
       return { x: x ?? null, y: y ?? null };
     };
 
-    for (const seg of data.lines ?? []) {
+    const allLines = [
+      ...(data.lines ?? []),
+      ...(data.equalHighsLows?.lines ?? []),
+    ];
+    const allLabels = [
+      ...(data.labels ?? []),
+      ...(data.swingLabels ?? []),
+      ...(data.equalHighsLows?.labels ?? []),
+    ];
+    for (const seg of allLines) {
       const from = toCoord(seg.from.time, seg.from.price);
       const to = toCoord(seg.to.time, seg.to.price);
       if (from.x != null && from.y != null && to.x != null && to.y != null) {
@@ -69,7 +80,7 @@ class StructurePaneView implements IPrimitivePaneView {
         });
       }
     }
-    for (const lbl of data.labels ?? []) {
+    for (const lbl of allLabels) {
       const pt = toCoord(lbl.time, lbl.price);
       if (pt.x != null && pt.y != null) {
         labels.push({ x: pt.x, y: pt.y, text: lbl.text, color: lbl.color });
