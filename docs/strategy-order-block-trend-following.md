@@ -29,10 +29,16 @@ Both cases are treated as breakout/continuation above a significant level.
 
 A trigger is confirmed only if **one** of the following holds:
 
-1. **Two consecutive closes above the block** — Price closed above the OB/breaker top for 2 consecutive bars.
+1. **Two consecutive closes above the block** — Price closed above the OB/breaker top for 2 consecutive bars (trigger bar + next bar).
 2. **Volume spike** — Volume on the crossing bar is **≥ N × volume average** (N is a parameter, e.g. 2.0).
 
-If neither holds, the signal is not emitted.
+If neither holds, the signal is not emitted. When confirmation is deferred (pending), it may only complete on the **bar immediately after** the trigger; if that bar does not close beyond the level, the pending signal is discarded.
+
+**Price-beyond-OB requirement:** Even when confirmed, entry is only allowed if price has moved beyond the OB in the correct direction:
+- **Long:** `close > OB top` (price must be above the block).
+- **Short:** `close < OB bottom` (price must be below the block).
+
+This prevents entering when price moved away from the OB in the wrong direction (e.g. shorting when price broke above a bearish OB).
 
 ---
 
@@ -110,7 +116,8 @@ For **short**: levels = S/R resistance, bearish OB bottoms, bullish breaker tops
 For **sell** signals:
 
 - Trigger: price interacted with bearish OB zone (high ≥ OB bottom) and closed below with bearish candle, or crossed below a breaker that acts as resistance.
-- Confirmation: 2 consecutive closes below, or volume spike.
+- Confirmation: 2 consecutive closes below (trigger bar + next bar), or volume spike on the crossing bar.
+- Price-beyond-OB: `close < OB bottom` (no short when price is above or inside the block).
 - Blocking: nearby bullish OB, strong resistance above.
 - Initial stop: OB top or above closest resistance with gap/2.
 - Trailing: when price crosses a lower level (resistance, lower OB), move stop down.

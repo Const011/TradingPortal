@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -10,6 +12,12 @@ from app.config import settings
 from app.services.bybit_client import BybitClient
 from app.services.candle_stream import CandleStreamHub
 from app.services.market_stream import MarketStreamHub
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    datefmt="%H:%M:%S",
+)
 
 app = FastAPI(title=settings.app_name, version="0.1.0")
 

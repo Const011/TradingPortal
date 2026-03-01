@@ -1,8 +1,11 @@
 """Order Block Trend-Following strategy. See docs/strategy-order-block-trend-following.md."""
 
+import logging
 from dataclasses import dataclass
 
 from app.schemas.market import Candle
+
+logger = logging.getLogger(__name__)
 from app.services.indicators.order_blocks import _iter_order_blocks_with_events, OrderBlock
 from app.services.trading_strategy.types import TradeEvent, StopSegment
 
@@ -272,8 +275,20 @@ def compute_order_block_trend_following(
         is_bull = _is_bullish_trend(candle_colors, c.time)
         is_bear = _is_bearish_trend(candle_colors, c.time)
 
-        # --- Check pending confirmation ---
-        if pending_long and is_bull:
+        # --- Debug: log raw events and state when triggers present ---
+        # if raw_events:
+        #     ev_types = [e["type"] for e in raw_events]
+        #     logger.info(
+        #         "[OB_STRAT] bar=%d time=%d | raw_events=%s | position=%s | is_bull=%s is_bear=%s | "
+        #         "ohlc=(%.1f,%.1f,%.1f,%.1f) vol=%.1f vol_avg=%.1f",
+        #         i, time_s, ev_types,
+        #         f"{position.side}@{position.entry_price}" if position else None,
+        #         is_bull, is_bear,
+        #         c.open, c.high, c.low, c.close, c.volume, vol_avg,
+        #     )
+
+        # --- Check pending confirmation (only on bar N+1; "two consecutive closes" = trigger bar + next bar) ---
+        if pending_long and is_bull and not position and i == pending_long.bar_index + 1:
             if c.close > pending_long.ob_top:
                 # Confirmed: 2nd consecutive close above
                 ob_width = pending_long.ob_width
@@ -310,6 +325,10 @@ def compute_order_block_trend_following(
                         },
                     )
                 )
+                # logger.info(
+                #     "[OB_STRAT] ENTRY LONG (pending) bar=%d time=%d price=%.1f stop=%.1f ob=[%.1f,%.1f] trigger=%s",
+                #     i, time_s, entry, stop, pending_long.ob_top, pending_long.ob_bottom, pending_long.event_type,
+                # )
                 position = _ActivePosition(
                     side="long",
                     entry_price=entry,
@@ -321,11 +340,12 @@ def compute_order_block_trend_following(
                 stop_segments.append(
                     StopSegment(start_time=time_s, end_time=time_s, price=stop, side="long")
                 )
+                pending_long = None  # Consumed by entry
             else:
                 pending_long = None  # Lost confirmation
         else:
             pending_long = None
-        if pending_short and is_bear:
+        if pending_short and is_bear and not position and i == pending_short.bar_index + 1:
             if c.close < pending_short.ob_bottom:
                 ob_width = pending_short.ob_width
                 entry = c.close
@@ -360,6 +380,10 @@ def compute_order_block_trend_following(
                         },
                     )
                 )
+                # logger.info(
+                #     "[OB_STRAT] ENTRY SHORT (pending) bar=%d time=%d price=%.1f stop=%.1f ob=[%.1f,%.1f] trigger=%s",
+                #     i, time_s, entry, stop, pending_short.ob_top, pending_short.ob_bottom, pending_short.event_type,
+                # )
                 position = _ActivePosition(
                     side="short",
                     entry_price=entry,
@@ -371,6 +395,7 @@ def compute_order_block_trend_following(
                 stop_segments.append(
                     StopSegment(start_time=time_s, end_time=time_s, price=stop, side="short")
                 )
+                pending_short = None  # Consumed by entry
             else:
                 pending_short = None
         else:
@@ -382,6 +407,23 @@ def compute_order_block_trend_following(
             ob_top, ob_bottom = ev["ob_top"], ev["ob_bottom"]
             ob_width = ob_top - ob_bottom
 
+            # if t in ("bullish_boundary_crossed", "bullish_breaker_created"):
+            #     if not is_bull:
+            #         logger.debug("[OB_STRAT] SKIP buy trigger: not bullish trend bar=%d", i)
+            #     elif position:
+            #         logger.info(
+            #             "[OB_STRAT] SKIP buy trigger (in position): bar=%d pos=%s ob=[%.1f,%.1f]",
+            #             i, f"{position.side}@{position.entry_price}", ob_top, ob_bottom,
+            #         )
+            # if t in ("bearish_boundary_crossed", "bearish_breaker_created"):
+            #     if not is_bear:
+            #         logger.debug("[OB_STRAT] SKIP sell trigger: not bearish trend bar=%d", i)
+            #     elif position:
+            #         logger.info(
+            #             "[OB_STRAT] SKIP sell trigger (in position): bar=%d pos=%s ob=[%.1f,%.1f]",
+            #             i, f"{position.side}@{position.entry_price}", ob_top, ob_bottom,
+            #         )
+
             if t in ("bullish_boundary_crossed", "bullish_breaker_created") and is_bull and not position:
                 # Buy trigger
                 confirmed = False
@@ -392,6 +434,8 @@ def compute_order_block_trend_following(
                 if confirmed:
                     # Immediate confirmation - emit now
                     entry = c.close
+                    if entry <= ob_top:
+                        continue  # Price must be above OB for long
                     bear_ob_closest = _get_closest_bearish_ob_below(bearish_ob, entry)
                     if bear_ob_closest is not None and (entry - bear_ob_closest) < block_ob_distance_mult * ob_width:
                         continue
@@ -411,6 +455,10 @@ def compute_order_block_trend_following(
                             context={"ob_top": ob_top, "ob_bottom": ob_bottom, "trigger": t},
                         )
                     )
+                    # logger.info(
+                    #     "[OB_STRAT] ENTRY LONG (raw) bar=%d time=%d price=%.1f stop=%.1f ob=[%.1f,%.1f] trigger=%s",
+                    #     i, time_s, entry, stop, ob_top, ob_bottom, t,
+                    # )
                     position = _ActivePosition(
                         side="long", entry_price=entry, entry_bar=i,
                         stop_price=stop, trigger_ob_top=ob_top, trigger_ob_bottom=ob_bottom,
@@ -430,6 +478,8 @@ def compute_order_block_trend_following(
                     confirmed = True
                 if confirmed:
                     entry = c.close
+                    if entry >= ob_bottom:
+                        continue  # Price must be below OB for short
                     bull_ob_closest = _get_closest_bullish_ob_above(bullish_ob, entry)
                     if bull_ob_closest is not None and (bull_ob_closest - entry) < block_ob_distance_mult * ob_width:
                         continue
@@ -449,6 +499,10 @@ def compute_order_block_trend_following(
                             context={"ob_top": ob_top, "ob_bottom": ob_bottom, "trigger": t},
                         )
                     )
+                    # logger.info(
+                    #     "[OB_STRAT] ENTRY SHORT (raw) bar=%d time=%d price=%.1f stop=%.1f ob=[%.1f,%.1f] trigger=%s",
+                    #     i, time_s, entry, stop, ob_top, ob_bottom, t,
+                    # )
                     position = _ActivePosition(
                         side="short", entry_price=entry, entry_bar=i,
                         stop_price=stop, trigger_ob_top=ob_top, trigger_ob_bottom=ob_bottom,
@@ -486,6 +540,10 @@ def compute_order_block_trend_following(
                         start_time=last.start_time, end_time=time_s, price=position.stop_price, side="long"
                     )
                 if c.low <= position.stop_price:
+                    # logger.info(
+                    #     "[OB_STRAT] STOP HIT (long) bar=%d time=%d low=%.1f stop=%.1f",
+                    #     i, time_s, c.low, position.stop_price,
+                    # )
                     position = None
             else:
                 # S/R resistance + bearish OB bottoms + bullish breaker tops (act as resistance when broken)
@@ -512,6 +570,10 @@ def compute_order_block_trend_following(
                         start_time=last.start_time, end_time=time_s, price=position.stop_price, side="short"
                     )
                 if c.high >= position.stop_price:
+                    # logger.info(
+                    #     "[OB_STRAT] STOP HIT (short) bar=%d time=%d high=%.1f stop=%.1f",
+                    #     i, time_s, c.high, position.stop_price,
+                    # )
                     position = None
 
         prev_candle = c
