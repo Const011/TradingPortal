@@ -9,7 +9,7 @@ import type {
   StrategyStopSegmentData,
 } from "@/lib/types/market";
 
-export type CloseReason = "stop" | "take_profit" | "end_of_data";
+export type CloseReason = "stop" | "take_profit" | "end_of_data" | "manual";
 
 export type StrategyTradeResult = {
   /** Entry bar index */
@@ -168,4 +168,35 @@ export function computeStrategyResults(
     totalPoints,
     avgPointsPerTrade,
   };
+}
+
+/** Trade from trade-log API (mode=trading). */
+export type TradeLogTradeInput = {
+  entryDateTime: string;
+  side: "long" | "short";
+  entryPrice: number;
+  closeDateTime: string;
+  closePrice: number;
+  closeReason: string;
+  points: number;
+};
+
+/** Convert trade log API response to StrategyResultsSummary for display. */
+export function tradeLogToStrategyResultsSummary(
+  trades: TradeLogTradeInput[]
+): StrategyResultsSummary {
+  const results: StrategyTradeResult[] = trades.map((t) => ({
+    barIndex: -1,
+    entryDateTime: t.entryDateTime,
+    side: t.side,
+    entryPrice: t.entryPrice,
+    closePrice: t.closePrice,
+    closeBarIndex: -1,
+    closeDateTime: t.closeDateTime,
+    closeReason: t.closeReason as CloseReason,
+    points: t.points,
+  }));
+  const totalPoints = results.reduce((sum, t) => sum + t.points, 0);
+  const avgPointsPerTrade = results.length > 0 ? totalPoints / results.length : 0;
+  return { trades: results, totalPoints, avgPointsPerTrade };
 }

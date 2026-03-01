@@ -3,6 +3,7 @@
 import { useMarketData } from "@/contexts/market-data-context";
 import { PriceChart } from "@/components/price-chart";
 import { TickerList } from "@/components/ticker-list";
+import { backendMode } from "@/lib/api/market";
 
 function formatPrice(price: number): string {
   if (price >= 1000) return price.toFixed(2);
@@ -25,7 +26,18 @@ export function MarketShell() {
       <TickerList />
       <section style={{ flex: 1, padding: 16 }}>
         <header style={{ marginBottom: 16 }}>
-          <h2 style={{ margin: 0 }}>Trading Portal</h2>
+          <h2 style={{ margin: 0 }}>
+            Trading Portal
+            {backendMode === "trading" ? (
+              <span style={{ marginLeft: 8, fontSize: "0.75em", opacity: 0.9 }}>
+                — TRADING
+              </span>
+            ) : (
+              <span style={{ marginLeft: 8, fontSize: "0.75em", opacity: 0.7 }}>
+                — SIMULATION
+              </span>
+            )}
+          </h2>
           <p style={{ margin: "8px 0 0", opacity: 0.8, fontVariantNumeric: "tabular-nums" }}>
             {selectedSymbol || "Select a symbol"}
             {currentBar != null ? (

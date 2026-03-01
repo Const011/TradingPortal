@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -e
 
-# Default: trading gateway (frontend 4000, backend 9000). Override with BACKEND_PORT, FRONTEND_PORT.
+# Configurable ports (default: trading gateway)
 BACKEND_PORT="${BACKEND_PORT:-9000}"
 FRONTEND_PORT="${FRONTEND_PORT:-4000}"
 
@@ -20,7 +20,8 @@ if [[ ! -d .venv ]]; then
   python3 -m venv .venv
 fi
 # shellcheck source=/dev/null
-source .venv/bin/activate
+source $ROOT/../.venv/bin/activate
+
 
 pip install -q -r requirements.txt
 MODE=trading uvicorn app.main:app --reload --port "$BACKEND_PORT" &

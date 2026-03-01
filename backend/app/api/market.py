@@ -5,10 +5,12 @@ import logging
 import httpx
 from fastapi import APIRouter, Depends, Query, WebSocket, WebSocketDisconnect, HTTPException
 
+from app.config import settings
 from app.schemas.market import Candle, SymbolInfo, TickerSnapshot
 from app.services.bybit_client import BybitClient
 from app.services.candle_stream import CandleStreamHub
 from app.services.market_stream import MarketStreamHub
+from app.services.trade_log import get_trades, load_current_trades
 
 logger = logging.getLogger(__name__)
 
@@ -16,6 +18,37 @@ logger = logging.getLogger(__name__)
 CANDLE_INTERVALS = frozenset({"1", "3", "5", "15", "30", "60", "120", "240", "360", "720", "D", "W", "M"})
 
 router = APIRouter(prefix="/api/v1", tags=["market"])
+
+
+@router.get("/mode")
+async def get_mode() -> dict:
+    """Return backend mode and gateway config. When mode=trading, symbol and interval are fixed."""
+    payload: dict = {"mode": settings.mode}
+    if settings.mode == "trading":
+        payload["symbol"] = settings.trading_symbol
+        payload["interval"] = settings.trading_interval
+    return payload
+
+
+@router.get("/current-trades")
+async def current_trades(
+    symbol: str = Query(..., description="Symbol e.g. BTCUSDT"),
+    interval: str = Query(..., description="Interval e.g. 60"),
+) -> dict:
+    """Return current open trades (from current.json). Used when mode=trading for open positions."""
+    trades = load_current_trades(symbol, interval)
+    return {"mode": settings.mode, "trades": trades}
+
+
+@router.get("/trade-log")
+async def trade_log(
+    symbol: str = Query(..., description="Symbol e.g. BTCUSDT"),
+    interval: str = Query(..., description="Interval e.g. 60"),
+    since: int | None = Query(None, description="Optional Unix timestamp (seconds) to filter trades"),
+) -> dict:
+    """Return logged trades for symbol/interval. Used when mode=trading for chart and results."""
+    trades = get_trades(symbol, interval, since)
+    return {"mode": settings.mode, "trades": trades}
 
 
 def get_bybit_client() -> BybitClient:

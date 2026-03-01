@@ -1,0 +1,13 @@
+{
+  "trades": [
+    {
+      "tradeId": "1772262000",
+      "entryTime": 1772262000,
+      "entryPrice": 63823.9,
+      "currentStopPrice": 66008.02217362952,
+      "initialStopPrice": 62500.1,
+      "side": "long",
+      "targetPrice": null
+    }
+  ]
+}

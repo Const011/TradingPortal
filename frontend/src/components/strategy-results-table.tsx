@@ -18,6 +18,8 @@ function formatCloseReason(reason: string): string {
       return "Take Profit";
     case "end_of_data":
       return "End of data";
+    case "manual":
+      return "Manual";
     default:
       return reason;
   }

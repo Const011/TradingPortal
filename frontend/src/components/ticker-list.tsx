@@ -9,7 +9,8 @@ function formatPrice(price: number): string {
 }
 
 export function TickerList() {
-  const { symbols, selectedSymbol, setSelectedSymbol, tickers } = useMarketData();
+  const { symbols, selectedSymbol, setSelectedSymbol, tickers, symbolAndIntervalLocked } =
+    useMarketData();
 
   return (
     <aside
@@ -21,6 +22,11 @@ export function TickerList() {
       }}
     >
       <h3 style={{ marginTop: 0 }}>Tickers</h3>
+      {symbolAndIntervalLocked && (
+        <p style={{ margin: "4px 0 8px", fontSize: 12, opacity: 0.7 }}>
+          Fixed by gateway config
+        </p>
+      )}
       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
         {symbols.map((item) => {
           const active = item.symbol === selectedSymbol;
@@ -32,7 +38,8 @@ export function TickerList() {
             <button
               key={item.symbol}
               type="button"
-              onClick={() => setSelectedSymbol(item.symbol)}
+              disabled={symbolAndIntervalLocked}
+              onClick={() => !symbolAndIntervalLocked && setSelectedSymbol(item.symbol)}
               style={{
                 display: "flex",
                 alignItems: "center",
@@ -46,8 +53,9 @@ export function TickerList() {
                 borderRadius: 6,
                 padding: "6px 10px",
                 textAlign: "left",
-                cursor: "pointer",
+                cursor: symbolAndIntervalLocked ? "not-allowed" : "pointer",
                 fontVariantNumeric: "tabular-nums",
+                opacity: symbolAndIntervalLocked ? 0.7 : 1,
               }}
             >
               <strong style={{ flexShrink: 0 }}>{item.symbol}</strong>

@@ -21,12 +21,16 @@ import {
   CHART_INTERVAL_OPTIONS,
   chartIntervalSeconds,
 } from "@/lib/constants/chart-intervals";
+import { backendMode } from "@/lib/api/market";
 import { useMarketData } from "@/contexts/market-data-context";
 import { OrderBlocks } from "@/lib/chart-plugins/order-blocks";
 import { StructurePrimitive } from "@/lib/chart-plugins/structure";
 import { StrategySignalsPrimitive } from "@/lib/chart-plugins/strategy-signals";
 import { VolumeProfile } from "@/lib/chart-plugins/volume-profile";
-import { computeStrategyResults } from "@/lib/strategy-results";
+import {
+  computeStrategyResults,
+  tradeLogToStrategyResultsSummary,
+} from "@/lib/strategy-results";
 import { IndicatorControlPanel } from "@/components/indicator-control-panel";
 import { StrategyResultsTable } from "@/components/strategy-results-table";
 
@@ -77,6 +81,8 @@ export function PriceChart() {
     candleColoringEnabled,
     strategyMarkers,
     strategySignals,
+    tradeLogTrades,
+    symbolAndIntervalLocked,
   } = useMarketData();
 
   const orderBlocksForDisplay = useMemo(() => {
@@ -149,6 +155,9 @@ export function PriceChart() {
   }, [candles]);
 
   const strategyResults = useMemo(() => {
+    if (backendMode === "trading" && tradeLogTrades && tradeLogTrades.length > 0) {
+      return tradeLogToStrategyResultsSummary(tradeLogTrades);
+    }
     if (
       strategyMarkers === "off" ||
       !strategySignals?.events ||
@@ -163,6 +172,7 @@ export function PriceChart() {
       strategySignals.stopSegments ?? []
     );
   }, [
+    tradeLogTrades,
     strategyMarkers,
     strategySignals?.events,
     strategySignals?.stopSegments,
@@ -515,15 +525,25 @@ export function PriceChart() {
             marginBottom: 8,
           }}
         >
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+            {symbolAndIntervalLocked && (
+              <span style={{ fontSize: 12, opacity: 0.7, marginRight: 4 }}>
+                Interval fixed
+              </span>
+            )}
             {CHART_INTERVAL_OPTIONS.map((option) => {
               const isActive = chartInterval === option.value;
               return (
                 <button
                   key={option.value}
                   type="button"
-                  onClick={() => setChartInterval(option.value)}
-                  style={isActive ? intervalButtonActiveStyle : intervalButtonStyle}
+                  disabled={symbolAndIntervalLocked}
+                  onClick={() => !symbolAndIntervalLocked && setChartInterval(option.value)}
+                  style={{
+                    ...(isActive ? intervalButtonActiveStyle : intervalButtonStyle),
+                    cursor: symbolAndIntervalLocked ? "not-allowed" : "pointer",
+                    opacity: symbolAndIntervalLocked ? 0.7 : 1,
+                  }}
                 >
                   {option.label}
                 </button>

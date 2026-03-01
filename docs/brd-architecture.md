@@ -162,6 +162,22 @@ This document is intentionally scoped to **Spot trading only** for v1 to reduce 
 
 ## 9) System Architecture
 
+### Multi-Gateway: Trading vs Simulation
+
+The backend runs as **separate instances** by mode:
+
+- **Trading gateway** (frontend 4000, backend 9000): Strategy runs on live candle stream; emits signals that lead to real orders. All trade events (entry, stop move, exit) are **logged to a trade log**. Chart displays logged trades, not live strategy output. Results use actual logged trade data. **Symbol and interval are fixed** by gateway config (`TRADING_SYMBOL`, `TRADING_INTERVAL`); frontend disables the ticker and interval selectors.
+- **Simulation gateway** (frontend 4001, backend 9001): Strategy runs on live candle stream; emits simulated trade events in the graphics payload. No order execution. Frontend computes results from simulated events. Symbol and interval are user-selectable.
+
+Ports are configurable via `FRONTEND_PORT` and `BACKEND_PORT` env vars in the run scripts.
+
+**Trade log (trading mode only):**
+- **Index** (`logs/trades/{symbol}_{interval}/index.jsonl`): JSONL records for entry, stop_move, exit.
+- **Entry snapshots** (`logs/trades/{symbol}_{interval}/entry_{timestamp}.md`): One Markdown file per entry, same format as "Export for AI" (bar data, indicators, trade orders, trailing stops).
+- **Current trades** (`logs/trades/{symbol}_{interval}/current.json`): Open positions for **gateway restart recovery**. Contains `{ trades: [{ tradeId, entryTime, entryPrice, currentStopPrice, initialStopPrice, side, targetPrice }] }`. Updated on entry (add), stop move (update currentStopPrice), exit (remove). Read by gateway on stream start to restore state and continue tracking stop moves and exits.
+
+Mode and port are configurable via command-line (`MODE=simulation|trading`, `--port`). Frontend displays the mode in the caption: "Trading Portal - SIMULATION" or "Trading Portal - TRADING". See `docs/multi-gateway-trading-simulation-plan.md` for the full implementation plan.
+
 ### Architectural Principle: Backend Computation, Frontend Visualization
 
 **All indicator and trade strategy calculations run on the backend.** The frontend is a thin visualization layer and does not compute indicators, signals, or strategy logic.
@@ -214,6 +230,7 @@ flowchart LR
 - **Indicator Service:** compute and publish indicator time series (single source of truth for strategies and frontend). Indicators are pure computation (OB zones, structure, volume profile, S/R).
 - **Trading Strategy Module:** consumes candles and pre-calculated indicators; produces **trade events** (signals) in a unified format. Strategy-agnostic: same output for historic simulation and live signal generation. See *Trading Strategy Module* below.
 - **Strategy Service:** parameter versioning, approval workflow, strategy metadata.
+- **Trade Log Service (trading mode):** appends entry (with Markdown snapshot), stop move, and exit to JSONL index; maintains `current.json` for open positions. Read on gateway start to restore state for restart recovery.
 - **AI Advisor Service:** OpenRouter calls, schema-validated suggestions, explainability metadata.
 - **Simulator Service:** consumes trade events from Trading Strategy; deterministic backtests for baseline vs candidate strategies.
 
@@ -243,11 +260,12 @@ The module itself is mode-agnostic: it receives candles and indicators and outpu
 
 ### Candle Stream (Chart Data + Graphics)
 
-1. Frontend subscribes to `WS /api/v1/stream/candles/{symbol}?interval=...&volume_profile_window=2000`.
+1. Frontend subscribes to `WS /api/v1/stream/candles/{symbol}?interval=...&volume_profile_window=2000&strategy_markers=simulation|trade|off`.
 2. Backend `CandleStreamHub` fetches REST kline (spot), computes indicators (volume profile, order blocks, structure, S/R), builds a **graphics** object, broadcasts snapshot with `candles` and `graphics`.
 3. Backend subscribes to Bybit kline WebSocket (spot); for each bar update: replace last candle or append new bar; recompute graphics; on new bar start, refetch REST and broadcast fresh snapshot.
-4. `graphics` structure: `{ volumeProfile: {...}, supportResistance: { lines: [...] }, orderBlocks: {...}, smartMoney: { structure: {...} } }`. Order blocks are pure indicator output (OB zones only). Bar markers (boundary cross, breaker), when included, come from the **Trading Strategy** module (trade events → chart markers).
-5. Frontend applies snapshot/upsert events; chart renders candles and graphics. No client-side indicator computation.
+4. `graphics` structure: `{ volumeProfile: {...}, supportResistance: { lines: [...] }, orderBlocks: {...}, smartMoney: { structure: {...} }, strategySignals?: {...} }`. Order blocks are pure indicator output (OB zones only). Bar markers (boundary cross, breaker), when included, come from the **Trading Strategy** module (trade events → chart markers).
+5. **By mode:** In **simulation** mode, `strategySignals` (markers, stop lines, events) is included in the stream. In **trading** mode, `strategySignals` is omitted; the frontend fetches trade data via `GET /api/v1/trade-log` and displays logged trades. On gateway restart in trading mode, `CandleStreamHub` loads `current.json` to restore open positions and continue tracking stop moves and exits.
+6. Frontend applies snapshot/upsert events; chart renders candles and graphics. No client-side indicator computation.
 
 ### Ticker Stream (Ticker List Only)
 
@@ -287,6 +305,9 @@ The module itself is mode-agnostic: it receives candles and indicators and outpu
 ### Strategy + AI + Simulation
 
 - **Strategy data export (frontend):** User downloads bar data, indicators, orders, and trailing stops via "Export for AI" button. The Markdown file with captioned sections is fed to AI for strategy review and improvement proposals.
+- **Mode and gateway config:** `GET /api/v1/mode` — Returns `{ "mode": "simulation" | "trading" }`. When `mode=trading`, also returns `{ "symbol": "BTCUSDT", "interval": "60" }` (fixed by gateway config).
+- **Trade log (trading mode only):** `GET /api/v1/trade-log?symbol=BTCUSDT&interval=60` — Returns logged trades for chart display and results table.
+- **Current trades (trading mode only):** `GET /api/v1/current-trades?symbol=BTCUSDT&interval=60` — Returns open positions from `current.json`.
 - `POST /api/v1/strategies/{strategyId}/review`
 - `POST /api/v1/strategies/{strategyId}/simulate`
 - `GET /api/v1/simulations/{runId}`
@@ -323,7 +344,12 @@ Each section has a **proper caption** so that an AI can parse the document, unde
 
 ### Strategy Results Calculation (Frontend)
 
-When strategy signals are displayed, the frontend computes **trade outcomes in points** by simulating each trade against the candle data:
+When strategy signals are displayed, the frontend computes **trade outcomes in points**:
+
+- **Simulation mode:** Simulates each trade against the candle data from the stream.
+- **Trading mode:** Uses precomputed results from the trade log API (`GET /api/v1/trade-log`).
+
+In both cases, the logic is:
 
 1. **Entry:** Entry price = close price of the entry bar (bar at `barIndex`).
 2. **Stop hit:** Close price = close of the first bar whose range touches the effective stop level. Stop level is taken from trailing stop segments (or initial stop if no segment covers the bar).
@@ -333,7 +359,13 @@ For each trade, the outcome is computed as:
 - **Long:** `points = closePrice - entryPrice`
 - **Short:** `points = entryPrice - closePrice`
 
-A **Strategy Results** table is rendered below the chart with columns: entry date/time, order type (long/short), close date/time, close reason (stop / take_profit / end_of_data), and difference in points. A summary row shows total points and average points per trade.
+A **Strategy Results** table is rendered below the chart with columns: entry date/time, order type (long/short), close date/time, close reason (stop / take_profit / end_of_data / manual), and difference in points. A summary row shows total points and average points per trade.
+
+### Frontend Mode Awareness
+
+- **Env vars:** `NEXT_PUBLIC_MODE` (simulation|trading), `NEXT_PUBLIC_API_URL` (backend URL, e.g. `http://localhost:9000` or `http://localhost:9001`).
+- **Caption:** Header shows "Trading Portal - SIMULATION" or "Trading Portal - TRADING".
+- **Trading mode:** Symbol and interval are fixed by gateway config; ticker list and interval buttons are disabled. Gateway config is fetched via `GET /api/v1/mode` on load.
 
 ### Order Blocks and Swing Labels: Full Data, Frontend Display Control
 
@@ -393,6 +425,7 @@ Lightweight Charts does not provide built-in box, line, label, or shape primitiv
 ### Phase 1.1: UI/Feed Wiring
 
 - Symbol switcher in frontend linked to backend market endpoints.
+- **Multi-gateway run scripts:** `run-dev-trading.sh` (frontend 4000, backend 9000) and `run-dev-simulation.sh` (frontend 4001, backend 9001). Ports configurable via `FRONTEND_PORT`, `BACKEND_PORT`. Trading mode uses fixed symbol/interval from gateway config; frontend disables selectors.
 - On symbol change: reconnect candle stream (backend sends fresh snapshot); reconnect ticker stream for ticker list.
 - Lightweight Charts integration with candle series from `WS /stream/candles`; optional tick-based OHLC polish for last bar (ticker used only for last price, not volume).
 - Chart viewport: call `fitContent()` only when symbol or interval changes, not on every data update, to preserve scroll/zoom position.

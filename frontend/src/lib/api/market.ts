@@ -1,7 +1,73 @@
 /** Market API: calls our backend. Backend proxies Bybit. */
 import { Candle, SymbolInfo, TickerSnapshot } from "@/lib/types/market";
 
-const backendBaseUrl = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:8000";
+/** Backend URL. Set by run-dev-*.sh; or use .env NEXT_PUBLIC_API_URL for manual runs. */
+const backendBaseUrl =
+  process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:9000";
+
+/** Backend mode: simulation (stream strategy) or trading (trade log). From env or fetch. */
+export type BackendMode = "simulation" | "trading";
+
+export const backendMode: BackendMode =
+  (process.env.NEXT_PUBLIC_MODE as BackendMode) ?? "simulation";
+
+/** Gateway config when mode=trading (symbol and interval are fixed). */
+export type GatewayConfig = {
+  mode: "trading";
+  symbol: string;
+  interval: string;
+};
+
+/** Fetch backend mode and gateway config. When mode=trading, returns symbol and interval. */
+export async function fetchGatewayConfig(): Promise<{
+  mode: BackendMode;
+  symbol?: string;
+  interval?: string;
+}> {
+  const res = await fetch(`${backendBaseUrl}/api/v1/mode`);
+  if (!res.ok) return { mode: "simulation" };
+  const data = (await res.json()) as { mode: string; symbol?: string; interval?: string };
+  return {
+    mode: data.mode === "trading" ? "trading" : "simulation",
+    symbol: data.symbol,
+    interval: data.interval,
+  };
+}
+
+/** @deprecated Use fetchGatewayConfig */
+export async function fetchBackendMode(): Promise<BackendMode> {
+  const { mode } = await fetchGatewayConfig();
+  return mode;
+}
+
+/** Trade from trade-log API (mode=trading). */
+export type TradeLogTrade = {
+  tradeId: string;
+  entryDateTime: string;
+  side: "long" | "short";
+  entryPrice: number;
+  closeDateTime: string;
+  closePrice: number;
+  closeReason: string;
+  points: number;
+  markers: Array<{ time: number; position: "above" | "below"; shape: string; color: string }>;
+  stopSegments: Array<{ startTime: number; endTime: number; price: number; side: string }>;
+  stopLines: Array<{ type: string; from: { time: number; price: number }; to: { time: number; price: number }; color: string; width?: number; style?: string }>;
+  events: Array<{ time: number; barIndex: number; type: string; side: string; price: number; targetPrice?: number; initialStopPrice: number; context?: Record<string, unknown> }>;
+};
+
+/** [Backend] GET /trade-log. Used when mode=trading for chart and results. */
+export async function fetchTradeLog(
+  symbol: string,
+  interval: string,
+  since?: number
+): Promise<{ mode: string; trades: TradeLogTrade[] }> {
+  const params = new URLSearchParams({ symbol, interval });
+  if (since != null) params.set("since", String(since));
+  const res = await fetch(`${backendBaseUrl}/api/v1/trade-log?${params.toString()}`);
+  if (!res.ok) throw new Error(`Failed to fetch trade log for ${symbol}`);
+  return res.json() as Promise<{ mode: string; trades: TradeLogTrade[] }>;
+}
 
 /** [Backend] GET /symbols. Fetches tradable symbols for selector and ticker list. */
 export async function fetchSymbols(): Promise<SymbolInfo[]> {
