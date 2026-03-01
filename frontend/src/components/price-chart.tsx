@@ -26,7 +26,9 @@ import { OrderBlocks } from "@/lib/chart-plugins/order-blocks";
 import { StructurePrimitive } from "@/lib/chart-plugins/structure";
 import { StrategySignalsPrimitive } from "@/lib/chart-plugins/strategy-signals";
 import { VolumeProfile } from "@/lib/chart-plugins/volume-profile";
+import { computeStrategyResults } from "@/lib/strategy-results";
 import { IndicatorControlPanel } from "@/components/indicator-control-panel";
+import { StrategyResultsTable } from "@/components/strategy-results-table";
 
 function toChartTime(milliseconds: number): Time {
   return Math.floor(milliseconds / 1000) as Time;
@@ -145,6 +147,27 @@ export function PriceChart() {
       };
     });
   }, [candles]);
+
+  const strategyResults = useMemo(() => {
+    if (
+      strategyMarkers === "off" ||
+      !strategySignals?.events ||
+      strategySignals.events.length === 0 ||
+      candles.length === 0
+    ) {
+      return null;
+    }
+    return computeStrategyResults(
+      strategySignals.events,
+      candles,
+      strategySignals.stopSegments ?? []
+    );
+  }, [
+    strategyMarkers,
+    strategySignals?.events,
+    strategySignals?.stopSegments,
+    candles,
+  ]);
 
   useEffect(() => {
     if (!containerRef.current || chartRef.current) {
@@ -527,6 +550,7 @@ export function PriceChart() {
         <IndicatorControlPanel />
       </div>
       <div ref={containerRef} style={{ width: "100%" }} />
+      <StrategyResultsTable summary={strategyResults} />
     </div>
   );
 }

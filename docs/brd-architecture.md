@@ -321,6 +321,20 @@ A **data download control** in the chart/indicators area allows exporting the cu
 
 Each section has a **proper caption** so that an AI can parse the document, understand the strategy context, and propose improvements. The export format is Markdown (`.md`), suitable for pasting into AI chat or feeding to the AI Advisor workflow.
 
+### Strategy Results Calculation (Frontend)
+
+When strategy signals are displayed, the frontend computes **trade outcomes in points** by simulating each trade against the candle data:
+
+1. **Entry:** Entry price = close price of the entry bar (bar at `barIndex`).
+2. **Stop hit:** Close price = close of the first bar whose range touches the effective stop level. Stop level is taken from trailing stop segments (or initial stop if no segment covers the bar).
+3. **Take profit hit:** Close price = close of the first bar whose range touches the target price (when `targetPrice` is set).
+
+For each trade, the outcome is computed as:
+- **Long:** `points = closePrice - entryPrice`
+- **Short:** `points = entryPrice - closePrice`
+
+A **Strategy Results** table is rendered below the chart with columns: entry date/time, order type (long/short), close date/time, close reason (stop / take_profit / end_of_data), and difference in points. A summary row shows total points and average points per trade.
+
 ### Order Blocks and Swing Labels: Full Data, Frontend Display Control
 
 To simplify data analysis and AI export:
