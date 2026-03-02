@@ -20,14 +20,14 @@ if [[ ! -d .venv ]]; then
   python3 -m venv .venv
 fi
 # shellcheck source=/dev/null
-source .venv/bin/activate
+source $ROOT/../.venv/bin/activate
 
 pip install -q -r requirements.txt
-MODE=trading uvicorn app.main:app --reload --port "$BACKEND_PORT" &
+MODE=simulation uvicorn app.main:app --reload --port "$BACKEND_PORT" &
 BACKEND_PID=$!
 
 cd "$ROOT/frontend"
 if [[ ! -d node_modules ]]; then
   npm install
 fi
-NEXT_PUBLIC_MODE=trading NEXT_PUBLIC_API_URL="http://localhost:$BACKEND_PORT" npm run dev -- -p "$FRONTEND_PORT"
+NEXT_PUBLIC_MODE=simulation NEXT_PUBLIC_API_URL="http://localhost:$BACKEND_PORT" npm run dev -- -p "$FRONTEND_PORT"

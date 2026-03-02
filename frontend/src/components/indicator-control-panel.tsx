@@ -56,8 +56,11 @@ export function IndicatorControlPanel() {
     setStructureEnabled,
     candleColoringEnabled,
     setCandleColoringEnabled,
-    strategyMarkers,
-    setStrategyMarkers,
+    strategyMarkersEnabled,
+    setStrategyMarkersEnabled,
+    strategyMarkersWindow,
+    setStrategyMarkersWindow,
+    symbolAndIntervalLocked,
   } = useMarketData();
 
   const handleDownloadStrategyData = (): void => {
@@ -167,20 +170,39 @@ export function IndicatorControlPanel() {
       </button>
       <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
         <span style={{ fontSize: 12, color: "#5f6368" }}>Markers:</span>
-        {(["off", "simulation", "trade"] as const).map((mode) => (
+        {(["off", "on"] as const).map((mode) => (
           <button
             key={mode}
             type="button"
-            onClick={() => setStrategyMarkers(mode)}
-            style={strategyMarkers === mode ? toggleButtonActiveStyle : toggleButtonStyle}
+            onClick={() => setStrategyMarkersEnabled(mode === "on")}
+            style={strategyMarkersEnabled === (mode === "on") ? toggleButtonActiveStyle : toggleButtonStyle}
           >
-            {mode === "off" ? "Off" : mode === "simulation" ? "Sim" : "Trade"}
+            {mode === "off" ? "Off" : "On"}
           </button>
         ))}
+        {strategyMarkersEnabled && !symbolAndIntervalLocked && (
+          <label style={{ display: "flex", alignItems: "center", gap: 4 }}>
+            <span style={{ fontSize: 12, color: "#5f6368" }}>Markers window:</span>
+            <input
+              type="number"
+              min={100}
+              max={10000}
+              step={100}
+              value={strategyMarkersWindow}
+              onChange={(e) => {
+                const v = parseInt(e.target.value, 10);
+                if (!Number.isNaN(v) && v >= 100 && v <= 10000) {
+                  setStrategyMarkersWindow(v);
+                }
+              }}
+              style={{ ...inputStyle, width: 72 }}
+            />
+          </label>
+        )}
       </div>
       {volumeProfileEnabled && (
         <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          <span style={{ fontSize: 12, color: "#5f6368" }}>Window:</span>
+          <span style={{ fontSize: 12, color: "#5f6368" }}>VP window:</span>
           <input
             type="number"
             min={100}

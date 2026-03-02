@@ -1,9 +1,9 @@
 "use client";
 
+import { GatewaySelector } from "@/components/gateway-selector";
 import { useMarketData } from "@/contexts/market-data-context";
 import { PriceChart } from "@/components/price-chart";
 import { TickerList } from "@/components/ticker-list";
-import { backendMode } from "@/lib/api/market";
 
 function formatPrice(price: number): string {
   if (price >= 1000) return price.toFixed(2);
@@ -19,16 +19,24 @@ function formatVolume(volume: number): string {
 }
 
 export function MarketShell() {
-  const { selectedSymbol, currentBar, latestTick, loading, error } = useMarketData();
+  const {
+    selectedSymbol,
+    currentBar,
+    latestTick,
+    loading,
+    error,
+    gatewayConfig,
+  } = useMarketData();
 
   return (
     <main style={{ display: "flex", minHeight: "100vh" }}>
       <TickerList />
       <section style={{ flex: 1, padding: 16 }}>
         <header style={{ marginBottom: 16 }}>
+          <GatewaySelector />
           <h2 style={{ margin: 0 }}>
             Trading Portal
-            {backendMode === "trading" ? (
+            {gatewayConfig?.mode === "trade" ? (
               <span style={{ marginLeft: 8, fontSize: "0.75em", opacity: 0.9 }}>
                 — TRADING
               </span>

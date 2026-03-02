@@ -1,6 +1,8 @@
 # Multi-Gateway Architecture: Trading vs Simulation
 
-## 1. Overview
+> **Note:** This document describes the previous architecture (two frontends on 4000/4001). The current architecture uses a **single frontend** on port 4000 with a gateway selector. See `docs/single-frontend-gateway-plan.md` for the implementation plan.
+
+## 1. Overview (Legacy)
 
 Replace the unified gateway with **separate backend instances** that can run independently:
 
@@ -61,6 +63,8 @@ Each log entry is a JSON line (JSONL) or structured record. Types:
    - `time`, `closePrice`, `closeReason` (stop | take_profit | manual), `tradeId`, `points`
 
 Log files: e.g. `logs/trades_{symbol}_{interval}/index.jsonl` for the index; `logs/trades_{symbol}_{interval}/entry_*.md` for entry snapshots.
+
+**Trade log semantics (trading mode):** The log records only real-time signals at the current bar (the bar being updated by live ticks). Historical strategy recalculation on gateway start or resync is never logged. At most one entry or stop move per bar.
 
 **Current trades file** (`logs/trades_{symbol}_{interval}/current.json`): Persists open positions for gateway restart recovery. Contains `{ trades: [{ tradeId, entryTime, entryPrice, currentStopPrice, initialStopPrice, side, targetPrice }] }`. Updated on entry (add), stop move (update currentStopPrice), exit (remove). Read by gateway on stream start to restore state.
 

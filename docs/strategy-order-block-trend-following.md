@@ -18,10 +18,12 @@ Strategy that generates buy/sell signals based on order blocks, candle trend col
 
 A **buy** signal can originate from:
 
-1. **Price broke up from a bullish order block** — Price interacted with the OB zone (low ≤ OB top) and closed above the OB top with a bullish candle. Captures retests (open in zone), breakouts from below, and breakouts with wicks into the zone.
+1. **Price broke up from a bullish order block** — Price touched the **entry zone** (OB bottom to OB bottom + 2×OB height) and closed above the OB top with a bullish candle. The entry zone extends from the OB lower boundary upward by twice the OB height; the enablement (breaker) still uses the original OB boundaries (bottom + width).
 2. **Trend continued and crossed a breaker block** — A bearish OB that became a breaker (price wicked above it) now acts as support; price crosses back above it in line with bullish trend.
 
 Both cases are treated as breakout/continuation above a significant level.
+
+**OB entry limit:** Each order block can generate at most **N** entry signals (default 2). This protects against stale price ranges that produce many signals when price oscillates back and forth. Once an OB has triggered N times, it no longer emits boundary-crossed events.
 
 ---
 
@@ -96,6 +98,7 @@ For **short**: levels = S/R resistance, bearish OB bottoms, bullish breaker tops
 | `block_sr_distance_mult`  | 2.0     | Block if strong support within N × trigger OB width       |
 | `min_sr_strength`         | 4.0     | Min S/R line width to count as “strong” support            |
 | `trail_param`             | 0.75    | Trailing stop: level − N × (level − prev_stop)             |
+| `max_ob_entry_signals`    | 2       | Max entry signals per OB; prevents stale zones from repeated triggers |
 
 ---
 
@@ -115,7 +118,7 @@ For **short**: levels = S/R resistance, bearish OB bottoms, bullish breaker tops
 
 For **sell** signals:
 
-- Trigger: price interacted with bearish OB zone (high ≥ OB bottom) and closed below with bearish candle, or crossed below a breaker that acts as resistance.
+- Trigger: price touched the **entry zone** (OB top − 2×OB height to OB top) and closed below with bearish candle, or crossed below a breaker that acts as resistance. The entry zone extends from the OB upper boundary downward by twice the OB height. The same OB entry limit (max N signals per OB) applies.
 - Confirmation: 2 consecutive closes below (trigger bar + next bar), or volume spike on the crossing bar.
 - Price-beyond-OB: `close < OB bottom` (no short when price is above or inside the block).
 - Blocking: nearby bullish OB, strong resistance above.

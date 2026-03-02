@@ -1,4 +1,5 @@
 import logging
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -19,7 +20,20 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 
-app = FastAPI(title=settings.app_name, version="0.1.0")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    if settings.mode == "trading":
+        await candle_stream_hub.start_heartbeat(
+            symbol=settings.trading_symbol,
+            interval=settings.trading_interval,
+            volume_profile_window=settings.bars_window,
+            strategy_markers="trade",
+        )
+    yield
+
+
+app = FastAPI(title=settings.app_name, version="0.1.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -31,7 +45,10 @@ app.add_middleware(
 
 bybit_client = BybitClient()
 stream_hub = MarketStreamHub(bybit_client=bybit_client)
-candle_stream_hub = CandleStreamHub(bybit_client=bybit_client, snapshot_limit=2000)
+candle_stream_hub = CandleStreamHub(
+    bybit_client=bybit_client,
+    snapshot_limit=settings.bars_window if settings.mode == "trading" else 2000,
+)
 
 
 @app.get("/healthz")

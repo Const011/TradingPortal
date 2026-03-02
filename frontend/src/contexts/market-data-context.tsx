@@ -18,11 +18,10 @@ import {
 import {
   getStoredChartPreferences,
   setStoredChartPreferences,
+  STRATEGY_MARKERS_WINDOW_DEFAULT,
   VOLUME_PROFILE_WINDOW_DEFAULT,
 } from "@/lib/chart-preferences-storage";
 import {
-  backendMode,
-  fetchGatewayConfig,
   fetchSymbols,
   fetchTickers,
   fetchTradeLog,
@@ -30,6 +29,7 @@ import {
   getTicksWebSocketUrl,
   type TradeLogTrade,
 } from "@/lib/api/market";
+import { useGateway } from "@/contexts/gateway-context";
 import {
   Candle,
   type CurrentBar,
@@ -65,8 +65,10 @@ type MarketDataContextValue = {
   setStructureEnabled: (enabled: boolean) => void;
   candleColoringEnabled: boolean;
   setCandleColoringEnabled: (enabled: boolean) => void;
-  strategyMarkers: "off" | "simulation" | "trade";
-  setStrategyMarkers: (mode: "off" | "simulation" | "trade") => void;
+  strategyMarkersEnabled: boolean;
+  setStrategyMarkersEnabled: (enabled: boolean) => void;
+  strategyMarkersWindow: number;
+  setStrategyMarkersWindow: (window: number) => void;
   obShowBull: number;
   setObShowBull: (n: number) => void;
   obShowBear: number;
@@ -83,6 +85,8 @@ type MarketDataContextValue = {
   tradeLogTrades: TradeLogTrade[] | null;
   /** When mode=trading: symbol and interval are fixed by gateway config; controls disabled. */
   symbolAndIntervalLocked: boolean;
+  /** Gateway config from GET /api/v1/mode (mode, symbol, interval, bars_window). */
+  gatewayConfig: { mode: "simulation" | "trade"; symbol?: string; interval?: string; bars_window?: number } | null;
   currentBar: CurrentBar | null;
   hoveredBarTime: number | null;
   setHoveredBarTime: (time: number | null) => void;
@@ -99,6 +103,9 @@ type MarketDataProviderProps = {
 };
 
 export function MarketDataProvider({ children }: MarketDataProviderProps) {
+  const { backendBaseUrl, gatewayConfig } = useGateway();
+  const isTrading = gatewayConfig?.mode === "trade";
+
   const [symbols, setSymbols] = useState<SymbolInfo[]>([]);
   const [selectedSymbol, setSelectedSymbol] = useState<string>("");
   const [chartInterval, setChartInterval] = useState<ChartIntervalValue>(DEFAULT_CHART_INTERVAL);
@@ -110,7 +117,8 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
   const [orderBlocksEnabled, setOrderBlocksEnabled] = useState<boolean>(false);
   const [structureEnabled, setStructureEnabled] = useState<boolean>(false);
   const [candleColoringEnabled, setCandleColoringEnabled] = useState<boolean>(false);
-  const [strategyMarkers, setStrategyMarkers] = useState<"off" | "simulation" | "trade">("off");
+  const [strategyMarkersEnabled, setStrategyMarkersEnabled] = useState<boolean>(false);
+  const [strategyMarkersWindow, setStrategyMarkersWindow] = useState<number>(STRATEGY_MARKERS_WINDOW_DEFAULT);
   const [obShowBull, setObShowBull] = useState<number>(5);
   const [obShowBear, setObShowBear] = useState<number>(5);
   const [swingLabelsShow, setSwingLabelsShow] = useState<number>(15);
@@ -132,7 +140,7 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
 
   useEffect(() => {
     const prefs = getStoredChartPreferences();
-    if (backendMode !== "trading") {
+    if (!isTrading) {
       setSelectedSymbol(prefs.selectedSymbol);
       setChartInterval(prefs.chartInterval);
     }
@@ -144,38 +152,24 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
     setOrderBlocksEnabled(prefs.orderBlocksEnabled);
     setStructureEnabled(prefs.structureEnabled);
     setCandleColoringEnabled(prefs.candleColoringEnabled);
-    setStrategyMarkers(prefs.strategyMarkers);
+    setStrategyMarkersEnabled(prefs.strategyMarkersEnabled);
+    setStrategyMarkersWindow(prefs.strategyMarkersWindow);
     setObShowBull(prefs.obShowBull);
     setObShowBear(prefs.obShowBear);
     setSwingLabelsShow(prefs.swingLabelsShow);
   }, []);
 
   useEffect(() => {
-    if (backendMode !== "trading") return;
-    let mounted = true;
-    async function loadGatewayConfig(): Promise<void> {
-      try {
-        const config = await fetchGatewayConfig();
-        if (!mounted) return;
-        const symbol = config.symbol ?? "BTCUSDT";
-        const interval = config.interval ?? "60";
-        setSelectedSymbol(symbol);
-        const validInterval = CHART_INTERVAL_OPTIONS.some((o) => o.value === interval)
-          ? (interval as ChartIntervalValue)
-          : DEFAULT_CHART_INTERVAL;
-        setChartInterval(validInterval);
-      } catch {
-        if (mounted) {
-          setSelectedSymbol("BTCUSDT");
-          setChartInterval(DEFAULT_CHART_INTERVAL);
-        }
-      }
+    if (isTrading && gatewayConfig) {
+      const symbol = gatewayConfig.symbol ?? "BTCUSDT";
+      const interval = gatewayConfig.interval ?? "60";
+      setSelectedSymbol(symbol);
+      const validInterval = CHART_INTERVAL_OPTIONS.some((o) => o.value === interval)
+        ? (interval as ChartIntervalValue)
+        : DEFAULT_CHART_INTERVAL;
+      setChartInterval(validInterval);
     }
-    void loadGatewayConfig();
-    return () => {
-      mounted = false;
-    };
-  }, []);
+  }, [isTrading, gatewayConfig?.symbol, gatewayConfig?.interval]);
 
   useEffect(() => {
     setStoredChartPreferences({
@@ -189,31 +183,32 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
       orderBlocksEnabled,
       structureEnabled,
       candleColoringEnabled,
-      strategyMarkers,
+      strategyMarkersEnabled,
+      strategyMarkersWindow,
       obShowBull,
       obShowBear,
       swingLabelsShow,
     });
-  }, [selectedSymbol, chartInterval, autoScaleEnabled, logScaleEnabled, volumeProfileEnabled, volumeProfileWindow, supportResistanceEnabled, orderBlocksEnabled, structureEnabled, candleColoringEnabled, strategyMarkers, obShowBull, obShowBear, swingLabelsShow]);
+  }, [selectedSymbol, chartInterval, autoScaleEnabled, logScaleEnabled, volumeProfileEnabled, volumeProfileWindow, supportResistanceEnabled, orderBlocksEnabled, structureEnabled, candleColoringEnabled, strategyMarkersEnabled, strategyMarkersWindow, obShowBull, obShowBear, swingLabelsShow]);
 
   useEffect(() => {
+    if (!backendBaseUrl) {
+      setSymbols([]);
+      setTickers({});
+      setLoading(false);
+      return;
+    }
     let mounted = true;
     async function loadSymbols(): Promise<void> {
       try {
         setLoading(true);
-        const fetchedSymbols = await fetchSymbols();
-        if (!mounted) {
-          return;
-        }
-        setSymbols(fetchedSymbols);
-        if (fetchedSymbols.length > 0 && backendMode !== "trading") {
-          setSelectedSymbol((current) => current || fetchedSymbols[0].symbol);
-        }
-        // Load tickers immediately when symbols are available (avoids effect timing / Strict Mode issues)
-        if (fetchedSymbols.length > 0) {
-          const requested = fetchedSymbols.slice(0, 100).map((item) => item.symbol);
+        if (isTrading && gatewayConfig?.symbol) {
+          const tradingSymbol = gatewayConfig.symbol;
+          setSymbols([
+            { symbol: tradingSymbol, baseCoin: "", quoteCoin: "", status: "Trading" },
+          ]);
           try {
-            const snapshots = await fetchTickers(requested);
+            const snapshots = await fetchTickers(backendBaseUrl, [tradingSymbol]);
             if (!mounted) return;
             const bySymbol: Record<string, TickerSnapshot> = {};
             for (const snapshot of snapshots) {
@@ -223,6 +218,27 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
           } catch {
             if (mounted) setError("Failed to fetch tickers");
           }
+        } else {
+          const fetchedSymbols = await fetchSymbols(backendBaseUrl);
+          if (!mounted) return;
+          setSymbols(fetchedSymbols);
+          if (fetchedSymbols.length > 0) {
+            setSelectedSymbol((current) => current || fetchedSymbols[0].symbol);
+          }
+          if (fetchedSymbols.length > 0) {
+            const requested = fetchedSymbols.slice(0, 100).map((item) => item.symbol);
+            try {
+              const snapshots = await fetchTickers(backendBaseUrl, requested);
+              if (!mounted) return;
+              const bySymbol: Record<string, TickerSnapshot> = {};
+              for (const snapshot of snapshots) {
+                bySymbol[snapshot.symbol] = snapshot;
+              }
+              setTickers(bySymbol);
+            } catch {
+              if (mounted) setError("Failed to fetch tickers");
+            }
+          }
         }
       } catch (fetchError) {
         if (mounted) {
@@ -230,20 +246,17 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
           setError(message);
         }
       } finally {
-        if (mounted) {
-          setLoading(false);
-        }
+        if (mounted) setLoading(false);
       }
     }
-
     void loadSymbols();
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [backendBaseUrl, isTrading, gatewayConfig?.symbol]);
 
   useEffect(() => {
-    if (!selectedSymbol) {
+    if (!backendBaseUrl || !selectedSymbol) {
       return;
     }
     if (candleSocketRef.current) {
@@ -257,12 +270,19 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
     setStructure(null);
     setStrategySignals(null);
     setTradeLogTrades(null);
+    const effectiveStrategyMarkers: "off" | "simulation" | "trade" =
+      !strategyMarkersEnabled ? "off" : isTrading ? "trade" : "simulation";
+    const vpWindow =
+      isTrading && gatewayConfig?.bars_window != null
+        ? gatewayConfig.bars_window
+        : volumeProfileWindow;
     const ws = new WebSocket(
       getCandlesWebSocketUrl(
+        backendBaseUrl,
         selectedSymbol,
         chartInterval,
-        volumeProfileWindow,
-        strategyMarkers
+        vpWindow,
+        effectiveStrategyMarkers
       )
     );
     candleSocketRef.current = ws;
@@ -271,51 +291,22 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
       try {
         const payload = JSON.parse(event.data) as
           | { event: "snapshot"; candles: Candle[]; graphics?: { volumeProfile?: VolumeProfileData; supportResistance?: SupportResistanceData; orderBlocks?: OrderBlocksData; smartMoney?: { structure?: SmartMoneyStructureData }; strategySignals?: StrategySignalsData }; volumeProfile?: VolumeProfileData }
-          | { event: "upsert"; candle: Candle; graphics?: { volumeProfile?: VolumeProfileData; supportResistance?: SupportResistanceData; orderBlocks?: OrderBlocksData; smartMoney?: { structure?: SmartMoneyStructureData }; strategySignals?: StrategySignalsData }; volumeProfile?: VolumeProfileData }
           | { event: "heartbeat" };
         if (payload.event === "heartbeat") {
           return;
         }
-        const graphics = payload.graphics ?? (payload.volumeProfile ? { volumeProfile: payload.volumeProfile } : undefined);
         if (payload.event === "snapshot") {
+          const graphics = payload.graphics ?? (payload.volumeProfile ? { volumeProfile: payload.volumeProfile } : undefined);
           setCandles(payload.candles);
           setVolumeProfile(graphics?.volumeProfile ?? null);
           setSupportResistance(graphics?.supportResistance ?? null);
           setOrderBlocks(graphics?.orderBlocks ?? null);
           setStructure(graphics?.smartMoney?.structure ?? null);
-          if (backendMode !== "trading") {
+          // Simulation: markers from stream. Trading: markers from trade log only (never from stream).
+          if (!isTrading) {
             setStrategySignals(graphics?.strategySignals ?? null);
           }
-          return;
         }
-        if (graphics) {
-          if (graphics.volumeProfile !== undefined) setVolumeProfile(graphics.volumeProfile ?? null);
-          if (graphics.supportResistance !== undefined) setSupportResistance(graphics.supportResistance ?? null);
-          if (graphics.orderBlocks !== undefined) setOrderBlocks(graphics.orderBlocks ?? null);
-          if (graphics.smartMoney?.structure !== undefined) setStructure(graphics.smartMoney.structure ?? null);
-          if (backendMode !== "trading" && graphics.strategySignals !== undefined) {
-            setStrategySignals(graphics.strategySignals ?? null);
-          }
-        }
-        setCandles((current) => {
-          if (current.length === 0) {
-            return [payload.candle];
-          }
-          const last = current[current.length - 1];
-          if (payload.candle.time > last.time) {
-            return [...current, payload.candle];
-          }
-          if (payload.candle.time === last.time) {
-            return [...current.slice(0, -1), payload.candle];
-          }
-          const idx = current.findIndex((c) => c.time === payload.candle.time);
-          if (idx < 0) {
-            return current;
-          }
-          const next = [...current];
-          next[idx] = payload.candle;
-          return next;
-        });
       } catch {
         // ignore malformed payloads
       }
@@ -327,16 +318,28 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
       ws.close();
       candleSocketRef.current = null;
     };
-  }, [selectedSymbol, chartInterval, volumeProfileWindow, strategyMarkers]);
+  }, [
+    backendBaseUrl,
+    selectedSymbol,
+    chartInterval,
+    volumeProfileWindow,
+    strategyMarkersEnabled,
+    isTrading,
+    gatewayConfig?.bars_window,
+  ]);
 
   useEffect(() => {
-    if (backendMode !== "trading" || !selectedSymbol) {
+    if (!isTrading || !backendBaseUrl || !selectedSymbol) {
       return;
     }
     let cancelled = false;
     async function loadTradeLog(): Promise<void> {
       try {
-        const { trades } = await fetchTradeLog(selectedSymbol, chartInterval);
+        const { trades } = await fetchTradeLog(
+          backendBaseUrl,
+          selectedSymbol,
+          chartInterval
+        );
         if (cancelled) return;
         setTradeLogTrades(trades);
         const merged = {
@@ -360,10 +363,10 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
       cancelled = true;
       window.clearInterval(intervalId);
     };
-  }, [selectedSymbol, chartInterval]);
+  }, [backendBaseUrl, selectedSymbol, chartInterval, isTrading]);
 
   useEffect(() => {
-    if (symbols.length === 0) {
+    if (!backendBaseUrl || symbols.length === 0) {
       return;
     }
 
@@ -371,7 +374,7 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
     async function loadTickers(): Promise<void> {
       try {
         const requested = symbols.slice(0, 100).map((item) => item.symbol);
-        const snapshots = await fetchTickers(requested);
+        const snapshots = await fetchTickers(backendBaseUrl, requested);
         if (cancelled) {
           return;
         }
@@ -397,10 +400,10 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
       cancelled = true;
       window.clearInterval(timerId);
     };
-  }, [symbols]);
+  }, [backendBaseUrl, symbols]);
 
   useEffect(() => {
-    if (!selectedSymbol) {
+    if (!backendBaseUrl || !selectedSymbol) {
       return;
     }
 
@@ -409,7 +412,7 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
       socketRef.current = null;
     }
 
-    const ws = new WebSocket(getTicksWebSocketUrl(selectedSymbol));
+    const ws = new WebSocket(getTicksWebSocketUrl(backendBaseUrl, selectedSymbol));
     socketRef.current = ws;
 
     ws.onmessage = (event: MessageEvent<string>) => {
@@ -437,7 +440,7 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
       ws.close();
       socketRef.current = null;
     };
-  }, [selectedSymbol]);
+  }, [backendBaseUrl, selectedSymbol]);
 
   const currentBar = useMemo<CurrentBar | null>(() => {
     if (candles.length === 0) {
@@ -491,8 +494,10 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
   setStructureEnabled,
       candleColoringEnabled,
       setCandleColoringEnabled,
-      strategyMarkers,
-      setStrategyMarkers,
+      strategyMarkersEnabled,
+      setStrategyMarkersEnabled,
+      strategyMarkersWindow,
+      setStrategyMarkersWindow,
       obShowBull,
       setObShowBull,
       obShowBear,
@@ -506,7 +511,8 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
       structure,
       strategySignals,
       tradeLogTrades,
-      symbolAndIntervalLocked: backendMode === "trading",
+      symbolAndIntervalLocked: isTrading,
+      gatewayConfig,
       currentBar,
       hoveredBarTime,
       setHoveredBarTime,
@@ -527,7 +533,8 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
       orderBlocksEnabled,
       structureEnabled,
       candleColoringEnabled,
-      strategyMarkers,
+      strategyMarkersEnabled,
+      strategyMarkersWindow,
       obShowBull,
       obShowBear,
       swingLabelsShow,
@@ -538,6 +545,7 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
       structure,
       strategySignals,
       tradeLogTrades,
+      gatewayConfig,
       currentBar,
       hoveredBarTime,
       tickers,

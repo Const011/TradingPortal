@@ -21,7 +21,6 @@ import {
   CHART_INTERVAL_OPTIONS,
   chartIntervalSeconds,
 } from "@/lib/constants/chart-intervals";
-import { backendMode } from "@/lib/api/market";
 import { useMarketData } from "@/contexts/market-data-context";
 import { OrderBlocks } from "@/lib/chart-plugins/order-blocks";
 import { StructurePrimitive } from "@/lib/chart-plugins/structure";
@@ -79,10 +78,12 @@ export function PriceChart() {
     structure,
     swingLabelsShow,
     candleColoringEnabled,
-    strategyMarkers,
+    strategyMarkersEnabled,
+    strategyMarkersWindow,
     strategySignals,
     tradeLogTrades,
     symbolAndIntervalLocked,
+    gatewayConfig,
   } = useMarketData();
 
   const orderBlocksForDisplay = useMemo(() => {
@@ -106,6 +107,39 @@ export function PriceChart() {
       swingLabels: (structure.swingLabels ?? []).slice(-limit),
     };
   }, [structure, swingLabelsShow]);
+
+  const strategySignalsForDisplay = useMemo(() => {
+    if (!strategySignals || !strategyMarkersEnabled) return null;
+    if (symbolAndIntervalLocked) {
+      return strategySignals;
+    }
+    if (candles.length === 0 || strategyMarkersWindow <= 0) return strategySignals;
+    const cutoffIndex = Math.max(0, candles.length - strategyMarkersWindow);
+    // Candles use ms; strategy signals use seconds — normalize to seconds for comparison
+    const rawCutoff = candles[cutoffIndex]?.time ?? 0;
+    const cutoffTime = rawCutoff >= 1e12 ? Math.floor(rawCutoff / 1000) : rawCutoff;
+    const filterByTime = <T extends { time?: number }>(items: T[] | undefined): T[] =>
+      (items ?? []).filter((x) => (x.time ?? 0) >= cutoffTime);
+    return {
+      ...strategySignals,
+      markers: filterByTime(strategySignals.markers),
+      stopLines: (strategySignals.stopLines ?? []).filter((line) => {
+        const fromTime = line.from?.time ?? 0;
+        const toTime = line.to?.time ?? 0;
+        return fromTime >= cutoffTime || toTime >= cutoffTime;
+      }),
+      events: filterByTime(strategySignals.events),
+      stopSegments: (strategySignals.stopSegments ?? []).filter(
+        (s) => (s.startTime ?? 0) >= cutoffTime || (s.endTime ?? 0) >= cutoffTime
+      ),
+    };
+  }, [
+    strategySignals,
+    strategyMarkersEnabled,
+    symbolAndIntervalLocked,
+    candles,
+    strategyMarkersWindow,
+  ]);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
@@ -155,25 +189,28 @@ export function PriceChart() {
   }, [candles]);
 
   const strategyResults = useMemo(() => {
-    if (backendMode === "trading" && tradeLogTrades && tradeLogTrades.length > 0) {
+    if (gatewayConfig?.mode === "trade" && tradeLogTrades && tradeLogTrades.length > 0) {
       return tradeLogToStrategyResultsSummary(tradeLogTrades);
     }
+    const signals = strategySignalsForDisplay ?? strategySignals;
     if (
-      strategyMarkers === "off" ||
-      !strategySignals?.events ||
-      strategySignals.events.length === 0 ||
+      !strategyMarkersEnabled ||
+      !signals?.events ||
+      signals.events.length === 0 ||
       candles.length === 0
     ) {
       return null;
     }
     return computeStrategyResults(
-      strategySignals.events,
+      signals.events,
       candles,
-      strategySignals.stopSegments ?? []
+      signals.stopSegments ?? []
     );
   }, [
+    gatewayConfig?.mode,
     tradeLogTrades,
-    strategyMarkers,
+    strategyMarkersEnabled,
+    strategySignalsForDisplay,
     strategySignals?.events,
     strategySignals?.stopSegments,
     candles,
@@ -423,10 +460,10 @@ export function PriceChart() {
     if (!series) return;
 
     const markers =
-      strategyMarkers !== "off" &&
-      strategySignals?.markers &&
-      strategySignals.markers.length > 0
-        ? strategySignals.markers.map((m) => ({
+      strategyMarkersEnabled &&
+      strategySignalsForDisplay?.markers &&
+      strategySignalsForDisplay.markers.length > 0
+        ? strategySignalsForDisplay.markers.map((m) => ({
             time: m.time as Time,
             position: (m.position === "below" ? "belowBar" : "aboveBar") as
               | "belowBar"
@@ -448,7 +485,7 @@ export function PriceChart() {
     if (markers.length === 0 && seriesMarkersRef.current) {
       seriesMarkersRef.current.setMarkers([]);
     }
-  }, [strategyMarkers, strategySignals?.markers]);
+  }, [strategyMarkersEnabled, strategySignalsForDisplay?.markers]);
 
   useEffect(() => {
     const series = seriesRef.current;
@@ -488,9 +525,9 @@ export function PriceChart() {
     if (!series || !chart) return;
 
     const showStopLines =
-      strategyMarkers !== "off" &&
-      strategySignals?.stopLines &&
-      strategySignals.stopLines.length > 0;
+      strategyMarkersEnabled &&
+      strategySignalsForDisplay?.stopLines &&
+      strategySignalsForDisplay.stopLines.length > 0;
 
     if (!showStopLines) {
       const primitive = strategySignalsPrimitiveRef.current;
@@ -505,10 +542,14 @@ export function PriceChart() {
     if (primitive) {
       series.detachPrimitive(primitive);
     }
-    const newPrimitive = new StrategySignalsPrimitive(chart, series, strategySignals);
+    const newPrimitive = new StrategySignalsPrimitive(
+      chart,
+      series,
+      strategySignalsForDisplay
+    );
     series.attachPrimitive(newPrimitive);
     strategySignalsPrimitiveRef.current = newPrimitive;
-  }, [strategyMarkers, strategySignals]);
+  }, [strategyMarkersEnabled, strategySignalsForDisplay]);
 
   return (
     <div

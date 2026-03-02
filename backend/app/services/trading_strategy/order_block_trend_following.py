@@ -6,7 +6,11 @@ from dataclasses import dataclass
 from app.schemas.market import Candle
 
 logger = logging.getLogger(__name__)
-from app.services.indicators.order_blocks import _iter_order_blocks_with_events, OrderBlock
+from app.services.indicators.order_blocks import (
+    _iter_order_blocks_with_events,
+    DEFAULT_MAX_OB_ENTRY_SIGNALS,
+    OrderBlock,
+)
 from app.services.trading_strategy.types import TradeEvent, StopSegment
 
 # Candle colors from smart_money_structure (green = bullish, red = bearish)
@@ -251,6 +255,7 @@ def compute_order_block_trend_following(
     block_sr_distance_mult: float = DEFAULT_BLOCK_SR_DISTANCE_MULT,
     min_sr_strength: float = DEFAULT_MIN_SR_STRENGTH,
     trail_param: float = DEFAULT_TRAIL_PARAM,
+    max_ob_entry_signals: int = DEFAULT_MAX_OB_ENTRY_SIGNALS,
 ) -> tuple[list[TradeEvent], list[StopSegment]]:
     """
     Run Order Block Trend-Following strategy.
@@ -269,7 +274,9 @@ def compute_order_block_trend_following(
 
     prev_candle: Candle | None = None
 
-    for i, c, bullish_ob, bearish_ob, raw_events in _iter_order_blocks_with_events(candles):
+    for i, c, bullish_ob, bearish_ob, raw_events in _iter_order_blocks_with_events(
+        candles, max_ob_entry_signals=max_ob_entry_signals
+    ):
         time_s = c.time // 1000
         vol_avg = _volume_average(candles, vol_lookback, i + 1)
         is_bull = _is_bullish_trend(candle_colors, c.time)

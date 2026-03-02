@@ -1,9 +1,10 @@
 """Order blocks from swing structure — LuxAlgo inspired."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from app.schemas.market import Candle
 
 DEFAULT_SWING_LENGTH = 20
+DEFAULT_MAX_OB_ENTRY_SIGNALS = 2
 DEFAULT_SHOW_BULL = 5
 DEFAULT_SHOW_BEAR = 5
 MAX_LOOKBACK = 1000
@@ -24,6 +25,7 @@ class OrderBlock:
     breaker: bool
     break_loc: int | None
     fill_color: str
+    entry_signal_count: int = field(default=0)  # Times this OB generated entry signal; capped by max_ob_entry_signals
 
 
 def _swings(
@@ -63,6 +65,7 @@ def _iter_order_blocks_with_events(
     swing_length: int = DEFAULT_SWING_LENGTH,
     use_body: bool = False,
     keep_breakers: bool = True,
+    max_ob_entry_signals: int = DEFAULT_MAX_OB_ENTRY_SIGNALS,
 ):
     """
     Generator yielding per-bar OB state and raw events (boundary cross, breaker created).
@@ -143,6 +146,7 @@ def _iter_order_blocks_with_events(
                 bearish_ob.insert(0, OrderBlock(top=maxima, bottom=minima, loc=loc_bar, breaker=False, break_loc=None, fill_color=BEAR_FILL))
 
         # Mark bullish OBs as breakers; detect boundary cross; collect events
+        # Entry touch zone (long): [ob_bottom, ob_bottom + 2*height]. Enablement (breaker) uses OB boundaries.
         events_this_bar: list[dict] = []
         for ob in list(bullish_ob):
             if not ob.breaker and ob.loc < i:
@@ -153,17 +157,22 @@ def _iter_order_blocks_with_events(
                         "type": "bullish_breaker_created",
                         "ob_top": ob.top, "ob_bottom": ob.bottom, "ob_loc": ob.loc,
                     })
-                elif c.low <= ob.top and c.close > ob.top and c.close > c.open:
-                    # Broader: price interacted with zone (low <= top) and closed above with bullish candle.
-                    # Subsumes retest (open in zone) and breakouts from below or with wicks into zone.
-                    events_this_bar.append({
-                        "type": "bullish_boundary_crossed",
-                        "ob_top": ob.top, "ob_bottom": ob.bottom, "ob_loc": ob.loc,
-                    })
+                else:
+                    ob_height = ob.top - ob.bottom
+                    zone_top = ob.bottom + 2.0 * ob_height
+                    touched_zone = c.low <= zone_top and c.high >= ob.bottom
+                    if touched_zone and c.close > ob.top and c.close > c.open:
+                        if ob.entry_signal_count < max_ob_entry_signals:
+                            ob.entry_signal_count += 1
+                            events_this_bar.append({
+                                "type": "bullish_boundary_crossed",
+                                "ob_top": ob.top, "ob_bottom": ob.bottom, "ob_loc": ob.loc,
+                            })
             elif not keep_breakers and c.close > ob.top:
                 bullish_ob.remove(ob)
 
         # Mark bearish OBs as breakers; detect boundary cross
+        # Entry touch zone (short): [ob_top - 2*height, ob_top]. Enablement (breaker) uses OB boundaries.
         for ob in list(bearish_ob):
             if not ob.breaker and ob.loc < i:
                 if max(c.close, c.open) > ob.top:
@@ -173,12 +182,17 @@ def _iter_order_blocks_with_events(
                         "type": "bearish_breaker_created",
                         "ob_top": ob.top, "ob_bottom": ob.bottom, "ob_loc": ob.loc,
                     })
-                elif c.high >= ob.bottom and c.close < ob.bottom and c.close < c.open:
-                    # Broader: price interacted with zone (high >= bottom) and closed below with bearish candle.
-                    events_this_bar.append({
-                        "type": "bearish_boundary_crossed",
-                        "ob_top": ob.top, "ob_bottom": ob.bottom, "ob_loc": ob.loc,
-                    })
+                else:
+                    ob_height = ob.top - ob.bottom
+                    zone_bottom = ob.top - 2.0 * ob_height
+                    touched_zone = c.high >= zone_bottom and c.low <= ob.top
+                    if touched_zone and c.close < ob.bottom and c.close < c.open:
+                        if ob.entry_signal_count < max_ob_entry_signals:
+                            ob.entry_signal_count += 1
+                            events_this_bar.append({
+                                "type": "bearish_boundary_crossed",
+                                "ob_top": ob.top, "ob_bottom": ob.bottom, "ob_loc": ob.loc,
+                            })
             elif not keep_breakers and c.close < ob.bottom:
                 bearish_ob.remove(ob)
 

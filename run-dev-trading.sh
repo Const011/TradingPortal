@@ -1,19 +1,25 @@
 #!/usr/bin/env bash
 set -e
 
-# Configurable ports (default: trading gateway)
-BACKEND_PORT="${BACKEND_PORT:-9000}"
-FRONTEND_PORT="${FRONTEND_PORT:-4000}"
+# Trading gateway: one per ticker/timeframe. Override via env:
+#   BACKEND_PORT        - port (default 9001)
+#   TRADING_SYMBOL      - ticker, e.g. BTCUSDT (default)
+#   TRADING_INTERVAL    - timeframe: 1,5,15,60,240,D (default 60)
+#   BARS_WINDOW         - bars for chart, e.g. 2000 or 5000 (default 2000)
+#   FETCH_INTERVAL_SEC  - data fetch frequency in seconds (default 60)
+#
+# Examples:
+#   ./run-dev-trading.sh
+#   TRADING_SYMBOL=ETHUSDT TRADING_INTERVAL=15 BACKEND_PORT=9002 ./run-dev-trading.sh
+#   TRADING_SYMBOL=XRPUSDT BARS_WINDOW=5000 FETCH_INTERVAL_SEC=30 BACKEND_PORT=9003 ./run-dev-trading.sh
+
+BACKEND_PORT="${BACKEND_PORT:-9001}"
+export TRADING_SYMBOL="${TRADING_SYMBOL:-BTCUSDT}"
+export TRADING_INTERVAL="${TRADING_INTERVAL:-60}"
+export BARS_WINDOW="${BARS_WINDOW:-2000}"
+export FETCH_INTERVAL_SEC="${FETCH_INTERVAL_SEC:-60}"
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
-BACKEND_PID=""
-
-cleanup() {
-  if [[ -n "$BACKEND_PID" ]] && kill -0 "$BACKEND_PID" 2>/dev/null; then
-    kill "$BACKEND_PID" 2>/dev/null || true
-  fi
-}
-trap cleanup EXIT INT TERM
 
 cd "$ROOT/backend"
 if [[ ! -d .venv ]]; then
@@ -22,13 +28,5 @@ fi
 # shellcheck source=/dev/null
 source $ROOT/../.venv/bin/activate
 
-
 pip install -q -r requirements.txt
-MODE=trading uvicorn app.main:app --reload --port "$BACKEND_PORT" &
-BACKEND_PID=$!
-
-cd "$ROOT/frontend"
-if [[ ! -d node_modules ]]; then
-  npm install
-fi
-NEXT_PUBLIC_MODE=trading NEXT_PUBLIC_API_URL="http://localhost:$BACKEND_PORT" npm run dev -- -p "$FRONTEND_PORT"
+MODE=trading uvicorn app.main:app --reload --port "$BACKEND_PORT"

@@ -11,6 +11,7 @@ const VALID_INTERVALS = new Set<string>(
 );
 
 export const VOLUME_PROFILE_WINDOW_DEFAULT = 2000;
+export const STRATEGY_MARKERS_WINDOW_DEFAULT = 2000;
 
 export type StoredChartPreferences = {
   selectedSymbol: string;
@@ -23,7 +24,8 @@ export type StoredChartPreferences = {
   orderBlocksEnabled: boolean;
   structureEnabled: boolean;
   candleColoringEnabled: boolean;
-  strategyMarkers: "off" | "simulation" | "trade";
+  strategyMarkersEnabled: boolean;
+  strategyMarkersWindow: number;
   obShowBull: number;
   obShowBear: number;
   swingLabelsShow: number;
@@ -40,7 +42,8 @@ const DEFAULTS: StoredChartPreferences = {
   orderBlocksEnabled: false,
   structureEnabled: false,
   candleColoringEnabled: false,
-  strategyMarkers: "off",
+  strategyMarkersEnabled: true,
+  strategyMarkersWindow: STRATEGY_MARKERS_WINDOW_DEFAULT,
   obShowBull: 5,
   obShowBear: 5,
   swingLabelsShow: 15,
@@ -88,12 +91,22 @@ function parseStored(raw: string | null): Partial<StoredChartPreferences> {
     if (typeof parsed.candleColoringEnabled === "boolean") {
       out.candleColoringEnabled = parsed.candleColoringEnabled;
     }
+    if (typeof parsed.strategyMarkersEnabled === "boolean") {
+      out.strategyMarkersEnabled = parsed.strategyMarkersEnabled;
+    }
+    if (
+      typeof parsed.strategyMarkersWindow === "number" &&
+      parsed.strategyMarkersWindow >= 100 &&
+      parsed.strategyMarkersWindow <= 10000
+    ) {
+      out.strategyMarkersWindow = parsed.strategyMarkersWindow;
+    }
     if (
       parsed.strategyMarkers === "off" ||
       parsed.strategyMarkers === "simulation" ||
       parsed.strategyMarkers === "trade"
     ) {
-      out.strategyMarkers = parsed.strategyMarkers;
+      out.strategyMarkersEnabled = parsed.strategyMarkers !== "off";
     }
     if (
       typeof parsed.obShowBull === "number" &&
@@ -159,10 +172,14 @@ export function getStoredChartPreferences(): StoredChartPreferences {
       partial.candleColoringEnabled !== undefined
         ? partial.candleColoringEnabled
         : DEFAULTS.candleColoringEnabled,
-    strategyMarkers:
-      partial.strategyMarkers !== undefined
-        ? partial.strategyMarkers
-        : DEFAULTS.strategyMarkers,
+    strategyMarkersEnabled:
+      partial.strategyMarkersEnabled !== undefined
+        ? partial.strategyMarkersEnabled
+        : DEFAULTS.strategyMarkersEnabled,
+    strategyMarkersWindow:
+      partial.strategyMarkersWindow !== undefined
+        ? partial.strategyMarkersWindow
+        : DEFAULTS.strategyMarkersWindow,
     obShowBull:
       partial.obShowBull !== undefined ? partial.obShowBull : DEFAULTS.obShowBull,
     obShowBear:
@@ -196,7 +213,10 @@ export function setStoredChartPreferences(
       prefs.structureEnabled ?? current.structureEnabled,
     candleColoringEnabled:
       prefs.candleColoringEnabled ?? current.candleColoringEnabled,
-    strategyMarkers: prefs.strategyMarkers ?? current.strategyMarkers,
+    strategyMarkersEnabled:
+      prefs.strategyMarkersEnabled ?? current.strategyMarkersEnabled,
+    strategyMarkersWindow:
+      prefs.strategyMarkersWindow ?? current.strategyMarkersWindow,
     obShowBull: prefs.obShowBull ?? current.obShowBull,
     obShowBear: prefs.obShowBear ?? current.obShowBear,
     swingLabelsShow: prefs.swingLabelsShow ?? current.swingLabelsShow,

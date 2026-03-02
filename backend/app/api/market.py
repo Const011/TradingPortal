@@ -22,11 +22,12 @@ router = APIRouter(prefix="/api/v1", tags=["market"])
 
 @router.get("/mode")
 async def get_mode() -> dict:
-    """Return backend mode and gateway config. When mode=trading, symbol and interval are fixed."""
-    payload: dict = {"mode": settings.mode}
+    """Return backend mode and gateway config. When mode=trading, symbol, interval, bars_window are fixed."""
+    payload: dict = {"mode": settings.mode, "fetch_interval_sec": settings.fetch_interval_sec}
     if settings.mode == "trading":
         payload["symbol"] = settings.trading_symbol
         payload["interval"] = settings.trading_interval
+        payload["bars_window"] = settings.bars_window
     return payload
 
 
@@ -35,7 +36,14 @@ async def current_trades(
     symbol: str = Query(..., description="Symbol e.g. BTCUSDT"),
     interval: str = Query(..., description="Interval e.g. 60"),
 ) -> dict:
-    """Return current open trades (from current.json). Used when mode=trading for open positions."""
+    """Return current open trades (from current.json). Used when mode=trading for open positions.
+    In trading mode, only returns data for this gateway's symbol/interval."""
+    if settings.mode == "trading":
+        if symbol.upper() != settings.trading_symbol.upper() or interval != settings.trading_interval:
+            raise HTTPException(
+                status_code=400,
+                detail=f"This gateway serves {settings.trading_symbol}/{settings.trading_interval} only",
+            )
     trades = load_current_trades(symbol, interval)
     return {"mode": settings.mode, "trades": trades}
 
@@ -46,7 +54,14 @@ async def trade_log(
     interval: str = Query(..., description="Interval e.g. 60"),
     since: int | None = Query(None, description="Optional Unix timestamp (seconds) to filter trades"),
 ) -> dict:
-    """Return logged trades for symbol/interval. Used when mode=trading for chart and results."""
+    """Return logged trades for symbol/interval. Used when mode=trading for chart and results.
+    In trading mode, only returns data for this gateway's symbol/interval (from settings)."""
+    if settings.mode == "trading":
+        if symbol.upper() != settings.trading_symbol.upper() or interval != settings.trading_interval:
+            raise HTTPException(
+                status_code=400,
+                detail=f"This gateway serves {settings.trading_symbol}/{settings.trading_interval} only",
+            )
     trades = get_trades(symbol, interval, since)
     return {"mode": settings.mode, "trades": trades}
 
@@ -103,8 +118,12 @@ async def list_tickers(
     bybit_client: BybitClient = Depends(get_bybit_client),
 ) -> list[TickerSnapshot]:
     """[Frontend] Return 24h ticker snapshots (lastPrice, volume24h, change%) for symbols.
-    Fetches from Bybit REST; used by the frontend ticker list only (not for chart data)."""
-    requested_symbols = [item.strip().upper() for item in symbols.split(",")] if symbols else None
+    Fetches from Bybit REST; used by the frontend ticker list only (not for chart data).
+    In trading mode, only returns the gateway's configured symbol."""
+    if settings.mode == "trading":
+        requested_symbols = [settings.trading_symbol.upper()]
+    else:
+        requested_symbols = [item.strip().upper() for item in symbols.split(",")] if symbols else None
     try:
         return await bybit_client.get_tickers(symbols=requested_symbols)
     except (httpx.ConnectError, httpx.TimeoutException) as e:
@@ -120,14 +139,17 @@ async def list_candles(
     interval: str = Query(default="1", description="Kline interval: 1,3,5,15,30,60,120,240,360,720,D,W,M"),
     limit: int = Query(default=2000, ge=50, le=2000),
     bybit_client: BybitClient = Depends(get_bybit_client),
+    candle_stream_hub: CandleStreamHub = Depends(get_candle_stream_hub),
 ) -> list[Candle]:
-    """[Frontend] Return historical kline (candle) data for a symbol and interval.
-    Fetches from Bybit REST; used for initial chart load or standalone history fetch."""
+    """[Frontend] Return kline (candle) data. Uses cached data from heartbeat when available; otherwise fetches from Bybit."""
     if interval not in CANDLE_INTERVALS:
         raise HTTPException(
             status_code=400,
             detail=f"Invalid interval. Allowed: {sorted(CANDLE_INTERVALS)}",
         )
+    cached = await candle_stream_hub.get_cached_candles(symbol.upper(), interval, limit=limit)
+    if cached:
+        return cached
     try:
         return await bybit_client.get_klines(symbol=symbol.upper(), interval=interval, limit=limit)
     except (httpx.ConnectError, httpx.TimeoutException) as e:
@@ -147,9 +169,8 @@ async def stream_candles(
     strategy_markers: str = Query(default="off", description="Strategy markers: off, simulation, trade"),
     candle_stream_hub: CandleStreamHub = Depends(get_candle_stream_hub),
 ) -> None:
-    """[Frontend] Stream merged candle data: initial snapshot + live bar updates + indicators.
-    Backend merges Bybit REST kline (history) + Bybit kline WebSocket (current bar);
-    sends snapshot and upsert events with computed volume profile."""
+    """[Frontend] Stream candle data: heartbeat-driven snapshots with indicators.
+    Backend fetches from Bybit REST at FETCH_INTERVAL_SEC; sends snapshot events with computed graphics."""
     if interval not in CANDLE_INTERVALS:
         await websocket.close(code=4000)
         return

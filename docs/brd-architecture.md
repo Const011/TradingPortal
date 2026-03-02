@@ -162,21 +162,77 @@ This document is intentionally scoped to **Spot trading only** for v1 to reduce 
 
 ## 9) System Architecture
 
-### Multi-Gateway: Trading vs Simulation
+### Single Frontend, Multi-Gateway: Trading vs Simulation
 
-The backend runs as **separate instances** by mode:
+**Architecture principle:** One frontend on port 4000 that can connect to either a simulation or trading backend. The user selects the gateway via a control element under the "Trading Portal" caption.
 
-- **Trading gateway** (frontend 4000, backend 9000): Strategy runs on live candle stream; emits signals that lead to real orders. All trade events (entry, stop move, exit) are **logged to a trade log**. Chart displays logged trades, not live strategy output. Results use actual logged trade data. **Symbol and interval are fixed** by gateway config (`TRADING_SYMBOL`, `TRADING_INTERVAL`); frontend disables the ticker and interval selectors.
-- **Simulation gateway** (frontend 4001, backend 9001): Strategy runs on live candle stream; emits simulated trade events in the graphics payload. No order execution. Frontend computes results from simulated events. Symbol and interval are user-selectable.
+#### Gateway Selection
 
-Ports are configurable via `FRONTEND_PORT` and `BACKEND_PORT` env vars in the run scripts.
+- **Frontend:** Single instance on port 4000 only.
+- **Gateway selector:** Under the caption, the user chooses:
+  - **Simulation** — Connects to simulation backend (port 9000).
+  - **Trade** — Connects to trading backend; user specifies the port (9001, 9002, … — one per ticker/timeframe).
 
-**Trade log (trading mode only):**
-- **Index** (`logs/trades/{symbol}_{interval}/index.jsonl`): JSONL records for entry, stop_move, exit.
-- **Entry snapshots** (`logs/trades/{symbol}_{interval}/entry_{timestamp}.md`): One Markdown file per entry, same format as "Export for AI" (bar data, indicators, trade orders, trailing stops).
-- **Current trades** (`logs/trades/{symbol}_{interval}/current.json`): Open positions for **gateway restart recovery**. Contains `{ trades: [{ tradeId, entryTime, entryPrice, currentStopPrice, initialStopPrice, side, targetPrice }] }`. Updated on entry (add), stop move (update currentStopPrice), exit (remove). Read by gateway on stream start to restore state and continue tracking stop moves and exits.
+#### Backend Instances
 
-Mode and port are configurable via command-line (`MODE=simulation|trading`, `--port`). Frontend displays the mode in the caption: "Trading Portal - SIMULATION" or "Trading Portal - TRADING". See `docs/multi-gateway-trading-simulation-plan.md` for the full implementation plan.
+- **Simulation gateway** (backend 9000): Strategy runs on live candle stream; emits simulated trade events in the graphics payload. No order execution. Full flexibility: user can select any ticker, timeframe, and bars window.
+- **Trading gateways** (backend 9001, 9002, …): Multiple instances, one per ticker/timeframe. Strategy runs on live candle stream; emits signals that lead to real orders. All trade events are **logged to a trade log**. Chart displays logged trades + current state from `current.json`. **Fixed config:** symbol, interval, and bars window are set at gateway start; frontend displays only what the gateway produces.
+
+#### Gateway Handshake
+
+On connect, the frontend calls `GET /api/v1/mode`. The gateway responds with:
+
+- `mode`: `"simulation"` | `"trading"`
+- If `mode=trading`: `symbol`, `interval`, `bars_window` (e.g. 2000 or 5000)
+
+The frontend adapts:
+
+- **Simulation:** Full controls — ticker list, timeframe selector, volume profile window, etc.
+- **Trading:** Read-only display — single ticker, single timeframe, fixed bars window; controls disabled.
+
+#### Trade Display
+
+- **Simulation:** Strategy markers and results computed on every tick from the stream (as programmed).
+- **Trading:** Trade markers and results from trade log API + current state from `current.json`.
+
+#### Trade Log (Trading Mode Only)
+
+Each gateway uses files keyed by symbol and timeframe so multiple gateways can run side by side:
+
+- **Base dir:** `{TRADE_LOG_DIR}/{symbol}_{interval}/` (default `logs/trades/`, overridable via env)
+- **Index** (`index.jsonl`): JSONL records for entry, stop_move, exit.
+- **Entry snapshots** (`entry_{trade_id}.md`): One Markdown file per entry, same format as "Export for AI".
+- **Current trades** (`current.json`): Open positions for gateway restart recovery. Updated on entry, stop move, exit. Read on stream start to restore state.
+
+**Trade log semantics (trading mode only):** The trade log records **only actual trade signals generated at the current bar** (the bar being updated by live ticks). It does **not** simulate or log historical strategy calculations. On gateway start, the strategy may run over historical candles for display purposes, but those calculations are never written to the log. Only when a live bar update (upsert) arrives and the strategy emits an entry or stop move **on that bar** is it logged. Additionally, **at most one signal per bar**: once an entry or stop move has been logged for the current bar, no further signals are logged for that bar until the next bar.
+
+Example: Gateway BTCUSDT 60m → `logs/trades/BTCUSDT_60/`; Gateway ETHUSDT 15m → `logs/trades/ETHUSDT_15/`.
+
+#### Data Flow: Backend Heartbeat (Simulation and Trading)
+
+**Unified heartbeat-driven flow:** Both simulation and trading gateways use the same mechanic. The backend runs a **heartbeat process** that fetches data from Bybit at a configurable interval (seconds). On each fetch, the backend computes indicators and strategy, updates internal state, and broadcasts to connected clients. The frontend connects and receives data—it does **not** initiate fetches. The heartbeat runs regardless of whether any frontend is connected.
+
+- **Simulation:** Symbol and interval are user-selectable; the heartbeat runs for the active symbol/interval (e.g. the one the frontend has subscribed to).
+- **Trading:** Symbol and interval are fixed by gateway config; the heartbeat starts on gateway startup for that pair.
+
+#### Configurable Parameters (Trading Gateway)
+
+Each trading gateway is configured at startup via environment variables:
+
+| Variable | Default | Description |
+|----------|---------|--------------|
+| `BACKEND_PORT` | 9001 | Port for this instance |
+| `TRADING_SYMBOL` | BTCUSDT | Ticker (e.g. ETHUSDT, XRPUSDT) |
+| `TRADING_INTERVAL` | 60 | Timeframe: 1, 5, 15, 60, 240, D |
+| `BARS_WINDOW` | 2000 | Number of bars for chart |
+| `FETCH_INTERVAL_SEC` | 60 | Data fetch frequency in seconds; heartbeat polls Bybit REST at this interval (applies to both simulation and trading) |
+| `TRADE_LOG_DIR` | logs/trades | Base dir for trade log; files use `{symbol}_{interval}/` subdirs |
+
+Example: `TRADING_SYMBOL=ETHUSDT TRADING_INTERVAL=15 FETCH_INTERVAL_SEC=30 BACKEND_PORT=9002 ./run-dev-trading.sh`
+
+- **Simulation gateway:** Backend port 9000; frontend uses this when "Simulation" is selected.
+
+See `docs/single-frontend-gateway-plan.md` for the implementation plan.
 
 ### Architectural Principle: Backend Computation, Frontend Visualization
 
@@ -230,7 +286,7 @@ flowchart LR
 - **Indicator Service:** compute and publish indicator time series (single source of truth for strategies and frontend). Indicators are pure computation (OB zones, structure, volume profile, S/R).
 - **Trading Strategy Module:** consumes candles and pre-calculated indicators; produces **trade events** (signals) in a unified format. Strategy-agnostic: same output for historic simulation and live signal generation. See *Trading Strategy Module* below.
 - **Strategy Service:** parameter versioning, approval workflow, strategy metadata.
-- **Trade Log Service (trading mode):** appends entry (with Markdown snapshot), stop move, and exit to JSONL index; maintains `current.json` for open positions. Read on gateway start to restore state for restart recovery.
+- **Trade Log Service (trading mode):** appends entry (with Markdown snapshot), stop move, and exit to JSONL index; maintains `current.json` for open positions. Logs only real-time signals at the current bar (no historical backfill); at most one entry or stop move per bar. Read on gateway start to restore state for restart recovery.
 - **AI Advisor Service:** OpenRouter calls, schema-validated suggestions, explainability metadata.
 - **Simulator Service:** consumes trade events from Trading Strategy; deterministic backtests for baseline vs candidate strategies.
 
@@ -260,12 +316,11 @@ The module itself is mode-agnostic: it receives candles and indicators and outpu
 
 ### Candle Stream (Chart Data + Graphics)
 
-1. Frontend subscribes to `WS /api/v1/stream/candles/{symbol}?interval=...&volume_profile_window=2000&strategy_markers=simulation|trade|off`.
-2. Backend `CandleStreamHub` fetches REST kline (spot), computes indicators (volume profile, order blocks, structure, S/R), builds a **graphics** object, broadcasts snapshot with `candles` and `graphics`.
-3. Backend subscribes to Bybit kline WebSocket (spot); for each bar update: replace last candle or append new bar; recompute graphics; on new bar start, refetch REST and broadcast fresh snapshot.
-4. `graphics` structure: `{ volumeProfile: {...}, supportResistance: { lines: [...] }, orderBlocks: {...}, smartMoney: { structure: {...} }, strategySignals?: {...} }`. Order blocks are pure indicator output (OB zones only). Bar markers (boundary cross, breaker), when included, come from the **Trading Strategy** module (trade events → chart markers).
-5. **By mode:** In **simulation** mode, `strategySignals` (markers, stop lines, events) is included in the stream. In **trading** mode, `strategySignals` is omitted; the frontend fetches trade data via `GET /api/v1/trade-log` and displays logged trades. On gateway restart in trading mode, `CandleStreamHub` loads `current.json` to restore open positions and continue tracking stop moves and exits.
-6. Frontend applies snapshot/upsert events; chart renders candles and graphics. No client-side indicator computation.
+1. Backend runs a **heartbeat task** that fetches candles from Bybit REST every `FETCH_INTERVAL_SEC` seconds. On each fetch, it computes indicators (volume profile, order blocks, structure, S/R) and strategy, updates internal state, and broadcasts to all connected clients.
+2. Frontend subscribes to `WS /api/v1/stream/candles/{symbol}?interval=...&volume_profile_window=2000&strategy_markers=simulation|trade|off` and receives whatever the backend has (cached snapshot, then updates as heartbeat produces new data). The frontend does **not** trigger Bybit fetches.
+3. `graphics` structure: `{ volumeProfile: {...}, supportResistance: { lines: [...] }, orderBlocks: {...}, smartMoney: { structure: {...} }, strategySignals?: {...} }`. Order blocks are pure indicator output. Bar markers, when included, come from the **Trading Strategy** module. In trading mode, `strategySignals` is omitted from stream; frontend fetches trade data via `GET /api/v1/trade-log`.
+4. Frontend applies snapshot/upsert events; chart renders candles and graphics. No client-side indicator computation.
+5. On gateway restart in trading mode, `CandleStreamHub` loads `current.json` to restore open positions.
 
 ### Ticker Stream (Ticker List Only)
 
@@ -305,7 +360,7 @@ The module itself is mode-agnostic: it receives candles and indicators and outpu
 ### Strategy + AI + Simulation
 
 - **Strategy data export (frontend):** User downloads bar data, indicators, orders, and trailing stops via "Export for AI" button. The Markdown file with captioned sections is fed to AI for strategy review and improvement proposals.
-- **Mode and gateway config:** `GET /api/v1/mode` — Returns `{ "mode": "simulation" | "trading" }`. When `mode=trading`, also returns `{ "symbol": "BTCUSDT", "interval": "60" }` (fixed by gateway config).
+- **Mode and gateway config:** `GET /api/v1/mode` — Returns `{ "mode": "simulation" | "trading" }`. When `mode=trading`, also returns `{ "symbol": "BTCUSDT", "interval": "60", "bars_window": 2000 }` (fixed by gateway config).
 - **Trade log (trading mode only):** `GET /api/v1/trade-log?symbol=BTCUSDT&interval=60` — Returns logged trades for chart display and results table.
 - **Current trades (trading mode only):** `GET /api/v1/current-trades?symbol=BTCUSDT&interval=60` — Returns open positions from `current.json`.
 - `POST /api/v1/strategies/{strategyId}/review`
@@ -363,9 +418,10 @@ A **Strategy Results** table is rendered below the chart with columns: entry dat
 
 ### Frontend Mode Awareness
 
-- **Env vars:** `NEXT_PUBLIC_MODE` (simulation|trading), `NEXT_PUBLIC_API_URL` (backend URL, e.g. `http://localhost:9000` or `http://localhost:9001`).
-- **Caption:** Header shows "Trading Portal - SIMULATION" or "Trading Portal - TRADING".
-- **Trading mode:** Symbol and interval are fixed by gateway config; ticker list and interval buttons are disabled. Gateway config is fetched via `GET /api/v1/mode` on load.
+- **Gateway selector:** Control under "Trading Portal" caption — user selects Simulation or Trade; when Trade, user enters the trading gateway port (e.g. 9000).
+- **Backend URL:** Derived from selection — Simulation → `http://localhost:9000`, Trade → `http://localhost:{user_port}` (e.g. 9001, 9002).
+- **Caption:** Header shows "Trading Portal - SIMULATION" or "Trading Portal - TRADING" based on gateway response.
+- **Trading mode:** Symbol, interval, and bars window are fixed by gateway config; ticker list, interval buttons, and volume profile window are disabled. Gateway config is fetched via `GET /api/v1/mode` on connect.
 
 ### Order Blocks and Swing Labels: Full Data, Frontend Display Control
 
@@ -425,7 +481,7 @@ Lightweight Charts does not provide built-in box, line, label, or shape primitiv
 ### Phase 1.1: UI/Feed Wiring
 
 - Symbol switcher in frontend linked to backend market endpoints.
-- **Multi-gateway run scripts:** `run-dev-trading.sh` (frontend 4000, backend 9000) and `run-dev-simulation.sh` (frontend 4001, backend 9001). Ports configurable via `FRONTEND_PORT`, `BACKEND_PORT`. Trading mode uses fixed symbol/interval from gateway config; frontend disables selectors.
+- **Single frontend** on port 4000 with gateway selector (Simulation | Trade + port). Simulation backend 9000; trading backend port user-specified (default 9001). See `docs/single-frontend-gateway-plan.md`.
 - On symbol change: reconnect candle stream (backend sends fresh snapshot); reconnect ticker stream for ticker list.
 - Lightweight Charts integration with candle series from `WS /stream/candles`; optional tick-based OHLC polish for last bar (ticker used only for last price, not volume).
 - Chart viewport: call `fitContent()` only when symbol or interval changes, not on every data update, to preserve scroll/zoom position.

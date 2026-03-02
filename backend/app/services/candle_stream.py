@@ -24,9 +24,27 @@ from app.services.trade_log import (
 logger = logging.getLogger(__name__)
 DEFAULT_VOLUME_PROFILE_WINDOW = 2000
 
+# Bybit interval string -> seconds (for current-bar detection in trade logging)
+_INTERVAL_SECONDS: dict[str, int] = {
+    "1": 60,
+    "3": 180,
+    "5": 300,
+    "15": 900,
+    "30": 1800,
+    "60": 3600,
+    "120": 7200,
+    "240": 14400,
+    "360": 21600,
+    "720": 43200,
+    "D": 86400,
+    "W": 604800,
+    "M": 2592000,
+}
 
-def _candle_from_bar(start: int, open_: float, high: float, low: float, close: float, volume: float) -> Candle:
-    return Candle(time=start, open=open_, high=high, low=low, close=close, volume=volume)
+
+def _interval_seconds(interval: str) -> int:
+    """Return bar duration in seconds for Bybit interval string."""
+    return _INTERVAL_SECONDS.get(interval, 3600)
 
 
 def _restore_current_trades(symbol: str, interval: str, state: "CandleStreamState") -> None:
@@ -51,49 +69,79 @@ def _apply_trade_logging(
     candles: list[Candle],
     graphics: dict,
     state: "CandleStreamState",
+    *,
+    is_live_update: bool,
 ) -> None:
-    """When mode=trading: log entries, stop moves, exits. Mutates state."""
+    """When mode=trading: log entries, stop moves, exits. Mutates state.
+
+    In trading mode, only logs signals that occur on the current bar (live bar update).
+    Snapshot/resync (is_live_update=False) never logs; historical strategy output is ignored.
+    At most one entry or stop move per bar: once we log one, we skip further signals for that bar.
+    """
     if settings.mode != "trading":
         return
 
     _restore_current_trades(symbol, interval, state)
 
-    # Log new entries
-    for ev in trade_events:
-        trade_id = str(ev.time)
-        if trade_id not in state.logged_entry_ids:
-            append_entry(symbol, interval, ev, candles, graphics)
-            state.logged_entry_ids.add(trade_id)
-            state.last_stop_price_per_trade[trade_id] = ev.initial_stop_price
+    if not is_live_update:
+        return
 
-    # Include restored trades in events_by_side for stop-move matching
-    events_by_side: dict[str, list[tuple[int, str]]] = {"long": [], "short": []}
-    for ev in trade_events:
-        if ev.side in events_by_side:
-            events_by_side[ev.side].append((ev.time, str(ev.time)))
-    for t in getattr(state, "restored_trades", []):
-        sid = t.get("side", "")
-        if sid in events_by_side:
-            et = t.get("entryTime", 0)
-            tid = t.get("tradeId", "")
-            if (et, tid) not in [(x, y) for x, y in events_by_side[sid]]:
-                events_by_side[sid].append((et, tid))
-    for side in events_by_side:
-        events_by_side[side].sort(key=lambda x: x[0])
+    if not candles:
+        return
 
-    for seg in stop_segments:
-        if seg.side not in events_by_side:
-            continue
-        candidates = [(t, tid) for t, tid in events_by_side[seg.side] if t <= seg.start_time]
-        if not candidates:
-            continue
-        _, trade_id = max(candidates, key=lambda x: x[0])
-        if trade_id not in state.logged_entry_ids:
-            continue
-        prev = state.last_stop_price_per_trade.get(trade_id)
-        if prev is not None and seg.price != prev:
-            append_stop_move(symbol, interval, trade_id, seg.end_time, seg.price, seg.side)
-            state.last_stop_price_per_trade[trade_id] = seg.price
+    current_bar_index = len(candles) - 1
+    current_bar_start_sec = candles[-1].time // 1000
+    interval_sec = _interval_seconds(interval)
+    current_bar_end_sec = current_bar_start_sec + interval_sec
+
+    skip_entry_and_stop = current_bar_start_sec in state.signals_emitted_for_bar
+
+    if not skip_entry_and_stop:
+        # Log new entries (only on current bar)
+        for ev in trade_events:
+            if ev.bar_index != current_bar_index:
+                continue
+            trade_id = str(ev.time)
+            if trade_id not in state.logged_entry_ids:
+                append_entry(symbol, interval, ev, candles, graphics)
+                state.logged_entry_ids.add(trade_id)
+                state.last_stop_price_per_trade[trade_id] = ev.initial_stop_price
+                state.signals_emitted_for_bar.add(current_bar_start_sec)
+                skip_entry_and_stop = True
+                break
+
+    if not skip_entry_and_stop:
+        events_by_side: dict[str, list[tuple[int, str]]] = {"long": [], "short": []}
+        for ev in trade_events:
+            if ev.side in events_by_side:
+                events_by_side[ev.side].append((ev.time, str(ev.time)))
+        for t in getattr(state, "restored_trades", []):
+            sid = t.get("side", "")
+            if sid in events_by_side:
+                et = t.get("entryTime", 0)
+                tid = t.get("tradeId", "")
+                if (et, tid) not in [(x, y) for x, y in events_by_side[sid]]:
+                    events_by_side[sid].append((et, tid))
+        for side in events_by_side:
+            events_by_side[side].sort(key=lambda x: x[0])
+
+        for seg in stop_segments:
+            if seg.side not in events_by_side:
+                continue
+            if not (current_bar_start_sec <= seg.end_time < current_bar_end_sec):
+                continue
+            candidates = [(t, tid) for t, tid in events_by_side[seg.side] if t <= seg.start_time]
+            if not candidates:
+                continue
+            _, trade_id = max(candidates, key=lambda x: x[0])
+            if trade_id not in state.logged_entry_ids:
+                continue
+            prev = state.last_stop_price_per_trade.get(trade_id)
+            if prev is not None and seg.price != prev:
+                append_stop_move(symbol, interval, trade_id, seg.end_time, seg.price, seg.side)
+                state.last_stop_price_per_trade[trade_id] = seg.price
+                state.signals_emitted_for_bar.add(current_bar_start_sec)
+                break
 
     # Build events + segments for exit detection (include restored trades not in strategy output)
     all_events = list(trade_events)
@@ -146,17 +194,21 @@ def _apply_trade_logging(
         tid = r["tradeId"]
         if tid in state.logged_exit_ids:
             continue
-        if r["closeReason"] != "end_of_data":
-            append_exit(
-                symbol,
-                interval,
-                tid,
-                r["closeTime"],
-                r["closePrice"],
-                r["closeReason"],
-                r["points"],
-            )
-            state.logged_exit_ids.add(tid)
+        if r["closeReason"] == "end_of_data":
+            continue
+        close_time = r["closeTime"]
+        if not (current_bar_start_sec <= close_time < current_bar_end_sec):
+            continue
+        append_exit(
+            symbol,
+            interval,
+            tid,
+            close_time,
+            r["closePrice"],
+            r["closeReason"],
+            r["points"],
+        )
+        state.logged_exit_ids.add(tid)
 
 
 def _make_snapshot_payload(
@@ -166,6 +218,8 @@ def _make_snapshot_payload(
     symbol: str,
     interval: str,
     state: "CandleStreamState",
+    *,
+    is_live_update: bool = False,
 ) -> dict:
     payload: dict = {
         "event": "snapshot",
@@ -198,54 +252,10 @@ def _make_snapshot_payload(
                 )
                 chart_data = strategy_output_to_chart(trade_events, stop_segments)
                 graphics["strategySignals"] = chart_data
-                _apply_trade_logging(symbol, interval, trade_events, stop_segments, candles, graphics, state)
-                if settings.mode == "trading":
-                    del graphics["strategySignals"]
-        payload["graphics"] = graphics
-    return payload
-
-
-def _make_upsert_payload(
-    candle: Candle,
-    candles: list[Candle],
-    volume_profile_window: int,
-    strategy_markers: str,
-    symbol: str,
-    interval: str,
-    state: "CandleStreamState",
-) -> dict:
-    payload: dict = {
-        "event": "upsert",
-        "candle": candle.model_dump(),
-    }
-    if candles:
-        ob_result = compute_order_blocks(candles, show_bull=0, show_bear=0)
-        structure_result = compute_structure(
-            candles, include_candle_colors=True, max_swing_labels=50
-        )
-        graphics: dict = {
-            "orderBlocks": ob_result,
-            "smartMoney": {"structure": structure_result},
-        }
-        vp = build_volume_profile_from_candles(
-            candles,
-            time=candles[-1].time // 1000,
-            width=6,
-            window_size=volume_profile_window,
-        )
-        if vp:
-            graphics["volumeProfile"] = vp
-            sr_lines = compute_support_resistance_lines(vp["profile"])
-            graphics["supportResistance"] = {"lines": sr_lines}
-            if strategy_markers in ("simulation", "trade"):
-                trade_events, stop_segments = compute_order_block_trend_following(
-                    candles,
-                    candle_colors=structure_result.get("candleColors"),
-                    sr_lines=sr_lines,
+                _apply_trade_logging(
+                    symbol, interval, trade_events, stop_segments, candles, graphics, state,
+                    is_live_update=is_live_update,
                 )
-                chart_data = strategy_output_to_chart(trade_events, stop_segments)
-                graphics["strategySignals"] = chart_data
-                _apply_trade_logging(symbol, interval, trade_events, stop_segments, candles, graphics, state)
                 if settings.mode == "trading":
                     del graphics["strategySignals"]
         payload["graphics"] = graphics
@@ -265,6 +275,7 @@ class CandleStreamState:
     last_stop_price_per_trade: dict[str, float] = field(default_factory=dict)
     current_trades_restored: bool = False
     restored_trades: list = field(default_factory=list)
+    signals_emitted_for_bar: set[int] = field(default_factory=set)
 
 
 class CandleStreamHub:
@@ -273,6 +284,22 @@ class CandleStreamHub:
         self._snapshot_limit = snapshot_limit
         self._streams: dict[tuple[str, str], CandleStreamState] = defaultdict(CandleStreamState)
         self._lock = asyncio.Lock()
+
+    async def start_heartbeat(
+        self,
+        symbol: str,
+        interval: str,
+        volume_profile_window: int = DEFAULT_VOLUME_PROFILE_WINDOW,
+        strategy_markers: str = "off",
+    ) -> None:
+        """Start heartbeat for symbol/interval without requiring a subscriber. Used for trading mode on startup."""
+        stream_key = (symbol.upper(), interval)
+        async with self._lock:
+            state = self._streams[stream_key]
+            state.volume_profile_window = volume_profile_window
+            state.strategy_markers = strategy_markers
+            if state.task is None or state.task.done():
+                state.task = asyncio.create_task(self._run_heartbeat(symbol.upper(), interval))
 
     async def subscribe(
         self,
@@ -299,7 +326,7 @@ class CandleStreamHub:
                     state,
                 )
             if state.task is None or state.task.done():
-                state.task = asyncio.create_task(self._run_stream(symbol, interval))
+                state.task = asyncio.create_task(self._run_heartbeat(symbol, interval))
         if snapshot_payload is not None:
             await queue.put(snapshot_payload)
         return queue
@@ -317,10 +344,17 @@ class CandleStreamHub:
                 state.task.cancel()
             self._streams.pop(stream_key, None)
 
-    async def _run_stream(self, symbol: str, interval: str) -> None:
+    async def _run_heartbeat(self, symbol: str, interval: str) -> None:
+        """Heartbeat loop: fetch from Bybit REST at fetch_interval_sec, compute, broadcast."""
         stream_key = (symbol, interval)
+        fetch_interval = settings.fetch_interval_sec
+        first_run = True
         while True:
             try:
+                if not first_run:
+                    await asyncio.sleep(fetch_interval)
+                first_run = False
+
                 candles = await self._bybit_client.get_klines(
                     symbol=symbol,
                     interval=interval,
@@ -331,113 +365,43 @@ class CandleStreamHub:
                     if state is None:
                         return
                     state.candles = candles
+                    vp_window = state.volume_profile_window
+                    strategy_markers = state.strategy_markers
+
                 payload = _make_snapshot_payload(
                     candles,
-                    state.volume_profile_window,
-                    state.strategy_markers,
+                    vp_window,
+                    strategy_markers,
                     symbol,
                     interval,
                     state,
+                    is_live_update=True,
                 )
                 await self._broadcast(stream_key, payload)
-
-                async for bar in self._bybit_client.stream_kline(symbol, interval):
-                    candidate = _candle_from_bar(
-                        start=bar.start,
-                        open_=bar.open,
-                        high=bar.high,
-                        low=bar.low,
-                        close=bar.close,
-                        volume=bar.volume,
-                    )
-
-                    do_resync = False
-                    event_payload: dict | None = None
-                    async with self._lock:
-                        state = self._streams.get(stream_key)
-                        if state is None:
-                            return
-                        if not state.candles:
-                            state.candles = [candidate]
-                            event_payload = _make_upsert_payload(
-                                candidate,
-                                state.candles,
-                                state.volume_profile_window,
-                                state.strategy_markers,
-                                symbol,
-                                interval,
-                                state,
-                            )
-                        else:
-                            last = state.candles[-1]
-                            if candidate.time > last.time:
-                                state.candles.append(candidate)
-                                if len(state.candles) > self._snapshot_limit:
-                                    state.candles = state.candles[-self._snapshot_limit :]
-                                event_payload = _make_upsert_payload(
-                                    candidate,
-                                    state.candles,
-                                    state.volume_profile_window,
-                                    state.strategy_markers,
-                                    symbol,
-                                    interval,
-                                    state,
-                                )
-                                do_resync = True
-                            elif candidate.time == last.time:
-                                state.candles[-1] = candidate
-                                event_payload = _make_upsert_payload(
-                                    candidate,
-                                    state.candles,
-                                    state.volume_profile_window,
-                                    state.strategy_markers,
-                                    symbol,
-                                    interval,
-                                    state,
-                                )
-                            else:
-                                for idx, candle in enumerate(state.candles):
-                                    if candle.time == candidate.time:
-                                        state.candles[idx] = candidate
-                                        event_payload = _make_upsert_payload(
-                                            candidate,
-                                            state.candles,
-                                            state.volume_profile_window,
-                                            state.strategy_markers,
-                                            symbol,
-                                            interval,
-                                            state,
-                                        )
-                                        break
-
-                    if event_payload is not None:
-                        await self._broadcast(stream_key, event_payload)
-
-                    if do_resync:
-                        await self._resync_and_broadcast(stream_key, symbol, interval)
+                logger.info(
+                    "Heartbeat: %s %s fetched %d candles, broadcast to %d client(s)",
+                    symbol,
+                    interval,
+                    len(candles),
+                    len(state.queues),
+                )
             except asyncio.CancelledError:
                 break
             except Exception:
-                # Retry on transient upstream/network issues.
-                await asyncio.sleep(2)
+                logger.exception("Heartbeat fetch failed, retrying in %ds", fetch_interval)
+                await asyncio.sleep(fetch_interval)
 
-    async def _resync_and_broadcast(self, stream_key: tuple[str, str], symbol: str, interval: str) -> None:
-        candles = await self._bybit_client.get_klines(
-            symbol=symbol,
-            interval=interval,
-            limit=self._snapshot_limit,
-        )
+    async def get_cached_candles(self, symbol: str, interval: str, limit: int = 2000) -> list[Candle]:
+        """Return cached candles for symbol/interval if available. Used by GET /candles."""
+        stream_key = (symbol.upper(), interval)
         async with self._lock:
             state = self._streams.get(stream_key)
-            if state is None:
-                return
-            state.candles = candles
-            vp_window = state.volume_profile_window
-            strategy_markers = state.strategy_markers
-            payload = _make_snapshot_payload(
-                candles, vp_window, strategy_markers, symbol, interval, state
-            )
-        await self._broadcast(stream_key, payload)
+            if state is None or not state.candles:
+                return []
+            candles = list(state.candles)
+        if limit < len(candles):
+            candles = candles[-limit:]
+        return candles
 
     async def _broadcast(self, stream_key: tuple[str, str], payload: dict) -> None:
         async with self._lock:

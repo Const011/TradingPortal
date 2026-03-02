@@ -1,42 +1,40 @@
 /** Market API: calls our backend. Backend proxies Bybit. */
 import { Candle, SymbolInfo, TickerSnapshot } from "@/lib/types/market";
 
-/** Backend URL. Set by run-dev-*.sh; or use .env NEXT_PUBLIC_API_URL for manual runs. */
-const backendBaseUrl =
-  process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:9000";
-
-/** Backend mode: simulation (stream strategy) or trading (trade log). From env or fetch. */
+/** Backend mode: simulation (stream strategy) or trading (trade log). */
 export type BackendMode = "simulation" | "trading";
 
-export const backendMode: BackendMode =
-  (process.env.NEXT_PUBLIC_MODE as BackendMode) ?? "simulation";
-
-/** Gateway config when mode=trading (symbol and interval are fixed). */
+/** Gateway config from GET /api/v1/mode. */
 export type GatewayConfig = {
-  mode: "trading";
-  symbol: string;
-  interval: string;
-};
-
-/** Fetch backend mode and gateway config. When mode=trading, returns symbol and interval. */
-export async function fetchGatewayConfig(): Promise<{
   mode: BackendMode;
   symbol?: string;
   interval?: string;
-}> {
+  bars_window?: number;
+};
+
+/** Fetch backend mode and gateway config. When mode=trading, returns symbol, interval, bars_window. */
+export async function fetchGatewayConfig(
+  backendBaseUrl: string
+): Promise<{ mode: BackendMode; symbol?: string; interval?: string; bars_window?: number }> {
   const res = await fetch(`${backendBaseUrl}/api/v1/mode`);
   if (!res.ok) return { mode: "simulation" };
-  const data = (await res.json()) as { mode: string; symbol?: string; interval?: string };
+  const data = (await res.json()) as {
+    mode: string;
+    symbol?: string;
+    interval?: string;
+    bars_window?: number;
+  };
   return {
     mode: data.mode === "trading" ? "trading" : "simulation",
     symbol: data.symbol,
     interval: data.interval,
+    bars_window: data.bars_window,
   };
 }
 
 /** @deprecated Use fetchGatewayConfig */
-export async function fetchBackendMode(): Promise<BackendMode> {
-  const { mode } = await fetchGatewayConfig();
+export async function fetchBackendMode(backendBaseUrl: string): Promise<BackendMode> {
+  const { mode } = await fetchGatewayConfig(backendBaseUrl);
   return mode;
 }
 
@@ -58,6 +56,7 @@ export type TradeLogTrade = {
 
 /** [Backend] GET /trade-log. Used when mode=trading for chart and results. */
 export async function fetchTradeLog(
+  backendBaseUrl: string,
   symbol: string,
   interval: string,
   since?: number
@@ -70,7 +69,7 @@ export async function fetchTradeLog(
 }
 
 /** [Backend] GET /symbols. Fetches tradable symbols for selector and ticker list. */
-export async function fetchSymbols(): Promise<SymbolInfo[]> {
+export async function fetchSymbols(backendBaseUrl: string): Promise<SymbolInfo[]> {
   const response = await fetch(`${backendBaseUrl}/api/v1/symbols`);
   if (!response.ok) {
     throw new Error("Failed to fetch symbols");
@@ -80,6 +79,7 @@ export async function fetchSymbols(): Promise<SymbolInfo[]> {
 
 /** [Backend] GET /candles. Fetches historical klines; used for initial chart load or standalone fetch. */
 export async function fetchCandles(
+  backendBaseUrl: string,
   symbol: string,
   interval: string,
   limit: number = 2000
@@ -97,7 +97,10 @@ export async function fetchCandles(
 }
 
 /** [Backend] GET /tickers. Fetches 24h snapshots for ticker list (not for chart). */
-export async function fetchTickers(symbols: string[]): Promise<TickerSnapshot[]> {
+export async function fetchTickers(
+  backendBaseUrl: string,
+  symbols: string[]
+): Promise<TickerSnapshot[]> {
   const searchParams = new URLSearchParams();
   if (symbols.length > 0) {
     searchParams.set("symbols", symbols.join(","));
@@ -110,7 +113,7 @@ export async function fetchTickers(symbols: string[]): Promise<TickerSnapshot[]>
 }
 
 /** [Backend] WS /stream/ticks. Ticker stream for ticker list only (lastPrice, volume24h, change%). */
-export function getTicksWebSocketUrl(symbol: string): string {
+export function getTicksWebSocketUrl(backendBaseUrl: string, symbol: string): string {
   const normalizedBaseUrl = backendBaseUrl.replace("https://", "wss://").replace(
     "http://",
     "ws://"
@@ -122,6 +125,7 @@ export type StrategyMarkersMode = "off" | "simulation" | "trade";
 
 /** [Backend] WS /stream/candles. Merged snapshot + live bar updates + indicators; use for chart data. */
 export function getCandlesWebSocketUrl(
+  backendBaseUrl: string,
   symbol: string,
   interval: string,
   volumeProfileWindow: number = 2000,
