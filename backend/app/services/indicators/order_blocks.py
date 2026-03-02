@@ -1,10 +1,16 @@
-"""Order blocks from swing structure — LuxAlgo inspired."""
+"""Order blocks from swing structure — LuxAlgo inspired.
 
-from dataclasses import dataclass, field
+This module only computes order blocks (OB creation and breaker marking for display).
+Crossover detection and entry signals belong in the strategy layer.
+"""
+
+from dataclasses import dataclass
+
 from app.schemas.market import Candle
 
 DEFAULT_SWING_LENGTH = 20
-DEFAULT_MAX_OB_ENTRY_SIGNALS = 2
+DEFAULT_ENTRY_ZONE_MULT = 1.2  # Used by strategy for crossover detection
+DEFAULT_MAX_OB_ENTRY_SIGNALS = 2  # Used by strategy to cap signals per OB
 DEFAULT_SHOW_BULL = 5
 DEFAULT_SHOW_BEAR = 5
 MAX_LOOKBACK = 1000
@@ -22,10 +28,10 @@ class OrderBlock:
     top: float
     bottom: float
     loc: int
+    formation_bar: int  # Bar index when OB was created (swing broken)
     breaker: bool
     break_loc: int | None
     fill_color: str
-    entry_signal_count: int = field(default=0)  # Times this OB generated entry signal; capped by max_ob_entry_signals
 
 
 def _swings(
@@ -60,16 +66,16 @@ def _swings(
     return sh[0], sh[1], sl[0], sl[1], os_new
 
 
-def _iter_order_blocks_with_events(
+def _iter_order_blocks(
     candles: list[Candle],
     swing_length: int = DEFAULT_SWING_LENGTH,
     use_body: bool = False,
     keep_breakers: bool = True,
-    max_ob_entry_signals: int = DEFAULT_MAX_OB_ENTRY_SIGNALS,
 ):
     """
-    Generator yielding per-bar OB state and raw events (boundary cross, breaker created).
-    Yields: (bar_index, candle, bullish_ob_list, bearish_ob_list, events_this_bar).
+    Generator yielding per-bar OB state. Only computes OBs and marks breakers.
+    Yields: (bar_index, candle, bullish_ob_list, bearish_ob_list).
+    Crossover detection and entry signals belong in the strategy layer.
     """
     if len(candles) < swing_length + 2:
         return
@@ -123,7 +129,7 @@ def _iter_order_blocks_with_events(
                         minima = candles[j].low
                         maxima = candles[j].high
                         loc_bar = j
-                bullish_ob.insert(0, OrderBlock(top=maxima, bottom=minima, loc=loc_bar, breaker=False, break_loc=None, fill_color=BULL_FILL))
+                bullish_ob.insert(0, OrderBlock(top=maxima, bottom=minima, loc=loc_bar, formation_bar=i, breaker=False, break_loc=None, fill_color=BULL_FILL))
 
         # Bearish OB: form when price breaks *below* swing low. OB zone = (max high, min low) of bars between swing and current; we pick the bar with the highest high.
         # No formation cap here — we form all, then take last show_bear within MAX_LOOKBACK at the end.
@@ -143,60 +149,27 @@ def _iter_order_blocks_with_events(
                         maxima = candles[j].high
                         minima = candles[j].low
                         loc_bar = j
-                bearish_ob.insert(0, OrderBlock(top=maxima, bottom=minima, loc=loc_bar, breaker=False, break_loc=None, fill_color=BEAR_FILL))
+                bearish_ob.insert(0, OrderBlock(top=maxima, bottom=minima, loc=loc_bar, formation_bar=i, breaker=False, break_loc=None, fill_color=BEAR_FILL))
 
-        # Mark bullish OBs as breakers; detect boundary cross; collect events
-        # Entry touch zone (long): [ob_bottom, ob_bottom + 2*height]. Enablement (breaker) uses OB boundaries.
-        events_this_bar: list[dict] = []
+        # Mark bullish OBs as breakers when price crosses below (for display)
         for ob in list(bullish_ob):
             if not ob.breaker and ob.loc < i:
                 if min(c.close, c.open) < ob.bottom:
                     ob.breaker = True
                     ob.break_loc = i
-                    events_this_bar.append({
-                        "type": "bullish_breaker_created",
-                        "ob_top": ob.top, "ob_bottom": ob.bottom, "ob_loc": ob.loc,
-                    })
-                else:
-                    ob_height = ob.top - ob.bottom
-                    zone_top = ob.bottom + 2.0 * ob_height
-                    touched_zone = c.low <= zone_top and c.high >= ob.bottom
-                    if touched_zone and c.close > ob.top and c.close > c.open:
-                        if ob.entry_signal_count < max_ob_entry_signals:
-                            ob.entry_signal_count += 1
-                            events_this_bar.append({
-                                "type": "bullish_boundary_crossed",
-                                "ob_top": ob.top, "ob_bottom": ob.bottom, "ob_loc": ob.loc,
-                            })
             elif not keep_breakers and c.close > ob.top:
                 bullish_ob.remove(ob)
 
-        # Mark bearish OBs as breakers; detect boundary cross
-        # Entry touch zone (short): [ob_top - 2*height, ob_top]. Enablement (breaker) uses OB boundaries.
+        # Mark bearish OBs as breakers when price crosses above (for display)
         for ob in list(bearish_ob):
             if not ob.breaker and ob.loc < i:
                 if max(c.close, c.open) > ob.top:
                     ob.breaker = True
                     ob.break_loc = i
-                    events_this_bar.append({
-                        "type": "bearish_breaker_created",
-                        "ob_top": ob.top, "ob_bottom": ob.bottom, "ob_loc": ob.loc,
-                    })
-                else:
-                    ob_height = ob.top - ob.bottom
-                    zone_bottom = ob.top - 2.0 * ob_height
-                    touched_zone = c.high >= zone_bottom and c.low <= ob.top
-                    if touched_zone and c.close < ob.bottom and c.close < c.open:
-                        if ob.entry_signal_count < max_ob_entry_signals:
-                            ob.entry_signal_count += 1
-                            events_this_bar.append({
-                                "type": "bearish_boundary_crossed",
-                                "ob_top": ob.top, "ob_bottom": ob.bottom, "ob_loc": ob.loc,
-                            })
             elif not keep_breakers and c.close < ob.bottom:
                 bearish_ob.remove(ob)
 
-        yield (i, c, list(bullish_ob), list(bearish_ob), events_this_bar)
+        yield (i, c, list(bullish_ob), list(bearish_ob))
 
 
 def compute_order_blocks(
@@ -217,7 +190,7 @@ def compute_order_blocks(
 
     bullish_ob: list[OrderBlock] = []
     bearish_ob: list[OrderBlock] = []
-    for _i, _c, bull, bear, _ev in _iter_order_blocks_with_events(
+    for _i, _c, bull, bear in _iter_order_blocks(
         candles, swing_length=swing_length, use_body=use_body, keep_breakers=keep_breakers
     ):
         bullish_ob = bull
@@ -241,15 +214,20 @@ def compute_order_blocks(
 
     def ob_to_primitive(ob: OrderBlock, fill: str) -> dict:
         loc_candle = candles[ob.loc]
+        formation_candle = candles[ob.formation_bar]
         start_time = loc_candle.time // 1000
         end_time = candles[-1].time // 1000
-        break_time = candles[ob.break_loc].time // 1000 if ob.breaker and ob.break_loc is not None else None
+        initiation_time = loc_candle.time // 1000  # Candle whose size defines OB top/bottom
+        structure_break_time = formation_candle.time // 1000  # Bar that broke the swing
+        breaker_time = candles[ob.break_loc].time // 1000 if ob.breaker and ob.break_loc is not None else None
         return {
             "top": ob.top,
             "bottom": ob.bottom,
             "startTime": start_time,
             "endTime": end_time,
-            "breakTime": break_time,
+            "initiationTime": initiation_time,
+            "structureBreakTime": structure_break_time,
+            "breakerTime": breaker_time,
             "breaker": ob.breaker,
             "fillColor": fill,
         }

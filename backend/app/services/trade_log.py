@@ -2,8 +2,15 @@
 
 import json
 import logging
+from datetime import datetime
 from pathlib import Path
 from typing import Any
+
+
+def _format_ts_local(ts: int, unit: str = "s") -> str:
+    """Format Unix timestamp to local time 'YYYY-MM-DD HH:mm:ss'."""
+    sec = ts if unit == "s" else ts // 1000
+    return datetime.fromtimestamp(sec).strftime("%Y-%m-%d %H:%M:%S")
 
 from app.config import settings
 from app.schemas.market import Candle
@@ -119,7 +126,9 @@ def _build_entry_snapshot_markdown(
     lines: list[str] = []
     lines.append("# Strategy Data Export (Entry Snapshot)")
     lines.append("")
-    lines.append(f"**Symbol:** {symbol} | **Interval:** {interval} | **Entry:** {event.get('time', '')}")
+    entry_ts = event.get("time", "")
+    entry_str = _format_ts_local(entry_ts, "s") if isinstance(entry_ts, (int, float)) else str(entry_ts)
+    lines.append(f"**Symbol:** {symbol} | **Interval:** {interval} | **Entry:** {entry_str}")
     lines.append("")
     lines.append("---")
     lines.append("")
@@ -128,10 +137,11 @@ def _build_entry_snapshot_markdown(
     lines.append("## 1. Bar Data (OHLCV)")
     lines.append("")
     if candles:
-        lines.append("| time (unix_ms) | open | high | low | close | volume |")
-        lines.append("|----------------|------|------|-----|-------|--------|")
+        lines.append("| time | open | high | low | close | volume |")
+        lines.append("|------|------|------|-----|-------|--------|")
         for c in candles:
-            lines.append(f"| {c.time} | {c.open} | {c.high} | {c.low} | {c.close} | {c.volume} |")
+            ts_str = _format_ts_local(c.time, "ms") if c.time > 1e12 else _format_ts_local(int(c.time), "s")
+            lines.append(f"| {ts_str} | {c.open} | {c.high} | {c.low} | {c.close} | {c.volume} |")
     else:
         lines.append("*No candle data.*")
     lines.append("")
@@ -186,12 +196,18 @@ def _build_entry_snapshot_markdown(
             for o in lst:
                 all_obs.append({**o, "list": key})
         if all_obs:
-            lines.append("| list | top | bottom | startTime | breakTime | breaker |")
-            lines.append("|------|-----|--------|------------|-----------|---------|")
+            lines.append("| list | top | bottom | initiationTime | structureBreakTime | breakerTime | breaker |")
+            lines.append("|------|-----|--------|-----------------|--------------------|------------|---------|")
             for o in all_obs:
+                init = o.get("initiationTime")
+                init_str = _format_ts_local(init, "s") if isinstance(init, (int, float)) else "-"
+                struct = o.get("structureBreakTime")
+                struct_str = _format_ts_local(struct, "s") if isinstance(struct, (int, float)) else "-"
+                breaker = o.get("breakerTime")
+                breaker_str = _format_ts_local(breaker, "s") if isinstance(breaker, (int, float)) else "-"
                 lines.append(
                     f"| {o.get('list', '')} | {o.get('top', '')} | {o.get('bottom', '')} | "
-                    f"{o.get('startTime', '')} | {o.get('breakTime', '-')} | {o.get('breaker', '')} |"
+                    f"{init_str} | {struct_str} | {breaker_str} | {o.get('breaker', '')} |"
                 )
         else:
             lines.append("*No order blocks.*")
@@ -222,9 +238,11 @@ def _build_entry_snapshot_markdown(
     lines.append("")
     lines.append("| time | barIndex | type | side | price | targetPrice | initialStopPrice | context |")
     lines.append("|------|----------|------|------|-------|-------------|------------------|---------|")
+    ev_time = event.get("time", "")
+    ev_time_str = _format_ts_local(ev_time, "s") if isinstance(ev_time, (int, float)) else str(ev_time)
     ctx = json.dumps(event.get("context", {}))
     lines.append(
-        f"| {event.get('time', '')} | {event.get('barIndex', '')} | {event.get('type', '')} | "
+        f"| {ev_time_str} | {event.get('barIndex', '')} | {event.get('type', '')} | "
         f"{event.get('side', '-')} | {event.get('price', '')} | {event.get('targetPrice', '-')} | "
         f"{event.get('initialStopPrice', '')} | {ctx} |"
     )
@@ -241,7 +259,11 @@ def _build_entry_snapshot_markdown(
         lines.append("| startTime | endTime | price | side |")
         lines.append("|-----------|---------|-------|------|")
         for s in stop_segments:
-            lines.append(f"| {s.get('startTime', '')} | {s.get('endTime', '')} | {s.get('price', '')} | {s.get('side', '')} |")
+            st = s.get("startTime", "")
+            et = s.get("endTime", "")
+            st_str = _format_ts_local(st, "s") if isinstance(st, (int, float)) else str(st)
+            et_str = _format_ts_local(et, "s") if isinstance(et, (int, float)) else str(et)
+            lines.append(f"| {st_str} | {et_str} | {s.get('price', '')} | {s.get('side', '')} |")
     else:
         lines.append("*No trailing stop segments.*")
     lines.append("")

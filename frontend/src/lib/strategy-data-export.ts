@@ -9,6 +9,19 @@ import type {
   StrategySignalsData,
 } from "@/lib/types/market";
 
+/** Format Unix timestamp to local time "YYYY-MM-DD HH:mm:ss". */
+function formatTimestampLocal(ts: number, unit: "s" | "ms" = "s"): string {
+  const ms = unit === "s" ? ts * 1000 : ts;
+  const d = new Date(ms);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  const h = String(d.getHours()).padStart(2, "0");
+  const min = String(d.getMinutes()).padStart(2, "0");
+  const sec = String(d.getSeconds()).padStart(2, "0");
+  return `${y}-${m}-${day} ${h}:${min}:${sec}`;
+}
+
 export type StrategyExportInput = {
   symbol: string;
   interval: string;
@@ -25,7 +38,7 @@ export type StrategyExportInput = {
  * AI can parse this to understand the strategy context and propose improvements.
  */
 export function buildStrategyExportMarkdown(input: StrategyExportInput): string {
-  const exportedAt = new Date().toISOString();
+  const exportedAt = formatTimestampLocal(Math.floor(Date.now() / 1000), "s");
   const lines: string[] = [];
 
   lines.push("# Strategy Data Export");
@@ -41,10 +54,11 @@ export function buildStrategyExportMarkdown(input: StrategyExportInput): string 
   lines.push("Candle data with open, high, low, close and volume per bar.");
   lines.push("");
   if (input.candles.length > 0) {
-    lines.push("| time (unix_ms) | open | high | low | close | volume |");
-    lines.push("|----------------|------|------|-----|-------|--------|");
+    lines.push("| time | open | high | low | close | volume |");
+    lines.push("|------|------|------|-----|-------|--------|");
     for (const c of input.candles) {
-      lines.push(`| ${c.time} | ${c.open} | ${c.high} | ${c.low} | ${c.close} | ${c.volume} |`);
+      const timeStr = formatTimestampLocal(Math.floor(c.time / 1000), "s");
+      lines.push(`| ${timeStr} | ${c.open} | ${c.high} | ${c.low} | ${c.close} | ${c.volume} |`);
     }
   } else {
     lines.push("*No candle data.*");
@@ -60,7 +74,7 @@ export function buildStrategyExportMarkdown(input: StrategyExportInput): string 
   lines.push("### 2.1 Volume Profile");
   lines.push("");
   if (input.volumeProfile) {
-    lines.push(`Time: ${input.volumeProfile.time} | Width: ${input.volumeProfile.width}`);
+    lines.push(`Time: ${formatTimestampLocal(input.volumeProfile.time, "s")} | Width: ${input.volumeProfile.width}`);
     lines.push("");
     lines.push("| price | volume |");
     lines.push("|-------|--------|");
@@ -98,10 +112,13 @@ export function buildStrategyExportMarkdown(input: StrategyExportInput): string 
       ...(input.orderBlocks.bearishBreakers ?? []).map((o) => ({ ...o, list: "bearishBreakers" })),
     ];
     if (allObs.length > 0) {
-      lines.push("| list | top | bottom | startTime | breakTime | breaker |");
-      lines.push("|------|-----|--------|------------|-----------|---------|");
+      lines.push("| list | top | bottom | initiationTime | structureBreakTime | breakerTime | breaker |");
+      lines.push("|------|-----|--------|-----------------|--------------------|------------|---------|");
       for (const o of allObs) {
-        lines.push(`| ${(o as { list: string }).list} | ${o.top} | ${o.bottom} | ${o.startTime} | ${o.breakTime ?? "-"} | ${o.breaker} |`);
+        const init = o.initiationTime != null ? formatTimestampLocal(o.initiationTime, "s") : "-";
+        const struct = o.structureBreakTime != null ? formatTimestampLocal(o.structureBreakTime, "s") : "-";
+        const breaker = o.breakerTime != null ? formatTimestampLocal(o.breakerTime, "s") : "-";
+        lines.push(`| ${(o as { list: string }).list} | ${o.top} | ${o.bottom} | ${init} | ${struct} | ${breaker} | ${o.breaker} |`);
       }
     } else {
       lines.push("*No order blocks.*");
@@ -138,7 +155,8 @@ export function buildStrategyExportMarkdown(input: StrategyExportInput): string 
     lines.push("|------|----------|------|------|-------|-------------|------------------|---------|");
     for (const e of input.strategySignals.events) {
       const ctx = JSON.stringify(e.context ?? {});
-      lines.push(`| ${e.time} | ${e.barIndex} | ${e.type} | ${e.side ?? "-"} | ${e.price} | ${e.targetPrice ?? "-"} | ${e.initialStopPrice} | ${ctx} |`);
+      const timeStr = formatTimestampLocal(e.time, "s");
+      lines.push(`| ${timeStr} | ${e.barIndex} | ${e.type} | ${e.side ?? "-"} | ${e.price} | ${e.targetPrice ?? "-"} | ${e.initialStopPrice} | ${ctx} |`);
     }
   } else {
     lines.push("*No trade orders in this run.*");
@@ -156,7 +174,9 @@ export function buildStrategyExportMarkdown(input: StrategyExportInput): string 
     lines.push("| startTime | endTime | price | side |");
     lines.push("|-----------|---------|-------|------|");
     for (const s of input.strategySignals.stopSegments) {
-      lines.push(`| ${s.startTime} | ${s.endTime} | ${s.price} | ${s.side} |`);
+      const startStr = formatTimestampLocal(s.startTime, "s");
+      const endStr = formatTimestampLocal(s.endTime, "s");
+      lines.push(`| ${startStr} | ${endStr} | ${s.price} | ${s.side} |`);
     }
   } else {
     lines.push("*No trailing stop segments.*");

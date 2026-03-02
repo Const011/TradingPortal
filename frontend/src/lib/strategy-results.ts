@@ -36,6 +36,8 @@ export type StrategyResultsSummary = {
   trades: StrategyTradeResult[];
   totalPoints: number;
   avgPointsPerTrade: number;
+  /** Percentage of winning trades (points > 0). 0–100. */
+  winRatePercent: number;
 };
 
 /** Normalize timestamp to seconds (handles ms and ms) */
@@ -162,11 +164,15 @@ export function computeStrategyResults(
   const totalPoints = trades.reduce((sum, t) => sum + t.points, 0);
   const avgPointsPerTrade =
     trades.length > 0 ? totalPoints / trades.length : 0;
+  const winningCount = trades.filter((t) => t.points > 0).length;
+  const winRatePercent =
+    trades.length > 0 ? (winningCount / trades.length) * 100 : 0;
 
   return {
     trades,
     totalPoints,
     avgPointsPerTrade,
+    winRatePercent,
   };
 }
 
@@ -198,5 +204,13 @@ export function tradeLogToStrategyResultsSummary(
   }));
   const totalPoints = results.reduce((sum, t) => sum + t.points, 0);
   const avgPointsPerTrade = results.length > 0 ? totalPoints / results.length : 0;
-  return { trades: results, totalPoints, avgPointsPerTrade };
+  const winningCount = results.filter((t) => t.points > 0).length;
+  const winRatePercent =
+    results.length > 0 ? (winningCount / results.length) * 100 : 0;
+  return {
+    trades: results,
+    totalPoints,
+    avgPointsPerTrade,
+    winRatePercent,
+  };
 }

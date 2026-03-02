@@ -106,7 +106,11 @@ export type OrderBlockData = {
   bottom: number;
   startTime: number;
   endTime: number;
-  breakTime: number | null;
+  initiationTime?: number;
+  structureBreakTime?: number;
+  breakerTime?: number | null;
+  /** @deprecated Use breakerTime */
+  breakTime?: number | null;
   breaker: boolean;
   fillColor: string;
 };

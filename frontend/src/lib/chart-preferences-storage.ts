@@ -111,21 +111,21 @@ function parseStored(raw: string | null): Partial<StoredChartPreferences> {
     if (
       typeof parsed.obShowBull === "number" &&
       parsed.obShowBull >= 0 &&
-      parsed.obShowBull <= 100
+      parsed.obShowBull <= 150
     ) {
       out.obShowBull = parsed.obShowBull;
     }
     if (
       typeof parsed.obShowBear === "number" &&
       parsed.obShowBear >= 0 &&
-      parsed.obShowBear <= 100
+      parsed.obShowBear <= 150
     ) {
       out.obShowBear = parsed.obShowBear;
     }
     if (
       typeof parsed.swingLabelsShow === "number" &&
       parsed.swingLabelsShow >= 0 &&
-      parsed.swingLabelsShow <= 100
+      parsed.swingLabelsShow <= 150
     ) {
       out.swingLabelsShow = parsed.swingLabelsShow;
     }

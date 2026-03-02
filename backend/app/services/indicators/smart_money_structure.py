@@ -8,10 +8,6 @@ INTERNAL_LENGTH = 5
 EQUAL_HL_LENGTH = 5
 ATR_LENGTH = 200
 DEFAULT_EQUAL_THRESHOLD = 0.1
-MAX_STRUCTURE_ELEMENTS = 20
-MAX_SWING_LABELS = 15
-MAX_EQUAL_ELEMENTS = 10
-MAX_LOOKBACK = 500
 
 BULLISH = 1
 BEARISH = -1
@@ -98,7 +94,6 @@ def compute_structure(
     show_internal_bull: str = "ALL",
     show_internal_bear: str = "ALL",
     include_candle_colors: bool = False,
-    max_swing_labels: int | None = None,
 ) -> dict:
     """
     Compute BOS/CHoCH structure, swing labels (HH/HL/LH/LL), EQH/EQL.
@@ -136,7 +131,6 @@ def compute_structure(
     last_equal_low_bar = -1
 
     last_bar = n - 1
-    in_range = lambda idx: last_bar - idx <= MAX_LOOKBACK
 
     for i in range(max(swing_length, INTERNAL_LENGTH, EQUAL_HL_LENGTH) + 1, n):
         c = candles[i]
@@ -160,7 +154,7 @@ def compute_structure(
             if sw_leg == 0:
                 new_high = candles[i - swing_length].high
                 swing_high = Pivot(price=new_high, bar_idx=i - swing_length, crossed=False)
-                if show_swings and in_range(i - swing_length):
+                if show_swings:
                     tag = "HH" if last_swing_high is None or new_high > last_swing_high else "LH"
                     t_s = candles[i - swing_length].time // 1000
                     swing_labels.append({
@@ -175,7 +169,7 @@ def compute_structure(
             else:
                 new_low = candles[i - swing_length].low
                 swing_low = Pivot(price=new_low, bar_idx=i - swing_length, crossed=False)
-                if show_swings and in_range(i - swing_length):
+                if show_swings:
                     tag = "LL" if last_swing_low is None or new_low < last_swing_low else "HL"
                     t_s = candles[i - swing_length].time // 1000
                     swing_labels.append({
@@ -201,7 +195,7 @@ def compute_structure(
                     crossed=False,
                 )
 
-        if show_equal_hl and eq_leg_changed and in_range(i - EQUAL_HL_LENGTH):
+        if show_equal_hl and eq_leg_changed:
             atr_val = _atr(candles, ATR_LENGTH, i) if i >= ATR_LENGTH else 0.0
             thresh = equal_threshold * atr_val if atr_val > 0 else 0.0
             if eq_leg == 0:
@@ -280,7 +274,7 @@ def compute_structure(
                 swing_trend = new_trend
 
             show_it = show_opt == "ALL" or (show_opt == "BOS" and tag == "BOS") or (show_opt == "CHoCH" and tag == "CHoCH")
-            if not show_it or not in_range(pivot.bar_idx):
+            if not show_it:
                 return
 
             pivot_time_s = candles[pivot.bar_idx].time // 1000
@@ -318,14 +312,13 @@ def compute_structure(
         if include_candle_colors:
             candle_colors[c.time] = _trend_to_color(swing_trend, internal_trend)
 
-    swing_limit = max_swing_labels if max_swing_labels is not None else MAX_SWING_LABELS
     out = {
-        "lines": lines[-MAX_STRUCTURE_ELEMENTS:],
-        "labels": labels[-MAX_STRUCTURE_ELEMENTS:],
-        "swingLabels": swing_labels[-swing_limit:],
+        "lines": lines,
+        "labels": labels,
+        "swingLabels": swing_labels,
         "equalHighsLows": {
-            "lines": equal_lines[-MAX_EQUAL_ELEMENTS:],
-            "labels": equal_labels[-MAX_EQUAL_ELEMENTS:],
+            "lines": equal_lines,
+            "labels": equal_labels,
         },
     }
     if include_candle_colors:

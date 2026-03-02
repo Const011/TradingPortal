@@ -228,7 +228,7 @@ def _make_snapshot_payload(
     if candles:
         ob_result = compute_order_blocks(candles, show_bull=0, show_bear=0)
         structure_result = compute_structure(
-            candles, include_candle_colors=True, max_swing_labels=50
+            candles, include_candle_colors=True
         )
         graphics: dict = {
             "orderBlocks": ob_result,

@@ -15,6 +15,7 @@ import {
   DEFAULT_CHART_INTERVAL,
   type ChartIntervalValue,
 } from "@/lib/constants/chart-intervals";
+import { toChartTimeLocal } from "@/lib/chart-time";
 import {
   getStoredChartPreferences,
   setStoredChartPreferences,
@@ -447,7 +448,9 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
       return null;
     }
     if (hoveredBarTime != null) {
-      const bar = candles.find((c) => Math.floor(c.time / 1000) === hoveredBarTime);
+      const bar = candles.find(
+        (c) => toChartTimeLocal(c.time) === hoveredBarTime
+      );
       if (bar) {
         return {
           open: bar.open,

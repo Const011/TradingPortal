@@ -21,6 +21,7 @@ import {
   CHART_INTERVAL_OPTIONS,
   chartIntervalSeconds,
 } from "@/lib/constants/chart-intervals";
+import { toChartTimeLocal } from "@/lib/chart-time";
 import { useMarketData } from "@/contexts/market-data-context";
 import { OrderBlocks } from "@/lib/chart-plugins/order-blocks";
 import { StructurePrimitive } from "@/lib/chart-plugins/structure";
@@ -33,8 +34,9 @@ import {
 import { IndicatorControlPanel } from "@/components/indicator-control-panel";
 import { StrategyResultsTable } from "@/components/strategy-results-table";
 
-function toChartTime(milliseconds: number): Time {
-  return Math.floor(milliseconds / 1000) as Time;
+/** Convert UTC timestamp to local-adjusted seconds for chart (displays local time on axis). */
+function toChartTime(msOrSec: number): Time {
+  return toChartTimeLocal(msOrSec) as Time;
 }
 
 const intervalButtonStyle = {
@@ -76,7 +78,6 @@ export function PriceChart() {
     obShowBear,
     structureEnabled,
     structure,
-    swingLabelsShow,
     candleColoringEnabled,
     strategyMarkersEnabled,
     strategyMarkersWindow,
@@ -99,14 +100,54 @@ export function PriceChart() {
     };
   }, [orderBlocks, obShowBull, obShowBear]);
 
+  /** Order blocks with times converted to local for chart display. */
+  const orderBlocksForChart = useMemo(() => {
+    if (!orderBlocksForDisplay) return null;
+    const convertOb = (ob: { startTime: number; endTime: number; breakerTime?: number | null; breakTime?: number | null; top: number; bottom: number; breaker: boolean; fillColor: string }) => ({
+      ...ob,
+      startTime: toChartTimeLocal(ob.startTime),
+      endTime: toChartTimeLocal(ob.endTime),
+      breakerTime: (ob.breakerTime ?? ob.breakTime) != null ? toChartTimeLocal((ob.breakerTime ?? ob.breakTime)!) : null,
+    });
+    return {
+      ...orderBlocksForDisplay,
+      bullish: (orderBlocksForDisplay.bullish ?? []).map(convertOb),
+      bearish: (orderBlocksForDisplay.bearish ?? []).map(convertOb),
+      bullishBreakers: (orderBlocksForDisplay.bullishBreakers ?? []).map(convertOb),
+      bearishBreakers: (orderBlocksForDisplay.bearishBreakers ?? []).map(convertOb),
+    };
+  }, [orderBlocksForDisplay]);
+
   const structureForDisplay = useMemo(() => {
     if (!structure) return null;
-    const limit = swingLabelsShow > 0 ? swingLabelsShow : 999;
+    return structure;
+  }, [structure]);
+
+  /** Structure with times converted to local for chart display. */
+  const structureForChart = useMemo(() => {
+    if (!structureForDisplay) return null;
+    const convertSeg = (seg: (typeof structureForDisplay.lines)[number]) => ({
+      ...seg,
+      from: { ...seg.from, time: toChartTimeLocal(seg.from.time) },
+      to: { ...seg.to, time: toChartTimeLocal(seg.to.time) },
+    });
+    const convertLabel = (lbl: (typeof structureForDisplay.labels)[number]) => ({
+      ...lbl,
+      time: toChartTimeLocal(lbl.time),
+    });
     return {
-      ...structure,
-      swingLabels: (structure.swingLabels ?? []).slice(-limit),
+      ...structureForDisplay,
+      lines: (structureForDisplay.lines ?? []).map(convertSeg),
+      labels: (structureForDisplay.labels ?? []).map(convertLabel),
+      swingLabels: (structureForDisplay.swingLabels ?? []).map(convertLabel),
+      equalHighsLows: structureForDisplay.equalHighsLows
+        ? {
+            lines: (structureForDisplay.equalHighsLows.lines ?? []).map(convertSeg),
+            labels: (structureForDisplay.equalHighsLows.labels ?? []).map(convertLabel),
+          }
+        : undefined,
     };
-  }, [structure, swingLabelsShow]);
+  }, [structureForDisplay]);
 
   const strategySignalsForDisplay = useMemo(() => {
     if (!strategySignals || !strategyMarkersEnabled) return null;
@@ -140,6 +181,23 @@ export function PriceChart() {
     candles,
     strategyMarkersWindow,
   ]);
+
+  /** Strategy signals with times converted to local for chart display. */
+  const strategySignalsForChart = useMemo(() => {
+    if (!strategySignalsForDisplay) return null;
+    return {
+      ...strategySignalsForDisplay,
+      markers: (strategySignalsForDisplay.markers ?? []).map((m) => ({
+        ...m,
+        time: toChartTimeLocal(m.time),
+      })),
+      stopLines: (strategySignalsForDisplay.stopLines ?? []).map((line) => ({
+        ...line,
+        from: { ...line.from, time: toChartTimeLocal(line.from.time) },
+        to: { ...line.to, time: toChartTimeLocal(line.to.time) },
+      })),
+    };
+  }, [strategySignalsForDisplay]);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
@@ -342,8 +400,10 @@ export function PriceChart() {
     }
 
     const latestBar = chartData.length > 0 ? chartData[chartData.length - 1] : null;
-    const barTimeSec =
-      typeof latestBar?.time === "number" ? latestBar.time : null;
+    const latestCandle = candles.length > 0 ? candles[candles.length - 1] : null;
+    const barTimeSec = latestCandle
+      ? (latestCandle.time >= 1e12 ? latestCandle.time / 1000 : latestCandle.time)
+      : null;
     const intervalSec = chartIntervalSeconds(chartInterval);
     const tickTimeSec = latestTick.ts / 1000;
     if (
@@ -358,7 +418,7 @@ export function PriceChart() {
     const high = latestBar ? Math.max(latestBar.high, close) : close;
     const low = latestBar ? Math.min(latestBar.low, close) : close;
     seriesRef.current.update({ time, open, high, low, close });
-  }, [latestTick, chartData, chartInterval]);
+  }, [latestTick, chartData, chartInterval, candles]);
 
   useEffect(() => {
     const series = seriesRef.current;
@@ -376,7 +436,9 @@ export function PriceChart() {
 
     const vpData = {
       ...volumeProfile,
-      time: volumeProfile.time as Time,
+      time: toChartTimeLocal(
+        typeof volumeProfile.time === "number" ? volumeProfile.time : Number(volumeProfile.time)
+      ) as Time,
     };
     const primitive = volumeProfilePrimitiveRef.current;
     if (primitive) {
@@ -429,7 +491,7 @@ export function PriceChart() {
     const chart = chartRef.current;
     if (!series || !chart) return;
 
-    if (!orderBlocksEnabled || !orderBlocksForDisplay) {
+    if (!orderBlocksEnabled || !orderBlocksForChart) {
       const primitive = orderBlocksPrimitiveRef.current;
       if (primitive) {
         series.detachPrimitive(primitive);
@@ -439,21 +501,21 @@ export function PriceChart() {
     }
 
     const hasBlocks =
-      (orderBlocksForDisplay.bullish?.length ?? 0) > 0 ||
-      (orderBlocksForDisplay.bearish?.length ?? 0) > 0 ||
-      (orderBlocksForDisplay.bullishBreakers?.length ?? 0) > 0 ||
-      (orderBlocksForDisplay.bearishBreakers?.length ?? 0) > 0;
+      (orderBlocksForChart.bullish?.length ?? 0) > 0 ||
+      (orderBlocksForChart.bearish?.length ?? 0) > 0 ||
+      (orderBlocksForChart.bullishBreakers?.length ?? 0) > 0 ||
+      (orderBlocksForChart.bearishBreakers?.length ?? 0) > 0;
     const primitive = orderBlocksPrimitiveRef.current;
     if (primitive) {
       series.detachPrimitive(primitive);
       orderBlocksPrimitiveRef.current = null;
     }
     if (hasBlocks) {
-      const newPrimitive = new OrderBlocks(chart, series, orderBlocksForDisplay);
+      const newPrimitive = new OrderBlocks(chart, series, orderBlocksForChart);
       series.attachPrimitive(newPrimitive);
       orderBlocksPrimitiveRef.current = newPrimitive;
     }
-  }, [orderBlocksEnabled, orderBlocksForDisplay]);
+  }, [orderBlocksEnabled, orderBlocksForChart]);
 
   useEffect(() => {
     const series = seriesRef.current;
@@ -461,9 +523,9 @@ export function PriceChart() {
 
     const markers =
       strategyMarkersEnabled &&
-      strategySignalsForDisplay?.markers &&
-      strategySignalsForDisplay.markers.length > 0
-        ? strategySignalsForDisplay.markers.map((m) => ({
+      strategySignalsForChart?.markers &&
+      strategySignalsForChart.markers.length > 0
+        ? strategySignalsForChart.markers.map((m) => ({
             time: m.time as Time,
             position: (m.position === "below" ? "belowBar" : "aboveBar") as
               | "belowBar"
@@ -485,14 +547,14 @@ export function PriceChart() {
     if (markers.length === 0 && seriesMarkersRef.current) {
       seriesMarkersRef.current.setMarkers([]);
     }
-  }, [strategyMarkersEnabled, strategySignalsForDisplay?.markers]);
+  }, [strategyMarkersEnabled, strategySignalsForChart?.markers]);
 
   useEffect(() => {
     const series = seriesRef.current;
     const chart = chartRef.current;
     if (!series || !chart) return;
 
-    if (!structureEnabled || !structureForDisplay) {
+    if (!structureEnabled || !structureForChart) {
       const primitive = structurePrimitiveRef.current;
       if (primitive) {
         series.detachPrimitive(primitive);
@@ -502,22 +564,27 @@ export function PriceChart() {
     }
 
     const hasStructure =
-      (structureForDisplay.lines?.length ?? 0) > 0 ||
-      (structureForDisplay.labels?.length ?? 0) > 0 ||
-      (structureForDisplay.swingLabels?.length ?? 0) > 0 ||
-      (structureForDisplay.equalHighsLows?.lines?.length ?? 0) > 0 ||
-      (structureForDisplay.equalHighsLows?.labels?.length ?? 0) > 0;
+      (structureForChart.lines?.length ?? 0) > 0 ||
+      (structureForChart.labels?.length ?? 0) > 0 ||
+      (structureForChart.swingLabels?.length ?? 0) > 0 ||
+      (structureForChart.equalHighsLows?.lines?.length ?? 0) > 0 ||
+      (structureForChart.equalHighsLows?.labels?.length ?? 0) > 0;
+
     const primitive = structurePrimitiveRef.current;
+    if (primitive && hasStructure) {
+      primitive.updateData(structureForChart);
+      return;
+    }
     if (primitive) {
       series.detachPrimitive(primitive);
       structurePrimitiveRef.current = null;
     }
     if (hasStructure) {
-      const newPrimitive = new StructurePrimitive(chart, series, structureForDisplay);
+      const newPrimitive = new StructurePrimitive(chart, series, structureForChart);
       series.attachPrimitive(newPrimitive);
       structurePrimitiveRef.current = newPrimitive;
     }
-  }, [structureEnabled, structureForDisplay]);
+  }, [structureEnabled, structureForChart]);
 
   useEffect(() => {
     const series = seriesRef.current;
@@ -526,8 +593,8 @@ export function PriceChart() {
 
     const showStopLines =
       strategyMarkersEnabled &&
-      strategySignalsForDisplay?.stopLines &&
-      strategySignalsForDisplay.stopLines.length > 0;
+      strategySignalsForChart?.stopLines &&
+      strategySignalsForChart.stopLines.length > 0;
 
     if (!showStopLines) {
       const primitive = strategySignalsPrimitiveRef.current;
@@ -545,11 +612,11 @@ export function PriceChart() {
     const newPrimitive = new StrategySignalsPrimitive(
       chart,
       series,
-      strategySignalsForDisplay
+      strategySignalsForChart
     );
     series.attachPrimitive(newPrimitive);
     strategySignalsPrimitiveRef.current = newPrimitive;
-  }, [strategyMarkersEnabled, strategySignalsForDisplay]);
+  }, [strategyMarkersEnabled, strategySignalsForChart]);
 
   return (
     <div

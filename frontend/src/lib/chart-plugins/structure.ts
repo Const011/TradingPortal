@@ -96,6 +96,7 @@ export class StructurePrimitive implements ISeriesPrimitive<Time> {
   data: SmartMoneyStructureData;
   private _paneViews: StructurePaneView[];
   private _unsubscribe: (() => void) | null = null;
+  private _requestUpdate: (() => void) | null = null;
 
   constructor(
     chart: IChartApi,
@@ -108,16 +109,26 @@ export class StructurePrimitive implements ISeriesPrimitive<Time> {
     this._paneViews = [new StructurePaneView(this)];
   }
 
+  /** Update data and trigger redraw. Use when swingLabelsShow or other display params change. */
+  updateData(data: SmartMoneyStructureData): void {
+    this.data = data;
+    this._requestUpdate?.();
+  }
+
   attached(param: SeriesAttachedParameter<Time>): void {
+    this._requestUpdate = param.requestUpdate;
     const handler = () => param.requestUpdate();
     param.chart.timeScale().subscribeVisibleLogicalRangeChange(handler);
-    this._unsubscribe = () =>
+    this._unsubscribe = () => {
       param.chart.timeScale().unsubscribeVisibleLogicalRangeChange(handler);
+      this._requestUpdate = null;
+    };
   }
 
   detached(): void {
     this._unsubscribe?.();
     this._unsubscribe = null;
+    this._requestUpdate = null;
   }
 
   updateAllViews(): void {}

@@ -42,8 +42,6 @@ export function IndicatorControlPanel() {
     setObShowBull,
     obShowBear,
     setObShowBear,
-    swingLabelsShow,
-    setSwingLabelsShow,
     volumeProfileEnabled,
     setVolumeProfileEnabled,
     volumeProfileWindow,
@@ -108,25 +106,25 @@ export function IndicatorControlPanel() {
           <input
             type="number"
             min={0}
-            max={50}
+            max={150}
             value={obShowBull}
             onChange={(e) => {
               const v = parseInt(e.target.value, 10);
-              if (!Number.isNaN(v) && v >= 0 && v <= 50) setObShowBull(v);
+              if (!Number.isNaN(v) && v >= 0 && v <= 150) setObShowBull(v);
             }}
-            style={{ ...inputStyle, width: 44 }}
+            style={{ ...inputStyle, width: 72 }}
           />
           <span style={{ fontSize: 12, color: "#5f6368" }}>Bear:</span>
           <input
             type="number"
             min={0}
-            max={50}
+            max={150}
             value={obShowBear}
             onChange={(e) => {
               const v = parseInt(e.target.value, 10);
-              if (!Number.isNaN(v) && v >= 0 && v <= 50) setObShowBear(v);
+              if (!Number.isNaN(v) && v >= 0 && v <= 150) setObShowBear(v);
             }}
-            style={{ ...inputStyle, width: 44 }}
+            style={{ ...inputStyle, width: 72 }}
           />
         </label>
       )}
@@ -137,22 +135,6 @@ export function IndicatorControlPanel() {
       >
         Structure
       </button>
-      {structureEnabled && (
-        <label style={{ display: "flex", alignItems: "center", gap: 4 }}>
-          <span style={{ fontSize: 12, color: "#5f6368" }}>Swings:</span>
-          <input
-            type="number"
-            min={0}
-            max={50}
-            value={swingLabelsShow}
-            onChange={(e) => {
-              const v = parseInt(e.target.value, 10);
-              if (!Number.isNaN(v) && v >= 0 && v <= 50) setSwingLabelsShow(v);
-            }}
-            style={{ ...inputStyle, width: 44 }}
-          />
-        </label>
-      )}
       <button
         type="button"
         onClick={() => setCandleColoringEnabled(!candleColoringEnabled)}

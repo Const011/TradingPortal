@@ -84,9 +84,10 @@ class OrderBlocksPaneView implements IPrimitivePaneView {
         const tEnd = ob.endTime;
         const top = ob.top;
         const bottom = ob.bottom;
-        if (ob.breaker && ob.breakTime != null) {
-          addBox(tStart, top, ob.breakTime, bottom, ob.fillColor);
-          addBox(ob.breakTime, top, tEnd, bottom, ob.fillColor);
+        const breakerT = ob.breakerTime ?? ob.breakTime;
+        if (ob.breaker && breakerT != null) {
+          addBox(tStart, top, breakerT, bottom, ob.fillColor);
+          addBox(breakerT, top, tEnd, bottom, ob.fillColor);
         } else {
           addBox(tStart, top, tEnd, bottom, ob.fillColor);
         }

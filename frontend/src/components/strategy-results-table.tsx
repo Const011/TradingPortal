@@ -70,6 +70,7 @@ export function StrategyResultsTable({ summary }: StrategyResultsTableProps) {
           <tr>
             <th style={thStyle}>Entry</th>
             <th style={thStyle}>Type</th>
+            <th style={{ ...thStyle, textAlign: "right" }}>Entry Price</th>
             <th style={thStyle}>Close</th>
             <th style={thStyle}>Close Reason</th>
             <th style={{ ...thStyle, textAlign: "right" }}>Points</th>
@@ -88,6 +89,9 @@ export function StrategyResultsTable({ summary }: StrategyResultsTableProps) {
                 >
                   {t.side.toUpperCase()}
                 </span>
+              </td>
+              <td style={{ ...tdStyle, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
+                {t.entryPrice.toFixed(2)}
               </td>
               <td style={tdStyle}>{formatDateTime(t.closeDateTime)}</td>
               <td style={tdStyle}>{formatCloseReason(t.closeReason)}</td>
@@ -111,7 +115,7 @@ export function StrategyResultsTable({ summary }: StrategyResultsTableProps) {
         {summary.totalPoints.toFixed(2)} pts · Avg:{" "}
         {summary.avgPointsPerTrade >= 0 ? "+" : ""}
         {summary.avgPointsPerTrade.toFixed(2)} pts/trade ({summary.trades.length}{" "}
-        trades)
+        trades) · Win rate: {summary.winRatePercent.toFixed(1)}%
       </div>
     </div>
   );
