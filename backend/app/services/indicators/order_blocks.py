@@ -5,12 +5,11 @@ Crossover detection and entry signals belong in the strategy layer.
 """
 
 from dataclasses import dataclass
+from typing import Any
 
 from app.schemas.market import Candle
 
 DEFAULT_SWING_LENGTH = 20
-DEFAULT_ENTRY_ZONE_MULT = 1.2  # Used by strategy for crossover detection
-DEFAULT_MAX_OB_ENTRY_SIGNALS = 2  # Used by strategy to cap signals per OB
 DEFAULT_SHOW_BULL = 5
 DEFAULT_SHOW_BEAR = 5
 MAX_LOOKBACK = 1000
@@ -71,7 +70,7 @@ def _iter_order_blocks(
     swing_length: int = DEFAULT_SWING_LENGTH,
     use_body: bool = False,
     keep_breakers: bool = True,
-):
+) -> None:
     """
     Generator yielding per-bar OB state. Only computes OBs and marks breakers.
     Yields: (bar_index, candle, bullish_ob_list, bearish_ob_list).
@@ -172,13 +171,201 @@ def _iter_order_blocks(
         yield (i, c, list(bullish_ob), list(bearish_ob))
 
 
+def _iter_order_blocks_from_pivots(
+    candles: list[Candle],
+    swing_pivots: dict[str, list[dict[str, Any]]],
+    *,
+    use_body: bool = False,
+    keep_breakers: bool = True,
+) -> None:
+    """
+    Generator version of pivot-based OB computation.
+
+    Yields the same per-bar state as `_iter_order_blocks`, but uses swing
+    pivots from Smart Money structure instead of running its own swing
+    detection. This is the single source of truth for OB formation logic;
+    `compute_order_blocks` and strategy code should both rely on it.
+    """
+    n = len(candles)
+    if n < 2:
+        return
+
+    highs_by_bar: dict[int, list[float]] = {}
+    lows_by_bar: dict[int, list[float]] = {}
+
+    # Swing highs/lows from structure
+    for p in swing_pivots.get("highs", []):
+        idx = int(p.get("bar_index", -1))
+        price = float(p.get("price", 0.0))
+        if 0 <= idx < n:
+            highs_by_bar.setdefault(idx, []).append(price)
+    for p in swing_pivots.get("lows", []):
+        idx = int(p.get("bar_index", -1))
+        price = float(p.get("price", 0.0))
+        if 0 <= idx < n:
+            lows_by_bar.setdefault(idx, []).append(price)
+
+    # Internal highs/lows from structure (treated as additional pivots to form OBs)
+    for p in swing_pivots.get("internalHighs", []):
+        idx = int(p.get("bar_index", -1))
+        price = float(p.get("price", 0.0))
+        if 0 <= idx < n:
+            highs_by_bar.setdefault(idx, []).append(price)
+    for p in swing_pivots.get("internalLows", []):
+        idx = int(p.get("bar_index", -1))
+        price = float(p.get("price", 0.0))
+        if 0 <= idx < n:
+            lows_by_bar.setdefault(idx, []).append(price)
+
+    bullish_ob: list[OrderBlock] = []
+    bearish_ob: list[OrderBlock] = []
+    swing_top_y: float | None = None
+    swing_top_x: int | None = None
+    swing_btm_y: float | None = None
+    swing_btm_x: int | None = None
+    top_crossed = False
+    btm_crossed = False
+
+    for i in range(n):
+        c = candles[i]
+        h_hi = max(c.open, c.close) if use_body else c.high
+        h_lo = min(c.open, c.close) if use_body else c.low
+
+        # Update active swing pivots from structure at this bar (may be none, one, or many)
+        if i in highs_by_bar:
+            # If multiple highs fall on the same bar, use the most recent one
+            swing_top_y = highs_by_bar[i][-1]
+            swing_top_x = i
+            top_crossed = False
+        if i in lows_by_bar:
+            swing_btm_y = lows_by_bar[i][-1]
+            swing_btm_x = i
+            btm_crossed = False
+
+        close = c.close
+
+        # Bullish OB: form when price breaks *above* swing high (from structure pivots).
+        if (
+            swing_top_y is not None
+            and swing_top_x is not None
+            and close > swing_top_y
+            and not top_crossed
+        ):
+            top_crossed = True
+            start_idx = swing_top_x + 1
+            end_idx = i - 1
+            if end_idx >= start_idx:
+                minima = candles[start_idx].low
+                maxima = candles[start_idx].high
+                loc_bar = start_idx
+                for j in range(start_idx + 1, end_idx + 1):
+                    if candles[j].low < minima:
+                        minima = candles[j].low
+                        maxima = candles[j].high
+                        loc_bar = j
+                bullish_ob.insert(
+                    0,
+                    OrderBlock(
+                        top=maxima,
+                        bottom=minima,
+                        loc=loc_bar,
+                        formation_bar=i,
+                        breaker=False,
+                        break_loc=None,
+                        fill_color=BULL_FILL,
+                    ),
+                )
+
+        # Bearish OB: form when price breaks *below* swing low (from structure pivots).
+        if (
+            swing_btm_y is not None
+            and swing_btm_x is not None
+            and close < swing_btm_y
+            and not btm_crossed
+        ):
+            btm_crossed = True
+            start_idx = swing_btm_x + 1
+            end_idx = i - 1
+            if end_idx >= start_idx:
+                maxima = candles[start_idx].high
+                minima = candles[start_idx].low
+                loc_bar = start_idx
+                for j in range(start_idx + 1, end_idx + 1):
+                    if candles[j].high > maxima:
+                        maxima = candles[j].high
+                        minima = candles[j].low
+                        loc_bar = j
+                bearish_ob.insert(
+                    0,
+                    OrderBlock(
+                        top=maxima,
+                        bottom=minima,
+                        loc=loc_bar,
+                        formation_bar=i,
+                        breaker=False,
+                        break_loc=None,
+                        fill_color=BEAR_FILL,
+                    ),
+                )
+
+        # Mark bullish OBs as breakers when price crosses below (for display)
+        for ob in list(bullish_ob):
+            if not ob.breaker and ob.loc < i:
+                if min(close, c.open) < ob.bottom:
+                    ob.breaker = True
+                    ob.break_loc = i
+            elif not keep_breakers and close > ob.top:
+                bullish_ob.remove(ob)
+
+        # Mark bearish OBs as breakers when price crosses above (for display)
+        for ob in list(bearish_ob):
+            if not ob.breaker and ob.loc < i:
+                if max(close, c.open) > ob.top:
+                    ob.breaker = True
+                    ob.break_loc = i
+            elif not keep_breakers and close < ob.bottom:
+                bearish_ob.remove(ob)
+
+        yield (i, c, list(bullish_ob), list(bearish_ob))
+
+
+def _compute_order_blocks_from_pivots(
+    candles: list[Candle],
+    swing_pivots: dict[str, list[dict[str, Any]]],
+    *,
+    use_body: bool = False,
+    keep_breakers: bool = True,
+) -> tuple[list[OrderBlock], list[OrderBlock]]:
+    """
+    Build order blocks from precomputed swing pivots (from Smart Money structure).
+
+    This is a thin wrapper around `_iter_order_blocks_from_pivots` that
+    returns the final OB lists for graphics. All formation/breaker logic
+    lives in the iterator above so strategy code can reuse it exactly.
+    """
+    bullish_ob: list[OrderBlock] = []
+    bearish_ob: list[OrderBlock] = []
+
+    for _i, _c, bull, bear in _iter_order_blocks_from_pivots(
+        candles,
+        swing_pivots,
+        use_body=use_body,
+        keep_breakers=keep_breakers,
+    ):
+        bullish_ob = bull
+        bearish_ob = bear
+
+    return bullish_ob, bearish_ob
+
+
 def compute_order_blocks(
     candles: list[Candle],
     swing_length: int = DEFAULT_SWING_LENGTH,
     show_bull: int = DEFAULT_SHOW_BULL,
     show_bear: int = DEFAULT_SHOW_BEAR,
     use_body: bool = False,
-    keep_breakers: bool = True,
+    keep_breakers: bool = False,
+    swing_pivots: dict[str, list[dict[str, Any]]] | None = None,
 ) -> dict:
     """
     Compute bullish and bearish order blocks from candle data.
@@ -188,13 +375,23 @@ def compute_order_blocks(
     if len(candles) < swing_length + 2:
         return {"bullish": [], "bearish": [], "bullishBreakers": [], "bearishBreakers": []}
 
-    bullish_ob: list[OrderBlock] = []
-    bearish_ob: list[OrderBlock] = []
-    for _i, _c, bull, bear in _iter_order_blocks(
-        candles, swing_length=swing_length, use_body=use_body, keep_breakers=keep_breakers
-    ):
-        bullish_ob = bull
-        bearish_ob = bear
+    if swing_pivots:
+        bullish_ob, bearish_ob = _compute_order_blocks_from_pivots(
+            candles,
+            swing_pivots,
+            use_body=use_body,
+            keep_breakers=keep_breakers,
+        )
+    else:
+    # bullish_ob: list[OrderBlock] = []
+    # bearish_ob: list[OrderBlock] = []
+    # for _i, _c, bull, bear in _iter_order_blocks(
+    #     candles, swing_length=swing_length, use_body=use_body, keep_breakers=keep_breakers
+    # ):
+    #     bullish_ob = bull
+    #     bearish_ob = bear
+        print ('ERROR: no swings')
+        return {};
 
     n = len(candles)
     # Split into active (not crossed) vs breakers (crossed); keep within MAX_LOOKBACK

@@ -6,11 +6,11 @@ Strategy that generates buy/sell signals based on order blocks, candle trend col
 
 ## 1. Trend Filter (Candle Coloring)
 
-- **Direction constraint:** We only trade in the direction of the current trend.
+- **Direction constraint:** We only trade when **both** swing and internal trend align on the current bar.
 - **Trend source:** Candle coloring (swing × internal trend from Smart Money structure).
-- **Bullish** (green candles) → only **buy** orders.
-- **Bearish** (red candles) → only **sell** orders.
-- No signals against the trend.
+- **Bullish** (bright green = swing bullish AND internal bullish) → only **buy** orders.
+- **Bearish** (bright red = swing bearish AND internal bearish) → only **sell** orders.
+- Mixed colors (swing/internal disagree) do not generate signals.
 
 ---
 
@@ -23,42 +23,35 @@ A **buy** signal can originate from:
 
 Both cases are treated as breakout/continuation above a significant level.
 
-**OB entry limit:** Each order block can generate at most **N** entry signals (default 2). This protects against stale price ranges that produce many signals when price oscillates back and forth. Once an OB has triggered N times, it no longer emits boundary-crossed events.
+**OB entry limit:** Each order block can generate at most **N** actual trade entries (default 2). This protects against stale price ranges when price oscillates back and forth. The cap counts only **confirmed entries** (trades that were opened), not boundary crosses that were considered but not confirmed (e.g. pending signals that lost confirmation, or triggers that were blocked). Boundary-crossed events are emitted freely; the limit is enforced only when opening a position.
 
 ---
 
-## 3. Confirmation (Either/Or)
+## 3. Entry Conditions
 
-A trigger is confirmed only if **one** of the following holds:
+Entry when **both** of the following are true for the last N bars (N = `consecutive_closes`, default 2):
 
-1. **N consecutive closes above the block** — Price closed above the OB/breaker top for N consecutive bars (trigger bar + next bar). N = `consecutive_closes` (default 2).
-2. **Volume spike** — Volume on the crossing bar is **≥ N × volume average**. N = `volume_spike_mult` (default 1.5).
+1. **OB event:** On any of the last N bars, there is an order block boundary cross or breaker event for the OB.
+2. **Volume spike:** On any of the last N bars, there is a bar in the direction of trade (bullish for long, bearish for short) with volume ≥ `volume_spike_mult` × average volume of previous 10 bars (default 1.2).
 
-If neither holds, the signal is not emitted. When confirmation is deferred (pending), it may only complete on the **bar immediately after** the trigger; if that bar does not close beyond the level, the pending signal is discarded.
-
-**Price-beyond-OB requirement:** Even when confirmed, entry is only allowed if price has moved beyond the OB in the correct direction:
-- **Long:** `close > OB top` (price must be above the block).
-- **Short:** `close < OB bottom` (price must be below the block).
-
-This prevents entering when price moved away from the OB in the wrong direction (e.g. shorting when price broke above a bearish OB).
+We watch these conditions over the last N bars; if both are true → entry.
 
 ---
 
 ## 4. Blocking Conditions
 
-Even when a signal is triggered and confirmed, **block** the order if:
+Even when a signal is triggered and confirmed, **block** the order if (each can be enabled/disabled via parameters):
 
-1. **Nearby active opposite OB:** A **strong** (active, non-breaker) opposite OB is too close.  
+1. **Nearby active opposite OB** (`block_opposite_ob_enabled`, default True):  
    - **Long:** Block if active bearish OB below entry (breakers excluded — they act as support when broken).  
    - **Short:** Block if active bullish OB above entry (breakers excluded).  
-   - Distance threshold: `BLOCK_OB_DISTANCE_MULT × width` of the triggering OB.  
-   - `width` = OB top − OB bottom. Default multiplier = 2.
+   - Distance threshold: `block_ob_distance_mult × width` of the triggering OB (default 2).
 
-2. **Strong S/R in direction of trade:**  
+2. **Strong S/R in direction of trade** (`block_sr_enabled`, default True):  
    - **Long:** Block if strong **resistance above** entry (ceiling would cap the move).  
    - **Short:** Block if strong **support below** entry (floor would cap the short).  
    - Strength = line `width` from volume profile S/R (higher = stronger).  
-   - Distance threshold: `BLOCK_SR_DISTANCE_MULT × width`. `min_strength` is a parameter.
+   - Distance threshold: `block_sr_distance_mult × width`. `min_sr_strength` is a parameter.
 
 ---
 
@@ -82,7 +75,7 @@ For a **short** entry: use OB top or above resistance with the same logic revers
 
 When price is above a **higher** level (support line, OB top, or breaker block acting as support):
 
-- **Breakeven (relaxed):** Trail toward position open (entry bar close) when current bar closes above it. No volume spike or consecutive closes required.
+- **Breakeven (relaxed):** Trail toward `entry + 0.1×|entry_bar_close − entry_bar_open|` when current bar closes above that level. No volume spike or consecutive closes required.
 - **Levels considered:** S/R support lines (filtered by `trail_sr_min_strength`), bullish OB tops, bearish breaker bottoms (support when broken), position open, breakeven target (`entry_close + frac × (entry_close − entry_open)`).
 - **Confirmation required** for S/R/OB levels (reduces false moves from noise). Either:
   - **Option A:** One bar with close above the level **and** unusual volume (`volume ≥ N × avg volume`).
@@ -90,7 +83,7 @@ When price is above a **higher** level (support line, OB top, or breaker block a
 - **New stop** = `level − trail_param × (level − previous_stop)`
 - Default `trail_param` = 0.75 (3/4).
 
-For **short**: breakeven when close below entry; levels = S/R resistance, bearish OB bottoms, bullish breaker tops, position open, breakeven target. Confirmation by volume spike (one bar) or N consecutive closes below the level.
+For **short**: breakeven when close below `entry − 0.1×|entry_bar_close − entry_bar_open|`; levels = S/R resistance, bearish OB bottoms, bullish breaker tops, position open, breakeven target. Confirmation by volume spike (one bar) or N consecutive closes below the level.
 
 ---
 
@@ -99,15 +92,19 @@ For **short**: breakeven when close below entry; levels = S/R resistance, bearis
 | Parameter                 | Default | Description                                                |
 |---------------------------|---------|------------------------------------------------------------|
 | `entry_zone_mult`         | 1.2     | Entry zone extends OB boundary by N×OB height (bullish: up from bottom; bearish: down from top) |
-| `volume_spike_mult`       | 1.5     | Volume on crossing bar ≥ N × avg volume for confirmation  |
-| `consecutive_closes`      | 2       | Consecutive closes above block for entry confirmation     |
+| `volume_spike_mult`       | 1.2     | Bar volume ≥ N × avg volume for confirmation              |
+| `volume_confirmation_lookback` | 10 | Bars for volume average (previous N bars)                  |
+| `consecutive_closes`      | 2       | Window size for entry: last N bars checked for OB event + volume spike conditions |
 | `trail_consecutive_closes`  | 2       | Consecutive closes above/below level for trail confirmation|
-| `block_ob_distance_mult`  | 2.0     | Block if bearish OB within N × trigger OB width           |
-| `block_sr_distance_mult`  | 2.0     | Block if strong support within N × trigger OB width       |
+| `block_opposite_ob_enabled` | True   | Enable blocking by nearby opposite OB                     |
+| `block_sr_enabled`         | True   | Enable blocking by strong S/R in direction of trade       |
+| `block_ob_distance_mult`  | 2.0     | Block if opposite OB within N × trigger OB width |
+| `block_sr_distance_mult`  | 2.0     | Block if strong S/R within N × trigger OB width            |
+| `entry_price_range_mult`  | 2.0     | Legacy: previously constrained entry close to N × OB width of OB; currently unused in entry logic |
 | `min_sr_strength`         | 4.0     | Min S/R line width to count as “strong” support            |
 | `trail_sr_min_strength`   | 0.0     | Min S/R line width for trailing levels; 0 = include all    |
 | `trail_param`             | 0.75    | Trailing stop: level − N × (level − prev_stop)             |
-| `max_ob_entry_signals`    | 2       | Max entry signals per OB; prevents stale zones from repeated triggers |
+| `max_ob_entry_signals`    | 2       | Max **actual trade entries** per OB; counts only confirmed trades, not boundary crosses |
 | `atr_length`              | 14      | ATR period for stop cap                                    |
 | `atr_stop_mult`           | 2.0     | Cap initial stop at entry ± N × ATR; 0 = disabled           |
 | `breakeven_body_frac`     | 0.1     | Trail toward entry + N×(close−open); 0 = disabled            |
@@ -130,9 +127,8 @@ For **short**: breakeven when close below entry; levels = S/R resistance, bearis
 
 For **sell** signals:
 
-- Trigger: price touched the **entry zone** (OB top − N×OB height to OB top) and closed below with bearish candle, or crossed below a breaker that acts as resistance. The entry zone extends from the OB upper boundary downward by N×OB height (`entry_zone_mult`). The same OB entry limit (max N signals per OB) applies.
-- Confirmation: N consecutive closes below (trigger bar + next bar), or volume spike on the crossing bar. N = `consecutive_closes`.
-- Price-beyond-OB: `close < OB bottom` (no short when price is above or inside the block).
-- Blocking: nearby active bullish OB (not breaker), strong support below.
+- Trigger: price touched the **entry zone** (OB top − N×OB height to OB top) and closed below with bearish candle, or crossed below a breaker that acts as resistance. The entry zone extends from the OB upper boundary downward by N×OB height (`entry_zone_mult`). The same OB entry limit (max N **actual trades** per OB) applies.
+- Entry: same 2 conditions (OB event and volume spike) over last N bars.
+- Blocking: `block_opposite_ob_enabled`, `block_sr_enabled` (both default True).
 - Initial stop: OB top or above closest resistance with gap/2.
 - Trailing: when price crosses a lower level (resistance, lower OB), move stop down.

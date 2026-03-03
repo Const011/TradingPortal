@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 from app.schemas.market import Candle
 
-DEFAULT_SWING_LENGTH = 50
+DEFAULT_SWING_LENGTH = 20
 INTERNAL_LENGTH = 5
 EQUAL_HL_LENGTH = 5
 ATR_LENGTH = 200
@@ -113,6 +113,12 @@ def compute_structure(
     equal_lines: list[dict] = []
     equal_labels: list[dict] = []
     candle_colors: dict[int, str] = {}
+    # Expose swing and internal pivots so other indicators (e.g. order blocks)
+    # can reuse the exact same structure instead of recomputing their own.
+    swing_high_pivots: list[dict] = []
+    swing_low_pivots: list[dict] = []
+    internal_high_pivots: list[dict] = []
+    internal_low_pivots: list[dict] = []
 
     swing_high = Pivot(price=0.0, bar_idx=-1, crossed=False)
     swing_low = Pivot(price=0.0, bar_idx=-1, crossed=False)
@@ -153,10 +159,12 @@ def compute_structure(
         if sw_leg_changed:
             if sw_leg == 0:
                 new_high = candles[i - swing_length].high
-                swing_high = Pivot(price=new_high, bar_idx=i - swing_length, crossed=False)
+                pivot_bar = i - swing_length
+                swing_high = Pivot(price=new_high, bar_idx=pivot_bar, crossed=False)
+                swing_high_pivots.append({"price": new_high, "bar_index": pivot_bar})
                 if show_swings:
                     tag = "HH" if last_swing_high is None or new_high > last_swing_high else "LH"
-                    t_s = candles[i - swing_length].time // 1000
+                    t_s = candles[pivot_bar].time // 1000
                     swing_labels.append({
                         "type": "label",
                         "time": t_s,
@@ -168,10 +176,12 @@ def compute_structure(
                 last_swing_high = new_high
             else:
                 new_low = candles[i - swing_length].low
-                swing_low = Pivot(price=new_low, bar_idx=i - swing_length, crossed=False)
+                pivot_bar = i - swing_length
+                swing_low = Pivot(price=new_low, bar_idx=pivot_bar, crossed=False)
+                swing_low_pivots.append({"price": new_low, "bar_index": pivot_bar})
                 if show_swings:
                     tag = "LL" if last_swing_low is None or new_low < last_swing_low else "HL"
-                    t_s = candles[i - swing_length].time // 1000
+                    t_s = candles[pivot_bar].time // 1000
                     swing_labels.append({
                         "type": "label",
                         "time": t_s,
@@ -183,16 +193,24 @@ def compute_structure(
                 last_swing_low = new_low
         if int_leg_changed:
             if int_leg == 0:
+                pivot_bar_int = i - INTERNAL_LENGTH
                 internal_high = Pivot(
-                    price=candles[i - INTERNAL_LENGTH].high,
-                    bar_idx=i - INTERNAL_LENGTH,
+                    price=candles[pivot_bar_int].high,
+                    bar_idx=pivot_bar_int,
                     crossed=False,
                 )
+                internal_high_pivots.append(
+                    {"price": internal_high.price, "bar_index": pivot_bar_int}
+                )
             else:
+                pivot_bar_int = i - INTERNAL_LENGTH
                 internal_low = Pivot(
-                    price=candles[i - INTERNAL_LENGTH].low,
-                    bar_idx=i - INTERNAL_LENGTH,
+                    price=candles[pivot_bar_int].low,
+                    bar_idx=pivot_bar_int,
                     crossed=False,
+                )
+                internal_low_pivots.append(
+                    {"price": internal_low.price, "bar_index": pivot_bar_int}
                 )
 
         if show_equal_hl and eq_leg_changed:
@@ -319,6 +337,15 @@ def compute_structure(
         "equalHighsLows": {
             "lines": equal_lines,
             "labels": equal_labels,
+        },
+        # Consumers that need to derive higher-level constructs (e.g. order
+        # blocks) can reuse these pivots instead of running their own swing
+        # detection, ensuring 1:1 alignment with the structure indicator.
+        "swingPivots": {
+            "highs": swing_high_pivots,
+            "lows": swing_low_pivots,
+            "internalHighs": internal_high_pivots,
+            "internalLows": internal_low_pivots,
         },
     }
     if include_candle_colors:

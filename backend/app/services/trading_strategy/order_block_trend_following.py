@@ -1,6 +1,7 @@
 """Order Block Trend-Following strategy. See docs/strategy-order-block-trend-following.md."""
 
 import logging
+from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
@@ -9,51 +10,43 @@ from app.schemas.market import Candle
 logger = logging.getLogger(__name__)
 
 # Temporary debug: log bullish signal steps for bars around 2026-03-02 17:00
-_DEBUG_TS_START = int(datetime(2026, 3, 2, 15, 0, tzinfo=timezone.utc).timestamp() * 1000)
-_DEBUG_TS_END = int(datetime(2026, 3, 2, 19, 0, tzinfo=timezone.utc).timestamp() * 1000)
+_DEBUG_TS_START = int(datetime(2026, 3, 2, 15, 0).timestamp() * 1000)
+_DEBUG_TS_END = int(datetime(2026, 3, 2, 19, 0).timestamp() * 1000)
 
 
 def _ts_human(ts_ms: int) -> str:
-    return datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    return datetime.fromtimestamp(ts_ms / 1000).strftime("%Y-%m-%d %H:%M:%S")
     
 from app.services.indicators.order_blocks import (
-    DEFAULT_ENTRY_ZONE_MULT,
-    DEFAULT_MAX_OB_ENTRY_SIGNALS,
     OrderBlock,
-    _iter_order_blocks,
+    _iter_order_blocks_from_pivots,
 )
 from app.services.trading_strategy.types import TradeEvent, StopSegment
 
 logger = logging.getLogger(__name__)
 
-# Candle colors from smart_money_structure (green = bullish, red = bearish)
-BULLISH_COLORS = {"#22c55e", "#15803d"}
-BEARISH_COLORS = {"#dc2626", "#b91c1c"}
+# Candle colors from smart_money_structure: only when BOTH swing AND internal agree
+# #22c55e = swing bullish + internal bullish; #dc2626 = swing bearish + internal bearish
+BULLISH_COLORS = {"#22c55e"}
+BEARISH_COLORS = {"#dc2626"}
 
 # Default parameters
-DEFAULT_VOLUME_SPIKE_MULT = 1.5
+DEFAULT_ENTRY_ZONE_MULT = 1.0  # Used by strategy for crossover detection
+DEFAULT_MAX_OB_ENTRY_SIGNALS = 3  # Used by strategy to cap actual trade entries per OB (not boundary crosses)
+DEFAULT_ENTRY_PRICE_RANGE_MULT = 2.0  # Used by strategy to check if close is within N×OB width
+
+DEFAULT_VOLUME_SPIKE_MULT = 1.2
+DEFAULT_VOLUME_CONFIRMATION_LOOKBACK = 10  # Bars for volume avg in confirmation (volume > mult × avg)
 DEFAULT_CONSECUTIVE_CLOSES = 2
 DEFAULT_TRAIL_CONSECUTIVE_CLOSES = 2
-DEFAULT_BLOCK_OB_DISTANCE_MULT = 2.0
-DEFAULT_BLOCK_SR_DISTANCE_MULT = 2.0
+DEFAULT_BLOCK_OB_DISTANCE_MULT = 1.0
+DEFAULT_BLOCK_SR_DISTANCE_MULT = 1.0
 DEFAULT_MIN_SR_STRENGTH = 4.0
 DEFAULT_TRAIL_SR_MIN_STRENGTH = 0.0  # Include all S/R for trailing; min_sr_strength only for blocking
-DEFAULT_TRAIL_PARAM = 0.75
+DEFAULT_TRAIL_PARAM = 0.8
 DEFAULT_ATR_LENGTH = 14
 DEFAULT_ATR_STOP_MULT = 2.0
 DEFAULT_BREAKEVEN_BODY_FRAC = 0.1  # Trail toward open + N*(close-open); 0 = disabled
-
-
-@dataclass
-class _PendingSignal:
-    """A trigger awaiting confirmation."""
-
-    bar_index: int
-    event_type: str
-    ob_top: float
-    ob_bottom: float
-    ob_width: float
-    side: str
 
 
 @dataclass
@@ -66,6 +59,18 @@ class _ActivePosition:
     stop_price: float
     trigger_ob_top: float
     trigger_ob_bottom: float
+
+
+@dataclass
+class _EntryCandidate:
+    """Pending entry signal for the current bar (used to support reversals)."""
+
+    side: str
+    ob_top: float
+    ob_bottom: float
+    ob_formation_bar: int
+    stop: float
+    ob_key: tuple[float, float, int]
 
 
 def _is_bullish_trend(candle_colors: dict[int, str] | None, time_ms: int) -> bool:
@@ -321,15 +326,15 @@ def _detect_ob_events(
     bullish_ob: list[OrderBlock],
     bearish_ob: list[OrderBlock],
     entry_zone_mult: float,
-    max_ob_entry_signals: int,
-    ob_signal_counts: dict[tuple[float, float, int], int],
 ) -> list[dict]:
     """
     Detect boundary crosses and breaker-created events for strategy triggers.
     All crossover/entry logic lives in the strategy layer.
+    Event emission is not capped; the strategy caps actual trade entries per OB.
     """
     events: list[dict] = []
     emitted_boundary: set[tuple[float, float, int]] = set()
+    _debug = _DEBUG_TS_START <= c.time <= _DEBUG_TS_END
 
     def ob_key(ob: OrderBlock) -> tuple[float, float, int]:
         return (ob.top, ob.bottom, ob.formation_bar)
@@ -337,95 +342,158 @@ def _detect_ob_events(
     # Bullish: boundary cross and breaker created
     for ob in bullish_ob:
         if not ob.breaker and ob.loc < i:
-            if min(c.close, c.open) < ob.bottom:
-                events.append({"type": "bullish_breaker_created", "ob_top": ob.top, "ob_bottom": ob.bottom, "ob_loc": ob.loc})
+            wick_below = min(c.close, c.open) < ob.bottom
+            if _debug:
+                logger.info(
+                    "[OB_EVENTS] bar=%d BULL ob=[%.1f,%.1f] | current_bar c: min(co,cl)=%.1f ob.bottom=%.1f wick_below=%s",
+                    i, ob.top, ob.bottom, min(c.close, c.open), ob.bottom, wick_below,
+                )
+            if wick_below:
+                if ob.formation_bar == i:
+                    emitted_boundary.add(ob_key(ob))  # Prevent second loop from emitting boundary for this OB
+                events.append({"type": "bullish_breaker_created", "ob_top": ob.top, "ob_bottom": ob.bottom, "ob_loc": ob.loc, "ob_formation_bar": ob.formation_bar})
+                if _debug:
+                    logger.info("[OB_EVENTS] bar=%d BULL ob=[%.1f,%.1f] | EMIT breaker_created (current bar)", i, ob.top, ob.bottom)
             else:
                 ob_height = ob.top - ob.bottom
                 zone_top = ob.bottom + entry_zone_mult * ob_height
                 touched_zone = c.low <= zone_top and c.high >= ob.bottom
                 close_above = c.close > ob.top and c.close > c.open
+                if _debug:
+                    logger.info(
+                        "[OB_EVENTS] bar=%d BULL ob=[%.1f,%.1f] | current_bar: zone_top=%.1f c.low=%.1f c.high=%.1f ob.bottom=%.1f "
+                        "touched_zone=%s | c.close=%.1f ob.top=%.1f c.open=%.1f close_above=%s",
+                        i, ob.top, ob.bottom, zone_top, c.low, c.high, ob.bottom, touched_zone,
+                        c.close, ob.top, c.open, close_above,
+                    )
                 if touched_zone and close_above:
-                    count = ob_signal_counts.get(ob_key(ob), 0)
-                    if count < max_ob_entry_signals:
-                        ob_signal_counts[ob_key(ob)] = count + 1
-                        emitted_boundary.add(ob_key(ob))
-                        events.append({"type": "bullish_boundary_crossed", "ob_top": ob.top, "ob_bottom": ob.bottom, "ob_loc": ob.loc})
-        elif ob.breaker and ob.break_loc == i:
-            events.append({"type": "bullish_breaker_created", "ob_top": ob.top, "ob_bottom": ob.bottom, "ob_loc": ob.loc})
-
-    # When OB is newly created on bar i, check if bar i-1 crossed the zone (the bar that actually crossed before structure break)
-    for ob in bullish_ob:
-        if ob.formation_bar == i and i >= 1 and ob_key(ob) not in emitted_boundary:
-            prev = candles[i - 1]
-            ob_height = ob.top - ob.bottom
-            zone_top = ob.bottom + entry_zone_mult * ob_height
-            touched_zone = prev.low <= zone_top and prev.high >= ob.bottom
-            close_above = prev.close > ob.top and prev.close > prev.open
-            if touched_zone and close_above:
-                count = ob_signal_counts.get(ob_key(ob), 0)
-                if count < max_ob_entry_signals:
-                    ob_signal_counts[ob_key(ob)] = count + 1
                     emitted_boundary.add(ob_key(ob))
-                    events.append({
-                        "type": "bullish_boundary_crossed",
-                        "ob_top": ob.top, "ob_bottom": ob.bottom, "ob_loc": ob.loc,
-                        "trigger_bar": i - 1,  # Use prev bar's OHLC for entry/volume
-                    })
+                    events.append({"type": "bullish_boundary_crossed", "ob_top": ob.top, "ob_bottom": ob.bottom, "ob_loc": ob.loc, "ob_formation_bar": ob.formation_bar})
+                    if _debug:
+                        logger.info("[OB_EVENTS] bar=%d BULL ob=[%.1f,%.1f] | EMIT boundary_crossed (current bar i)", i, ob.top, ob.bottom)
+                elif _debug and not (touched_zone and close_above):
+                    logger.info(
+                        "[OB_EVENTS] bar=%d BULL ob=[%.1f,%.1f] | NO EMIT: touched_zone=%s close_above=%s",
+                        i, ob.top, ob.bottom, touched_zone, close_above,
+                    )
+        elif ob.breaker and ob.break_loc == i:
+            events.append({"type": "bullish_breaker_created", "ob_top": ob.top, "ob_bottom": ob.bottom, "ob_loc": ob.loc, "ob_formation_bar": ob.formation_bar})
+            if _debug:
+                logger.info("[OB_EVENTS] bar=%d BULL ob=[%.1f,%.1f] | EMIT breaker_created (break_loc==i)", i, ob.top, ob.bottom)
+        elif _debug and (ob.loc >= i or (ob.breaker and ob.break_loc != i)):
+            logger.info(
+                "[OB_EVENTS] bar=%d BULL ob=[%.1f,%.1f] | SKIP first loop: ob.loc>=i or (breaker and break_loc!=i)",
+                i, ob.top, ob.bottom,
+            )
+
+    # When OB is newly created on bar i, the current bar is the structure-breaking bar — emit for bar i.
+    # (No previous-bar workaround: structure runs first, so OB forms on same bar as break.)
+    for ob in bullish_ob:
+        if ob.formation_bar == i and ob_key(ob) not in emitted_boundary:
+            emitted_boundary.add(ob_key(ob))
+            events.append({
+                "type": "bullish_boundary_crossed",
+                "ob_top": ob.top, "ob_bottom": ob.bottom, "ob_loc": ob.loc, "ob_formation_bar": ob.formation_bar,
+                "trigger_bar": i,
+            })
+            if _debug:
+                logger.info(
+                    "[OB_EVENTS] bar=%d BULL ob=[%.1f,%.1f] | EMIT boundary_crossed (newly formed, trigger_bar=i)",
+                    i, ob.top, ob.bottom,
+                )
 
     emitted_bearish_boundary: set[tuple[float, float, int]] = set()
 
     # Bearish: boundary cross and breaker created
     for ob in bearish_ob:
         if not ob.breaker and ob.loc < i:
-            if max(c.close, c.open) > ob.top:
-                events.append({"type": "bearish_breaker_created", "ob_top": ob.top, "ob_bottom": ob.bottom, "ob_loc": ob.loc})
+            wick_above = max(c.close, c.open) > ob.top
+            if _debug:
+                logger.info(
+                    "[OB_EVENTS] bar=%d BEAR ob=[%.1f,%.1f] | current_bar c: max(co,cl)=%.1f ob.top=%.1f wick_above=%s",
+                    i, ob.top, ob.bottom, max(c.close, c.open), ob.top, wick_above,
+                )
+            if wick_above:
+                if ob.formation_bar == i:
+                    emitted_bearish_boundary.add(ob_key(ob))  # Prevent second loop from emitting boundary for this OB
+                events.append({"type": "bearish_breaker_created", "ob_top": ob.top, "ob_bottom": ob.bottom, "ob_loc": ob.loc, "ob_formation_bar": ob.formation_bar})
+                if _debug:
+                    logger.info("[OB_EVENTS] bar=%d BEAR ob=[%.1f,%.1f] | EMIT breaker_created (current bar)", i, ob.top, ob.bottom)
             else:
                 ob_height = ob.top - ob.bottom
                 zone_bottom = ob.top - entry_zone_mult * ob_height
                 touched_zone = c.high >= zone_bottom and c.low <= ob.top
                 close_below = c.close < ob.bottom and c.close < c.open
+                if _debug:
+                    logger.info(
+                        "[OB_EVENTS] bar=%d BEAR ob=[%.1f,%.1f] | current_bar: zone_bottom=%.1f c.high=%.1f c.low=%.1f ob.top=%.1f "
+                        "touched_zone=%s | c.close=%.1f ob.bottom=%.1f c.open=%.1f close_below=%s",
+                        i, ob.top, ob.bottom, zone_bottom, c.high, c.low, ob.top, touched_zone,
+                        c.close, ob.bottom, c.open, close_below,
+                    )
                 if touched_zone and close_below:
-                    count = ob_signal_counts.get(ob_key(ob), 0)
-                    if count < max_ob_entry_signals:
-                        ob_signal_counts[ob_key(ob)] = count + 1
-                        emitted_bearish_boundary.add(ob_key(ob))
-                        events.append({"type": "bearish_boundary_crossed", "ob_top": ob.top, "ob_bottom": ob.bottom, "ob_loc": ob.loc})
-        elif ob.breaker and ob.break_loc == i:
-            events.append({"type": "bearish_breaker_created", "ob_top": ob.top, "ob_bottom": ob.bottom, "ob_loc": ob.loc})
-
-    # When bearish OB newly created, check prev bar
-    for ob in bearish_ob:
-        if ob.formation_bar == i and i >= 1 and ob_key(ob) not in emitted_bearish_boundary:
-            prev = candles[i - 1]
-            ob_height = ob.top - ob.bottom
-            zone_bottom = ob.top - entry_zone_mult * ob_height
-            touched_zone = prev.high >= zone_bottom and prev.low <= ob.top
-            close_below = prev.close < ob.bottom and prev.close < prev.open
-            if touched_zone and close_below:
-                count = ob_signal_counts.get(ob_key(ob), 0)
-                if count < max_ob_entry_signals:
-                    ob_signal_counts[ob_key(ob)] = count + 1
                     emitted_bearish_boundary.add(ob_key(ob))
-                    events.append({
-                        "type": "bearish_boundary_crossed",
-                        "ob_top": ob.top, "ob_bottom": ob.bottom, "ob_loc": ob.loc,
-                        "trigger_bar": i - 1,
-                    })
+                    events.append({"type": "bearish_boundary_crossed", "ob_top": ob.top, "ob_bottom": ob.bottom, "ob_loc": ob.loc, "ob_formation_bar": ob.formation_bar})
+                    if _debug:
+                        logger.info("[OB_EVENTS] bar=%d BEAR ob=[%.1f,%.1f] | EMIT boundary_crossed (current bar i)", i, ob.top, ob.bottom)
+                elif _debug and not (touched_zone and close_below):
+                    logger.info(
+                        "[OB_EVENTS] bar=%d BEAR ob=[%.1f,%.1f] | NO EMIT: touched_zone=%s close_below=%s",
+                        i, ob.top, ob.bottom, touched_zone, close_below,
+                    )
+        elif ob.breaker and ob.break_loc == i:
+            events.append({"type": "bearish_breaker_created", "ob_top": ob.top, "ob_bottom": ob.bottom, "ob_loc": ob.loc, "ob_formation_bar": ob.formation_bar})
+            if _debug:
+                logger.info("[OB_EVENTS] bar=%d BEAR ob=[%.1f,%.1f] | EMIT breaker_created (break_loc==i)", i, ob.top, ob.bottom)
+        elif _debug and (ob.loc >= i or (ob.breaker and ob.break_loc != i)):
+            logger.info(
+                "[OB_EVENTS] bar=%d BEAR ob=[%.1f,%.1f] | SKIP first loop: ob.loc>=i or (breaker and break_loc!=i)",
+                i, ob.top, ob.bottom,
+            )
+
+    # When bearish OB newly created, emit for current bar (structure-breaking bar).
+    for ob in bearish_ob:
+        if ob.formation_bar == i and ob_key(ob) not in emitted_bearish_boundary:
+            emitted_bearish_boundary.add(ob_key(ob))
+            events.append({
+                "type": "bearish_boundary_crossed",
+                "ob_top": ob.top, "ob_bottom": ob.bottom, "ob_loc": ob.loc, "ob_formation_bar": ob.formation_bar,
+                "trigger_bar": i,
+            })
+            if _debug:
+                logger.info(
+                    "[OB_EVENTS] bar=%d BEAR ob=[%.1f,%.1f] | EMIT boundary_crossed (newly formed, trigger_bar=i)",
+                    i, ob.top, ob.bottom,
+                )
+
+    if _debug and events:
+        for ev in events:
+            trigger_bar = ev.get("trigger_bar", i)
+            logger.info(
+                "[OB_EVENTS] bar=%d time=%s | RESULT: %s ob=[%.1f,%.1f] trigger_bar=%s (i=%d)",
+                i, _ts_human(c.time), ev["type"], ev["ob_top"], ev["ob_bottom"],
+                trigger_bar, i,
+            )
 
     return events
 
 
 def compute_order_block_trend_following(
     candles: list[Candle],
+    swing_pivots: dict[str, list[dict]],
     candle_colors: dict[int, str] | None = None,
     sr_lines: list[dict] | None = None,
     *,
     entry_zone_mult: float = DEFAULT_ENTRY_ZONE_MULT,  # from order_blocks
     volume_spike_mult: float = DEFAULT_VOLUME_SPIKE_MULT,
+    volume_confirmation_lookback: int = DEFAULT_VOLUME_CONFIRMATION_LOOKBACK,
     consecutive_closes: int = DEFAULT_CONSECUTIVE_CLOSES,
     trail_consecutive_closes: int = DEFAULT_TRAIL_CONSECUTIVE_CLOSES,
+    block_opposite_ob_enabled: bool = False,
+    block_sr_enabled: bool = False,
     block_ob_distance_mult: float = DEFAULT_BLOCK_OB_DISTANCE_MULT,
     block_sr_distance_mult: float = DEFAULT_BLOCK_SR_DISTANCE_MULT,
+    entry_price_range_mult: float = DEFAULT_ENTRY_PRICE_RANGE_MULT,  # Legacy: no longer used in entry logic
     min_sr_strength: float = DEFAULT_MIN_SR_STRENGTH,
     trail_sr_min_strength: float = DEFAULT_TRAIL_SR_MIN_STRENGTH,
     trail_param: float = DEFAULT_TRAIL_PARAM,
@@ -444,286 +512,242 @@ def compute_order_block_trend_following(
     sr_lines = sr_lines or []
     events: list[TradeEvent] = []
     stop_segments: list[StopSegment] = []
-    pending_long: _PendingSignal | None = None
-    pending_short: _PendingSignal | None = None
     position: _ActivePosition | None = None
     vol_lookback = 20
-    ob_signal_counts: dict[tuple[float, float, int], int] = {}
+    ob_entry_counts: dict[tuple[float, float, int], int] = {}  # Count actual trades per OB, not crosses
+    events_history: deque[tuple[int, list[dict]]] = deque(maxlen=consecutive_closes)
 
-    for i, c, bullish_ob, bearish_ob in _iter_order_blocks(candles):
+    # Use the same pivot-based OB engine as the indicator, driven by Smart Money
+    # structure pivots passed in from `compute_structure`. This ensures the
+    # strategy sees exactly the same OB topology as the graphics layer.
+    for i, c, bullish_ob, bearish_ob in _iter_order_blocks_from_pivots(
+        candles,
+        swing_pivots,
+        keep_breakers=True,
+    ):
         raw_events = _detect_ob_events(
             i, c, candles, bullish_ob, bearish_ob,
             entry_zone_mult=entry_zone_mult,
-            max_ob_entry_signals=max_ob_entry_signals,
-            ob_signal_counts=ob_signal_counts,
         )
+        events_history.append((i, raw_events))
         time_s = c.time // 1000
         vol_avg = _volume_average(candles, vol_lookback, i + 1)
         is_bull = _is_bullish_trend(candle_colors, c.time)
         is_bear = _is_bearish_trend(candle_colors, c.time)
+        _debug = _DEBUG_TS_START <= c.time <= _DEBUG_TS_END
+        if _debug and raw_events:
+            logger.info(
+                "[OB_STRAT] bar=%d time=%s | raw_events=%d types=%s",
+                i, _ts_human(c.time), len(raw_events), [e["type"] for e in raw_events],
+            )
 
-        # --- Debug: log raw events and state when triggers present ---
-        # if raw_events:
-        #     ev_types = [e["type"] for e in raw_events]
-        #     logger.info(
-        #         "[OB_STRAT] bar=%d time=%d | raw_events=%s | position=%s | is_bull=%s is_bear=%s | "
-        #         "ohlc=(%.1f,%.1f,%.1f,%.1f) vol=%.1f vol_avg=%.1f",
-        #         i, time_s, ev_types,
-        #         f"{position.side}@{position.entry_price}" if position else None,
-        #         is_bull, is_bear,
-        #         c.open, c.high, c.low, c.close, c.volume, vol_avg,
-        #     )
-
-        # --- Check pending confirmation (only on bar N+1; "two consecutive closes" = trigger bar + next bar) ---
-        if pending_long and is_bull and not position and i == pending_long.bar_index + 1:
-            if c.close > pending_long.ob_top:
-                # Confirmed: 2nd consecutive close above
-                ob_width = pending_long.ob_width
-                entry = c.close
-                # Blocking
-                bear_ob_closest = _get_closest_bearish_ob_below(bearish_ob, entry, active_only=True)
-                if bear_ob_closest is not None:
-                    dist_to_bear = entry - bear_ob_closest
-                    if dist_to_bear < block_ob_distance_mult * ob_width:
-                        pending_long = None
-                        continue
-                resistance = _get_closest_resistance_above(sr_lines, entry, min_sr_strength)
-                if resistance is not None:
-                    dist_to_sr = resistance[0] - entry
-                    if dist_to_sr < block_sr_distance_mult * ob_width:
-                        pending_long = None
-                        continue
-                stop = _compute_initial_stop_long(
-                    pending_long.ob_bottom,
-                    sr_lines,
-                    entry,
-                    min_sr_strength,
-                    candles=candles,
-                    bar_index=i,
-                    atr_length=atr_length,
-                    atr_stop_mult=atr_stop_mult,
+        # --- New 4-condition entry: all must hold over last N bars ---
+        if _debug and not (len(events_history) >= consecutive_closes and position is None):
+            if len(events_history) < consecutive_closes:
+                logger.info(
+                    "[OB_STRAT] bar=%d time=%s | SKIP entry window: len_history=%d < consecutive_closes=%d",
+                    i, _ts_human(c.time), len(events_history), consecutive_closes,
                 )
-                events.append(
-                    TradeEvent(
-                        time=time_s,
-                        bar_index=i,
-                        type="OB_TREND_BUY",
-                        side="long",
-                        price=entry,
-                        target_price=None,
-                        initial_stop_price=stop,
-                        context={
-                            "ob_top": pending_long.ob_top,
-                            "ob_bottom": pending_long.ob_bottom,
-                            "trigger": pending_long.event_type,
-                        },
+            elif position is not None:
+                logger.info(
+                    "[OB_STRAT] bar=%d time=%s | SKIP entry window: position open (side=%s)",
+                    i, _ts_human(c.time), position.side if position else "?",
+                )
+        if len(events_history) >= consecutive_closes and position is None:
+            if _debug:
+                logger.info(
+                    "[OB_STRAT] bar=%d time=%s | entry window check: len_history=%d position=%s",
+                    i, _ts_human(c.time), len(events_history), position,
+                )
+            # Collect OBs that had events in the last N bars
+            bullish_obs: set[tuple[float, float, int]] = set()
+            bearish_obs: set[tuple[float, float, int]] = set()
+            for bar_idx, ev_list in events_history:
+                for ev in ev_list:
+                    t = ev["type"]
+                    ob_top, ob_bottom = ev["ob_top"], ev["ob_bottom"]
+                    ob_formation_bar = ev.get("ob_formation_bar", bar_idx)
+                    ob_key = (ob_top, ob_bottom, ob_formation_bar)
+                    if t in ("bullish_boundary_crossed", "bullish_breaker_created"):
+                        bullish_obs.add(ob_key)
+                    elif t in ("bearish_boundary_crossed", "bearish_breaker_created"):
+                        bearish_obs.add(ob_key)
+            if _debug:
+                logger.info(
+                    "[OB_STRAT] bar=%d time=%s | OBs in history: bullish=%d bearish=%d",
+                    i, _ts_human(c.time), len(bullish_obs), len(bearish_obs),
+                )
+
+            def _cond2_vol_spike(bar_idx: int, side: str) -> bool:
+                cj = candles[bar_idx]
+                vol_avg_j = _volume_average(candles, volume_confirmation_lookback, bar_idx + 1)
+                if vol_avg_j <= 0:
+                    return False
+                if side == "long":
+                    return cj.close > cj.open and cj.volume >= volume_spike_mult * vol_avg_j
+                return cj.close < cj.open and cj.volume >= volume_spike_mult * vol_avg_j
+
+            for ob_top, ob_bottom, ob_formation_bar in bullish_obs:
+                ob_key = (ob_top, ob_bottom, ob_formation_bar)
+                if ob_entry_counts.get(ob_key, 0) >= max_ob_entry_signals:
+                    if _debug:
+                        logger.info(
+                            "[OB_STRAT_LONG] bar=%d time=%s ob=[%.1f,%.1f] | SKIP: entry cap (count=%d >= %d)",
+                            i, _ts_human(c.time), ob_top, ob_bottom,
+                            ob_entry_counts.get(ob_key, 0), max_ob_entry_signals,
+                        )
+                    continue
+                ob_width = ob_top - ob_bottom
+                c1 = True  # OB event in history
+                c2_bars = [bar_idx for bar_idx, _ in events_history if _cond2_vol_spike(bar_idx, "long")]
+                c2 = len(c2_bars) > 0
+                if _debug:
+                    logger.info(
+                        "[OB_STRAT_LONG] bar=%d time=%s ob=[%.1f,%.1f] | c1=%s c2=%s (vol_spike_bars=%s) close=%.1f",
+                        i, _ts_human(c.time), ob_top, ob_bottom,
+                        c1, c2, c2_bars, c.close,
                     )
-                )
-                position = _ActivePosition(
-                    side="long",
-                    entry_price=entry,
-                    entry_bar=i,
-                    stop_price=stop,
-                    trigger_ob_top=pending_long.ob_top,
-                    trigger_ob_bottom=pending_long.ob_bottom,
-                )
-                stop_segments.append(
-                    StopSegment(start_time=time_s, end_time=time_s, price=stop, side="long")
-                )
-                pending_long = None  # Consumed by entry
-            else:
-                pending_long = None  # Lost confirmation
-        else:
-            pending_long = None
-        if pending_short and is_bear and not position and i == pending_short.bar_index + 1:
-            if c.close < pending_short.ob_bottom:
-                ob_width = pending_short.ob_width
-                entry = c.close
-                bull_ob_closest = _get_closest_bullish_ob_above(bullish_ob, entry, active_only=True)
-                if bull_ob_closest is not None:
-                    dist_to_bull = bull_ob_closest - entry
-                    if dist_to_bull < block_ob_distance_mult * ob_width:
-                        pending_short = None
-                        continue
-                support = _get_closest_support_below(sr_lines, entry, min_sr_strength)
-                if support is not None:
-                    dist_to_sr = entry - support[0]
-                    if dist_to_sr < block_sr_distance_mult * ob_width:
-                        pending_short = None
-                        continue
-                stop = _compute_initial_stop_short(
-                    pending_short.ob_top,
-                    sr_lines,
-                    entry,
-                    min_sr_strength,
-                    candles=candles,
-                    bar_index=i,
-                    atr_length=atr_length,
-                    atr_stop_mult=atr_stop_mult,
-                )
-                events.append(
-                    TradeEvent(
-                        time=time_s,
-                        bar_index=i,
-                        type="OB_TREND_SELL",
-                        side="short",
-                        price=entry,
-                        target_price=None,
-                        initial_stop_price=stop,
-                        context={
-                            "ob_top": pending_short.ob_top,
-                            "ob_bottom": pending_short.ob_bottom,
-                            "trigger": pending_short.event_type,
-                        },
-                    )
-                )
-                # logger.info(
-                #     "[OB_STRAT] ENTRY SHORT (pending) bar=%d time=%d price=%.1f stop=%.1f ob=[%.1f,%.1f] trigger=%s",
-                #     i, time_s, entry, stop, pending_short.ob_top, pending_short.ob_bottom, pending_short.event_type,
-                # )
-                position = _ActivePosition(
-                    side="short",
-                    entry_price=entry,
-                    entry_bar=i,
-                    stop_price=stop,
-                    trigger_ob_top=pending_short.ob_top,
-                    trigger_ob_bottom=pending_short.ob_bottom,
-                )
-                stop_segments.append(
-                    StopSegment(start_time=time_s, end_time=time_s, price=stop, side="short")
-                )
-                pending_short = None  # Consumed by entry
-            else:
-                pending_short = None
-        else:
-            pending_short = None
-
-        # --- Process raw events (triggers) ---
-        for ev in raw_events:
-            t = ev["type"]
-            ob_top, ob_bottom = ev["ob_top"], ev["ob_bottom"]
-            ob_width = ob_top - ob_bottom
-            # When OB created on bar i, trigger may be bar i-1 (the crossing bar)
-            trigger_bar = ev.get("trigger_bar", i)
-            trigger_c = candles[trigger_bar]
-
-            if t in ("bullish_boundary_crossed", "bullish_breaker_created") and is_bull and not position:
-                # Buy trigger: use trigger bar for volume/entry when it's the crossing bar
-                confirmed = False
-                vol_avg_trigger = _volume_average(candles, vol_lookback, trigger_bar + 1)
-                vol_spike_ok = vol_avg_trigger > 0 and trigger_c.volume >= volume_spike_mult * vol_avg_trigger
-                consec_ok = trigger_bar >= 1 and candles[trigger_bar - 1].close > ob_top and trigger_c.close > ob_top
-                if vol_spike_ok:
-                    confirmed = True
-                if consec_ok:
-                    confirmed = True
-
-                if confirmed:
-                    entry = trigger_c.close
-                    if entry <= ob_top:
-                        continue  # Price must be above OB for long
-                    bear_ob_closest = _get_closest_bearish_ob_below(bearish_ob, entry)
-                    bear_blocked = bear_ob_closest is not None and (entry - bear_ob_closest) < block_ob_distance_mult * ob_width
-                    if bear_blocked:
-                        continue
-                    support = _get_closest_support_below(sr_lines, entry, min_sr_strength)
-                    sr_blocked = support is not None and (entry - support[0]) < block_sr_distance_mult * ob_width
-                    if sr_blocked:
-                        continue
-                    trigger_time_s = trigger_c.time // 1000
+                if c1 and c2:
+                    entry = c.close
+                    if block_opposite_ob_enabled:
+                        bear_ob_closest = _get_closest_bearish_ob_below(bearish_ob, entry, active_only=True)
+                        dist_to_bear = (entry - bear_ob_closest) if bear_ob_closest is not None else None
+                        blocked_bear = bear_ob_closest is not None and (entry - bear_ob_closest) < block_ob_distance_mult * ob_width
+                        if _debug:
+                            logger.info(
+                                "[OB_STRAT_LONG] bar=%d time=%s | block_opposite_ob: bear_closest=%s dist=%s threshold=%.1f blocked=%s",
+                                i, _ts_human(c.time),
+                                "%.1f" % bear_ob_closest if bear_ob_closest is not None else "None",
+                                "%.1f" % dist_to_bear if dist_to_bear is not None else "N/A",
+                                block_ob_distance_mult * ob_width, blocked_bear,
+                            )
+                        if blocked_bear:
+                            continue
+                    if block_sr_enabled:
+                        resistance = _get_closest_resistance_above(sr_lines, entry, min_sr_strength)
+                        dist_to_res = (resistance[0] - entry) if resistance is not None else None
+                        blocked_sr = resistance is not None and (resistance[0] - entry) < block_sr_distance_mult * ob_width
+                        if _debug:
+                            logger.info(
+                                "[OB_STRAT_LONG] bar=%d time=%s | block_sr: resistance=%s dist=%s threshold=%.1f blocked=%s",
+                                i, _ts_human(c.time),
+                                "%.1f" % resistance[0] if resistance is not None else "None",
+                                "%.1f" % dist_to_res if dist_to_res is not None else "N/A",
+                                block_sr_distance_mult * ob_width, blocked_sr,
+                            )
+                        if blocked_sr:
+                            continue
+                    if _debug:
+                        logger.info(
+                            "[OB_STRAT_LONG] bar=%d time=%s | ENTRY LONG ob=[%.1f,%.1f] price=%.1f",
+                            i, _ts_human(c.time), ob_top, ob_bottom, entry,
+                        )
                     stop = _compute_initial_stop_long(
-                        ob_bottom,
-                        sr_lines,
-                        entry,
-                        min_sr_strength,
-                        candles=candles,
-                        bar_index=trigger_bar,
-                        atr_length=atr_length,
-                        atr_stop_mult=atr_stop_mult,
+                        ob_bottom, sr_lines, entry, min_sr_strength,
+                        candles=candles, bar_index=i, atr_length=atr_length, atr_stop_mult=atr_stop_mult,
                     )
                     events.append(
                         TradeEvent(
-                            time=trigger_time_s,
-                            bar_index=trigger_bar,
-                            type="OB_TREND_BUY",
-                            side="long",
-                            price=entry,
-                            target_price=None,
-                            initial_stop_price=stop,
-                            context={"ob_top": ob_top, "ob_bottom": ob_bottom, "trigger": t},
-                        )
-                    )
-
-                    position = _ActivePosition(
-                        side="long", entry_price=entry, entry_bar=trigger_bar,
-                        stop_price=stop, trigger_ob_top=ob_top, trigger_ob_bottom=ob_bottom,
-                    )
-                    stop_segments.append(StopSegment(start_time=trigger_time_s, end_time=trigger_time_s, price=stop, side="long"))
-                else:
-                    pending_long = _PendingSignal(
-                        bar_index=trigger_bar, event_type=t, ob_top=ob_top, ob_bottom=ob_bottom, ob_width=ob_width, side="long"
-                    )
-
-            elif t in ("bearish_boundary_crossed", "bearish_breaker_created") and is_bear and not position:
-                # Sell trigger: use trigger bar for volume/entry when it's the crossing bar
-                confirmed = False
-                vol_avg_trigger = _volume_average(candles, vol_lookback, trigger_bar + 1)
-                if vol_avg_trigger > 0 and trigger_c.volume >= volume_spike_mult * vol_avg_trigger:
-                    confirmed = True
-                if trigger_bar >= 1 and candles[trigger_bar - 1].close < ob_bottom and trigger_c.close < ob_bottom:
-                    confirmed = True
-                if confirmed:
-                    entry = trigger_c.close
-                    if entry >= ob_bottom:
-                        continue  # Price must be below OB for short
-                    bull_ob_closest = _get_closest_bullish_ob_above(bullish_ob, entry, active_only=True)
-                    if bull_ob_closest is not None and (bull_ob_closest - entry) < block_ob_distance_mult * ob_width:
-                        continue
-                    support = _get_closest_support_below(sr_lines, entry, min_sr_strength)
-                    if support is not None and (entry - support[0]) < block_sr_distance_mult * ob_width:
-                        continue
-                    trigger_time_s = trigger_c.time // 1000
-                    stop = _compute_initial_stop_short(
-                        ob_top,
-                        sr_lines,
-                        entry,
-                        min_sr_strength,
-                        candles=candles,
-                        bar_index=trigger_bar,
-                        atr_length=atr_length,
-                        atr_stop_mult=atr_stop_mult,
-                    )
-                    events.append(
-                        TradeEvent(
-                            time=trigger_time_s,
-                            bar_index=trigger_bar,
-                            type="OB_TREND_SELL",
-                            side="short",
-                            price=entry,
-                            target_price=None,
-                            initial_stop_price=stop,
-                            context={"ob_top": ob_top, "ob_bottom": ob_bottom, "trigger": t},
+                            time=time_s, bar_index=i, type="OB_TREND_BUY", side="long",
+                            price=entry, target_price=None, initial_stop_price=stop,
+                            context={"ob_top": ob_top, "ob_bottom": ob_bottom, "trigger": "entry_window"},
                         )
                     )
                     position = _ActivePosition(
-                        side="short", entry_price=entry, entry_bar=trigger_bar,
+                        side="long", entry_price=entry, entry_bar=i,
                         stop_price=stop, trigger_ob_top=ob_top, trigger_ob_bottom=ob_bottom,
                     )
-                    stop_segments.append(StopSegment(start_time=trigger_time_s, end_time=trigger_time_s, price=stop, side="short"))
-                else:
-                    pending_short = _PendingSignal(
-                        bar_index=trigger_bar, event_type=t, ob_top=ob_top, ob_bottom=ob_bottom, ob_width=ob_width, side="short"
-                    )
+                    stop_segments.append(StopSegment(start_time=time_s, end_time=time_s, price=stop, side="long"))
+                    ob_entry_counts[ob_key] = ob_entry_counts.get(ob_key, 0) + 1
+                    break  # One entry per bar
+
+            if position is None:
+                for ob_top, ob_bottom, ob_formation_bar in bearish_obs:
+                    ob_key = (ob_top, ob_bottom, ob_formation_bar)
+                    if ob_entry_counts.get(ob_key, 0) >= max_ob_entry_signals:
+                        if _debug:
+                            logger.info(
+                                "[OB_STRAT_SHORT] bar=%d time=%s ob=[%.1f,%.1f] | SKIP: entry cap (count=%d >= %d)",
+                                i, _ts_human(c.time), ob_top, ob_bottom,
+                                ob_entry_counts.get(ob_key, 0), max_ob_entry_signals,
+                            )
+                        continue
+                    ob_width = ob_top - ob_bottom
+                    c1 = True
+                    c2_bars = [bar_idx for bar_idx, _ in events_history if _cond2_vol_spike(bar_idx, "short")]
+                    c2 = len(c2_bars) > 0
+                    if _debug:
+                        logger.info(
+                            "[OB_STRAT_SHORT] bar=%d time=%s ob=[%.1f,%.1f] | c1=%s c2=%s (vol_spike_bars=%s) close=%.1f",
+                            i, _ts_human(c.time), ob_top, ob_bottom,
+                            c1, c2, c2_bars, c.close,
+                        )
+                    if c1 and c2:
+                        entry = c.close
+                        if block_opposite_ob_enabled:
+                            bull_ob_closest = _get_closest_bullish_ob_above(bullish_ob, entry, active_only=True)
+                            dist_to_bull = (bull_ob_closest - entry) if bull_ob_closest is not None else None
+                            blocked_bull = bull_ob_closest is not None and (bull_ob_closest - entry) < block_ob_distance_mult * ob_width
+                            if _debug:
+                                logger.info(
+                                    "[OB_STRAT_SHORT] bar=%d time=%s | block_opposite_ob: bull_closest=%s dist=%s threshold=%.1f blocked=%s",
+                                    i, _ts_human(c.time),
+                                    "%.1f" % bull_ob_closest if bull_ob_closest is not None else "None",
+                                    "%.1f" % dist_to_bull if dist_to_bull is not None else "N/A",
+                                    block_ob_distance_mult * ob_width, blocked_bull,
+                                )
+                            if blocked_bull:
+                                continue
+                        if block_sr_enabled:
+                            support = _get_closest_support_below(sr_lines, entry, min_sr_strength)
+                            dist_to_sup = (entry - support[0]) if support is not None else None
+                            blocked_sr = support is not None and (entry - support[0]) < block_sr_distance_mult * ob_width
+                            if _debug:
+                                logger.info(
+                                    "[OB_STRAT_SHORT] bar=%d time=%s | block_sr: support=%s dist=%s threshold=%.1f blocked=%s",
+                                    i, _ts_human(c.time),
+                                    "%.1f" % support[0] if support is not None else "None",
+                                    "%.1f" % dist_to_sup if dist_to_sup is not None else "N/A",
+                                    block_sr_distance_mult * ob_width, blocked_sr,
+                                )
+                            if blocked_sr:
+                                continue
+                        if _debug:
+                            logger.info(
+                                "[OB_STRAT_SHORT] bar=%d time=%s | ENTRY SHORT ob=[%.1f,%.1f] price=%.1f",
+                                i, _ts_human(c.time), ob_top, ob_bottom, entry,
+                            )
+                        stop = _compute_initial_stop_short(
+                            ob_top, sr_lines, entry, min_sr_strength,
+                            candles=candles, bar_index=i, atr_length=atr_length, atr_stop_mult=atr_stop_mult,
+                        )
+                        events.append(
+                            TradeEvent(
+                                time=time_s, bar_index=i, type="OB_TREND_SELL", side="short",
+                                price=entry, target_price=None, initial_stop_price=stop,
+                                context={"ob_top": ob_top, "ob_bottom": ob_bottom, "trigger": "entry_window"},
+                            )
+                        )
+                        position = _ActivePosition(
+                            side="short", entry_price=entry, entry_bar=i,
+                            stop_price=stop, trigger_ob_top=ob_top, trigger_ob_bottom=ob_bottom,
+                        )
+                        stop_segments.append(StopSegment(start_time=time_s, end_time=time_s, price=stop, side="short"))
+                        ob_entry_counts[ob_key] = ob_entry_counts.get(ob_key, 0) + 1
+                        break
 
         # --- Trailing stop for active position ---
         # Position open price = entry bar close (we enter on bar close when conditions met)
         if position and prev_candle is not None:
             if position.side == "long":
-                # Breakeven: trail toward entry (position open = entry bar close) with relaxed confirmation
-                # (1 bar close above entry is enough; no volume/consecutive required)
-                if position.entry_price > position.stop_price and c.close > position.entry_price:
-                    new_stop = position.entry_price - trail_param * (
-                        position.entry_price - position.stop_price
+                # Breakeven: trail toward entry + 0.1×entry_bar_body when close above that level
+                breakeven_target_long = position.entry_price
+                if 0 <= position.entry_bar < len(candles):
+                    ec = candles[position.entry_bar]
+                    breakeven_target_long = position.entry_price + breakeven_body_frac * abs(ec.close - ec.open)
+                if position.entry_price > position.stop_price and c.close > breakeven_target_long:
+                    new_stop = breakeven_target_long - trail_param * (
+                        breakeven_target_long - position.stop_price
                     )
                     if new_stop > position.stop_price:
                         position.stop_price = new_stop
@@ -766,16 +790,16 @@ def compute_order_block_trend_following(
                         start_time=last.start_time, end_time=time_s, price=position.stop_price, side="long"
                     )
                 if c.low <= position.stop_price:
-                    # logger.info(
-                    #     "[OB_STRAT] STOP HIT (long) bar=%d time=%d low=%.1f stop=%.1f",
-                    #     i, time_s, c.low, position.stop_price,
-                    # )
                     position = None
             else:
-                # Breakeven: trail toward entry (position open = entry bar close) with relaxed confirmation
-                if position.entry_price < position.stop_price and c.close < position.entry_price:
-                    new_stop = position.entry_price + trail_param * (
-                        position.stop_price - position.entry_price
+                # Breakeven: trail toward entry - 0.1×entry_bar_body when close below that level
+                breakeven_target_short = position.entry_price
+                if 0 <= position.entry_bar < len(candles):
+                    ec = candles[position.entry_bar]
+                    breakeven_target_short = position.entry_price - breakeven_body_frac * abs(ec.close - ec.open)
+                if position.entry_price < position.stop_price and c.close < breakeven_target_short:
+                    new_stop = breakeven_target_short + trail_param * (
+                        position.stop_price - breakeven_target_short
                     )
                     if new_stop < position.stop_price:
                         position.stop_price = new_stop

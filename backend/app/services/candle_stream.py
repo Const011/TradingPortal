@@ -226,9 +226,19 @@ def _make_snapshot_payload(
         "candles": [c.model_dump() for c in candles],
     }
     if candles:
-        ob_result = compute_order_blocks(candles, show_bull=0, show_bear=0)
+        # Structure must run first so swing pivots are established before order blocks form.
+        # Order blocks now reuse the exact same swing pivots from structure instead
+        # of recomputing their own swings, ensuring 1:1 alignment between the
+        # Smart Money structure indicator and OB zones.
         structure_result = compute_structure(
-            candles, include_candle_colors=True
+            candles,
+            include_candle_colors=True,
+        )
+        ob_result = compute_order_blocks(
+            candles,
+            show_bull=0,
+            show_bear=0,
+            swing_pivots=structure_result.get("swingPivots") or {},
         )
         graphics: dict = {
             "orderBlocks": ob_result,
@@ -247,6 +257,7 @@ def _make_snapshot_payload(
             if strategy_markers in ("simulation", "trade"):
                 trade_events, stop_segments = compute_order_block_trend_following(
                     candles,
+                    structure_result.get("swingPivots") or {},
                     candle_colors=structure_result.get("candleColors"),
                     sr_lines=sr_lines,
                 )
