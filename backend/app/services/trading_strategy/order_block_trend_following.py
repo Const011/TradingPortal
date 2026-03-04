@@ -541,19 +541,13 @@ def compute_order_block_trend_following(
                 i, _ts_human(c.time), len(raw_events), [e["type"] for e in raw_events],
             )
 
-        # --- New 4-condition entry: all must hold over last N bars ---
-        if _debug and not (len(events_history) >= consecutive_closes and position is None):
-            if len(events_history) < consecutive_closes:
-                logger.info(
-                    "[OB_STRAT] bar=%d time=%s | SKIP entry window: len_history=%d < consecutive_closes=%d",
-                    i, _ts_human(c.time), len(events_history), consecutive_closes,
-                )
-            elif position is not None:
-                logger.info(
-                    "[OB_STRAT] bar=%d time=%s | SKIP entry window: position open (side=%s)",
-                    i, _ts_human(c.time), position.side if position else "?",
-                )
-        if len(events_history) >= consecutive_closes and position is None:
+        # --- Entry window: OB + volume over last N bars; allow reversal (close + open opposite). ---
+        if _debug and len(events_history) < consecutive_closes:
+            logger.info(
+                "[OB_STRAT] bar=%d time=%s | SKIP entry window: len_history=%d < consecutive_closes=%d",
+                i, _ts_human(c.time), len(events_history), consecutive_closes,
+            )
+        if len(events_history) >= consecutive_closes:
             if _debug:
                 logger.info(
                     "[OB_STRAT] bar=%d time=%s | entry window check: len_history=%d position=%s",
@@ -587,6 +581,9 @@ def compute_order_block_trend_following(
                     return cj.close > cj.open and cj.volume >= volume_spike_mult * vol_avg_j
                 return cj.close < cj.open and cj.volume >= volume_spike_mult * vol_avg_j
 
+            long_candidate: _EntryCandidate | None = None
+            short_candidate: _EntryCandidate | None = None
+
             for ob_top, ob_bottom, ob_formation_bar in bullish_obs:
                 ob_key = (ob_top, ob_bottom, ob_formation_bar)
                 if ob_entry_counts.get(ob_key, 0) >= max_ob_entry_signals:
@@ -607,134 +604,217 @@ def compute_order_block_trend_following(
                         i, _ts_human(c.time), ob_top, ob_bottom,
                         c1, c2, c2_bars, c.close,
                     )
-                if c1 and c2:
-                    entry = c.close
-                    if block_opposite_ob_enabled:
-                        bear_ob_closest = _get_closest_bearish_ob_below(bearish_ob, entry, active_only=True)
-                        dist_to_bear = (entry - bear_ob_closest) if bear_ob_closest is not None else None
-                        blocked_bear = bear_ob_closest is not None and (entry - bear_ob_closest) < block_ob_distance_mult * ob_width
-                        if _debug:
-                            logger.info(
-                                "[OB_STRAT_LONG] bar=%d time=%s | block_opposite_ob: bear_closest=%s dist=%s threshold=%.1f blocked=%s",
-                                i, _ts_human(c.time),
-                                "%.1f" % bear_ob_closest if bear_ob_closest is not None else "None",
-                                "%.1f" % dist_to_bear if dist_to_bear is not None else "N/A",
-                                block_ob_distance_mult * ob_width, blocked_bear,
-                            )
-                        if blocked_bear:
-                            continue
-                    if block_sr_enabled:
-                        resistance = _get_closest_resistance_above(sr_lines, entry, min_sr_strength)
-                        dist_to_res = (resistance[0] - entry) if resistance is not None else None
-                        blocked_sr = resistance is not None and (resistance[0] - entry) < block_sr_distance_mult * ob_width
-                        if _debug:
-                            logger.info(
-                                "[OB_STRAT_LONG] bar=%d time=%s | block_sr: resistance=%s dist=%s threshold=%.1f blocked=%s",
-                                i, _ts_human(c.time),
-                                "%.1f" % resistance[0] if resistance is not None else "None",
-                                "%.1f" % dist_to_res if dist_to_res is not None else "N/A",
-                                block_sr_distance_mult * ob_width, blocked_sr,
-                            )
-                        if blocked_sr:
-                            continue
+                if not (c1 and c2):
+                    continue
+                entry = c.close
+                if block_opposite_ob_enabled:
+                    bear_ob_closest = _get_closest_bearish_ob_below(bearish_ob, entry, active_only=True)
+                    dist_to_bear = (entry - bear_ob_closest) if bear_ob_closest is not None else None
+                    blocked_bear = bear_ob_closest is not None and (entry - bear_ob_closest) < block_ob_distance_mult * ob_width
                     if _debug:
                         logger.info(
-                            "[OB_STRAT_LONG] bar=%d time=%s | ENTRY LONG ob=[%.1f,%.1f] price=%.1f",
-                            i, _ts_human(c.time), ob_top, ob_bottom, entry,
+                            "[OB_STRAT_LONG] bar=%d time=%s | block_opposite_ob: bear_closest=%s dist=%s threshold=%.1f blocked=%s",
+                            i, _ts_human(c.time),
+                            "%.1f" % bear_ob_closest if bear_ob_closest is not None else "None",
+                            "%.1f" % dist_to_bear if dist_to_bear is not None else "N/A",
+                            block_ob_distance_mult * ob_width, blocked_bear,
                         )
-                    stop = _compute_initial_stop_long(
-                        ob_bottom, sr_lines, entry, min_sr_strength,
-                        candles=candles, bar_index=i, atr_length=atr_length, atr_stop_mult=atr_stop_mult,
+                    if blocked_bear:
+                        continue
+                if block_sr_enabled:
+                    resistance = _get_closest_resistance_above(sr_lines, entry, min_sr_strength)
+                    dist_to_res = (resistance[0] - entry) if resistance is not None else None
+                    blocked_sr = resistance is not None and (resistance[0] - entry) < block_sr_distance_mult * ob_width
+                    if _debug:
+                        logger.info(
+                            "[OB_STRAT_LONG] bar=%d time=%s | block_sr: resistance=%s dist=%s threshold=%.1f blocked=%s",
+                            i, _ts_human(c.time),
+                            "%.1f" % resistance[0] if resistance is not None else "None",
+                            "%.1f" % dist_to_res if dist_to_res is not None else "N/A",
+                            block_sr_distance_mult * ob_width, blocked_sr,
+                        )
+                    if blocked_sr:
+                        continue
+                stop = _compute_initial_stop_long(
+                    ob_bottom, sr_lines, entry, min_sr_strength,
+                    candles=candles, bar_index=i, atr_length=atr_length, atr_stop_mult=atr_stop_mult,
+                )
+                long_candidate = _EntryCandidate(
+                    side="long",
+                    ob_top=ob_top,
+                    ob_bottom=ob_bottom,
+                    ob_formation_bar=ob_formation_bar,
+                    stop=stop,
+                    ob_key=ob_key,
+                )
+                break
+
+            for ob_top, ob_bottom, ob_formation_bar in bearish_obs:
+                ob_key = (ob_top, ob_bottom, ob_formation_bar)
+                if ob_entry_counts.get(ob_key, 0) >= max_ob_entry_signals:
+                    if _debug:
+                        logger.info(
+                            "[OB_STRAT_SHORT] bar=%d time=%s ob=[%.1f,%.1f] | SKIP: entry cap (count=%d >= %d)",
+                            i, _ts_human(c.time), ob_top, ob_bottom,
+                            ob_entry_counts.get(ob_key, 0), max_ob_entry_signals,
+                        )
+                    continue
+                ob_width = ob_top - ob_bottom
+                c1 = True
+                c2_bars = [bar_idx for bar_idx, _ in events_history if _cond2_vol_spike(bar_idx, "short")]
+                c2 = len(c2_bars) > 0
+                if _debug:
+                    logger.info(
+                        "[OB_STRAT_SHORT] bar=%d time=%s ob=[%.1f,%.1f] | c1=%s c2=%s (vol_spike_bars=%s) close=%.1f",
+                        i, _ts_human(c.time), ob_top, ob_bottom,
+                        c1, c2, c2_bars, c.close,
                     )
+                if not (c1 and c2):
+                    continue
+                entry = c.close
+                if block_opposite_ob_enabled:
+                    bull_ob_closest = _get_closest_bullish_ob_above(bullish_ob, entry, active_only=True)
+                    dist_to_bull = (bull_ob_closest - entry) if bull_ob_closest is not None else None
+                    blocked_bull = bull_ob_closest is not None and (bull_ob_closest - entry) < block_ob_distance_mult * ob_width
+                    if _debug:
+                        logger.info(
+                            "[OB_STRAT_SHORT] bar=%d time=%s | block_opposite_ob: bull_closest=%s dist=%s threshold=%.1f blocked=%s",
+                            i, _ts_human(c.time),
+                            "%.1f" % bull_ob_closest if bull_ob_closest is not None else "None",
+                            "%.1f" % dist_to_bull if dist_to_bull is not None else "N/A",
+                            block_ob_distance_mult * ob_width, blocked_bull,
+                        )
+                    if blocked_bull:
+                        continue
+                if block_sr_enabled:
+                    support = _get_closest_support_below(sr_lines, entry, min_sr_strength)
+                    dist_to_sup = (entry - support[0]) if support is not None else None
+                    blocked_sr = support is not None and (entry - support[0]) < block_sr_distance_mult * ob_width
+                    if _debug:
+                        logger.info(
+                            "[OB_STRAT_SHORT] bar=%d time=%s | block_sr: support=%s dist=%s threshold=%.1f blocked=%s",
+                            i, _ts_human(c.time),
+                            "%.1f" % support[0] if support is not None else "None",
+                            "%.1f" % dist_to_sup if dist_to_sup is not None else "N/A",
+                            block_sr_distance_mult * ob_width, blocked_sr,
+                        )
+                    if blocked_sr:
+                        continue
+                stop = _compute_initial_stop_short(
+                    ob_top, sr_lines, entry, min_sr_strength,
+                    candles=candles, bar_index=i, atr_length=atr_length, atr_stop_mult=atr_stop_mult,
+                )
+                short_candidate = _EntryCandidate(
+                    side="short",
+                    ob_top=ob_top,
+                    ob_bottom=ob_bottom,
+                    ob_formation_bar=ob_formation_bar,
+                    stop=stop,
+                    ob_key=ob_key,
+                )
+                break
+
+            # Apply entry or reversal: flat -> open one side; in position -> reverse if opposite signal.
+            current_side = position.side if position is not None else None
+
+            def _open_from_candidate(candidate: _EntryCandidate) -> None:
+                nonlocal position
+                entry_price = c.close
+                if candidate.side == "long":
+                    if _debug:
+                        logger.info(
+                            "[OB_STRAT_LONG] bar=%d time=%s | ENTRY LONG ob=[%.1f,%.1f] price=%.1f (reversal_from=%s)",
+                            i, _ts_human(c.time), candidate.ob_top, candidate.ob_bottom, entry_price, current_side,
+                        )
                     events.append(
                         TradeEvent(
-                            time=time_s, bar_index=i, type="OB_TREND_BUY", side="long",
-                            price=entry, target_price=None, initial_stop_price=stop,
-                            context={"ob_top": ob_top, "ob_bottom": ob_bottom, "trigger": "entry_window"},
+                            time=time_s,
+                            bar_index=i,
+                            type="OB_TREND_BUY",
+                            side="long",
+                            price=entry_price,
+                            target_price=None,
+                            initial_stop_price=candidate.stop,
+                            context={
+                                "ob_top": candidate.ob_top,
+                                "ob_bottom": candidate.ob_bottom,
+                                "trigger": "entry_window",
+                                "reversal_from": current_side,
+                            },
                         )
                     )
                     position = _ActivePosition(
-                        side="long", entry_price=entry, entry_bar=i,
-                        stop_price=stop, trigger_ob_top=ob_top, trigger_ob_bottom=ob_bottom,
+                        side="long",
+                        entry_price=entry_price,
+                        entry_bar=i,
+                        stop_price=candidate.stop,
+                        trigger_ob_top=candidate.ob_top,
+                        trigger_ob_bottom=candidate.ob_bottom,
                     )
-                    stop_segments.append(StopSegment(start_time=time_s, end_time=time_s, price=stop, side="long"))
-                    ob_entry_counts[ob_key] = ob_entry_counts.get(ob_key, 0) + 1
-                    break  # One entry per bar
-
-            if position is None:
-                for ob_top, ob_bottom, ob_formation_bar in bearish_obs:
-                    ob_key = (ob_top, ob_bottom, ob_formation_bar)
-                    if ob_entry_counts.get(ob_key, 0) >= max_ob_entry_signals:
-                        if _debug:
-                            logger.info(
-                                "[OB_STRAT_SHORT] bar=%d time=%s ob=[%.1f,%.1f] | SKIP: entry cap (count=%d >= %d)",
-                                i, _ts_human(c.time), ob_top, ob_bottom,
-                                ob_entry_counts.get(ob_key, 0), max_ob_entry_signals,
-                            )
-                        continue
-                    ob_width = ob_top - ob_bottom
-                    c1 = True
-                    c2_bars = [bar_idx for bar_idx, _ in events_history if _cond2_vol_spike(bar_idx, "short")]
-                    c2 = len(c2_bars) > 0
+                    stop_segments.append(
+                        StopSegment(start_time=time_s, end_time=time_s, price=candidate.stop, side="long")
+                    )
+                else:
                     if _debug:
                         logger.info(
-                            "[OB_STRAT_SHORT] bar=%d time=%s ob=[%.1f,%.1f] | c1=%s c2=%s (vol_spike_bars=%s) close=%.1f",
-                            i, _ts_human(c.time), ob_top, ob_bottom,
-                            c1, c2, c2_bars, c.close,
+                            "[OB_STRAT_SHORT] bar=%d time=%s | ENTRY SHORT ob=[%.1f,%.1f] price=%.1f (reversal_from=%s)",
+                            i, _ts_human(c.time), candidate.ob_top, candidate.ob_bottom, entry_price, current_side,
                         )
-                    if c1 and c2:
-                        entry = c.close
-                        if block_opposite_ob_enabled:
-                            bull_ob_closest = _get_closest_bullish_ob_above(bullish_ob, entry, active_only=True)
-                            dist_to_bull = (bull_ob_closest - entry) if bull_ob_closest is not None else None
-                            blocked_bull = bull_ob_closest is not None and (bull_ob_closest - entry) < block_ob_distance_mult * ob_width
-                            if _debug:
-                                logger.info(
-                                    "[OB_STRAT_SHORT] bar=%d time=%s | block_opposite_ob: bull_closest=%s dist=%s threshold=%.1f blocked=%s",
-                                    i, _ts_human(c.time),
-                                    "%.1f" % bull_ob_closest if bull_ob_closest is not None else "None",
-                                    "%.1f" % dist_to_bull if dist_to_bull is not None else "N/A",
-                                    block_ob_distance_mult * ob_width, blocked_bull,
-                                )
-                            if blocked_bull:
-                                continue
-                        if block_sr_enabled:
-                            support = _get_closest_support_below(sr_lines, entry, min_sr_strength)
-                            dist_to_sup = (entry - support[0]) if support is not None else None
-                            blocked_sr = support is not None and (entry - support[0]) < block_sr_distance_mult * ob_width
-                            if _debug:
-                                logger.info(
-                                    "[OB_STRAT_SHORT] bar=%d time=%s | block_sr: support=%s dist=%s threshold=%.1f blocked=%s",
-                                    i, _ts_human(c.time),
-                                    "%.1f" % support[0] if support is not None else "None",
-                                    "%.1f" % dist_to_sup if dist_to_sup is not None else "N/A",
-                                    block_sr_distance_mult * ob_width, blocked_sr,
-                                )
-                            if blocked_sr:
-                                continue
-                        if _debug:
-                            logger.info(
-                                "[OB_STRAT_SHORT] bar=%d time=%s | ENTRY SHORT ob=[%.1f,%.1f] price=%.1f",
-                                i, _ts_human(c.time), ob_top, ob_bottom, entry,
-                            )
-                        stop = _compute_initial_stop_short(
-                            ob_top, sr_lines, entry, min_sr_strength,
-                            candles=candles, bar_index=i, atr_length=atr_length, atr_stop_mult=atr_stop_mult,
+                    events.append(
+                        TradeEvent(
+                            time=time_s,
+                            bar_index=i,
+                            type="OB_TREND_SELL",
+                            side="short",
+                            price=entry_price,
+                            target_price=None,
+                            initial_stop_price=candidate.stop,
+                            context={
+                                "ob_top": candidate.ob_top,
+                                "ob_bottom": candidate.ob_bottom,
+                                "trigger": "entry_window",
+                                "reversal_from": current_side,
+                            },
                         )
-                        events.append(
-                            TradeEvent(
-                                time=time_s, bar_index=i, type="OB_TREND_SELL", side="short",
-                                price=entry, target_price=None, initial_stop_price=stop,
-                                context={"ob_top": ob_top, "ob_bottom": ob_bottom, "trigger": "entry_window"},
-                            )
-                        )
-                        position = _ActivePosition(
-                            side="short", entry_price=entry, entry_bar=i,
-                            stop_price=stop, trigger_ob_top=ob_top, trigger_ob_bottom=ob_bottom,
-                        )
-                        stop_segments.append(StopSegment(start_time=time_s, end_time=time_s, price=stop, side="short"))
-                        ob_entry_counts[ob_key] = ob_entry_counts.get(ob_key, 0) + 1
-                        break
+                    )
+                    position = _ActivePosition(
+                        side="short",
+                        entry_price=entry_price,
+                        entry_bar=i,
+                        stop_price=candidate.stop,
+                        trigger_ob_top=candidate.ob_top,
+                        trigger_ob_bottom=candidate.ob_bottom,
+                    )
+                    stop_segments.append(
+                        StopSegment(start_time=time_s, end_time=time_s, price=candidate.stop, side="short")
+                    )
+                ob_entry_counts[candidate.ob_key] = ob_entry_counts.get(candidate.ob_key, 0) + 1
+
+            if current_side is None:
+                chosen: _EntryCandidate | None = None
+                if long_candidate and not short_candidate:
+                    chosen = long_candidate
+                elif short_candidate and not long_candidate:
+                    chosen = short_candidate
+                elif long_candidate and short_candidate:
+                    if is_bull and not is_bear:
+                        chosen = long_candidate
+                    elif is_bear and not is_bull:
+                        chosen = short_candidate
+                    else:
+                        chosen = long_candidate
+                if chosen is not None:
+                    _open_from_candidate(chosen)
+            elif current_side == "long" and short_candidate is not None:
+                if _debug:
+                    logger.info("[OB_STRAT] bar=%d time=%s | REVERSAL long→short", i, _ts_human(c.time))
+                position = None
+                _open_from_candidate(short_candidate)
+            elif current_side == "short" and long_candidate is not None:
+                if _debug:
+                    logger.info("[OB_STRAT] bar=%d time=%s | REVERSAL short→long", i, _ts_human(c.time))
+                position = None
+                _open_from_candidate(long_candidate)
 
         # --- Trailing stop for active position ---
         # Position open price = entry bar close (we enter on bar close when conditions met)

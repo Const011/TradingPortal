@@ -36,6 +36,8 @@ Entry when **both** of the following are true for the last N bars (N = `consecut
 
 We watch these conditions over the last N bars; if both are true → entry.
 
+**Reversal:** If a position is already open and the **opposite** direction’s entry conditions are met on the current bar, the strategy **closes the open position and opens in the reverse direction** on the same bar (close price). Only one position is held at a time; a new long (short) signal while flat opens long (short); a new short (long) signal while long (short) reverses to short (long).
+
 ---
 
 ## 4. Blocking Conditions
@@ -128,7 +130,7 @@ For **short**: breakeven when close below `entry − 0.1×|entry_bar_close − e
 For **sell** signals:
 
 - Trigger: price touched the **entry zone** (OB top − N×OB height to OB top) and closed below with bearish candle, or crossed below a breaker that acts as resistance. The entry zone extends from the OB upper boundary downward by N×OB height (`entry_zone_mult`). The same OB entry limit (max N **actual trades** per OB) applies.
-- Entry: same 2 conditions (OB event and volume spike) over last N bars.
+- Entry: same 2 conditions (OB event and volume spike) over last N bars. Reversal (long→short or short→long) on opposite signal applies as in Section 3.
 - Blocking: `block_opposite_ob_enabled`, `block_sr_enabled` (both default True).
 - Initial stop: OB top or above closest resistance with gap/2.
 - Trailing: when price crosses a lower level (resistance, lower OB), move stop down.
