@@ -32,10 +32,10 @@ BEARISH_COLORS = {"#dc2626"}
 
 # Default parameters
 DEFAULT_ENTRY_ZONE_MULT = 1.0  # Used by strategy for crossover detection
-DEFAULT_MAX_OB_ENTRY_SIGNALS = 3  # Used by strategy to cap actual trade entries per OB (not boundary crosses)
-DEFAULT_ENTRY_PRICE_RANGE_MULT = 2.0  # Used by strategy to check if close is within N×OB width
+DEFAULT_MAX_OB_ENTRY_SIGNALS = 2  # Used by strategy to cap actual trade entries per OB (not boundary crosses)
+DEFAULT_ENTRY_PRICE_RANGE_MULT = 1.5  # Used by strategy to check if close is within N×OB width
 
-DEFAULT_VOLUME_SPIKE_MULT = 1.2
+DEFAULT_VOLUME_SPIKE_MULT = 1.5
 DEFAULT_VOLUME_CONFIRMATION_LOOKBACK = 10  # Bars for volume avg in confirmation (volume > mult × avg)
 DEFAULT_CONSECUTIVE_CLOSES = 2
 DEFAULT_TRAIL_CONSECUTIVE_CLOSES = 2
