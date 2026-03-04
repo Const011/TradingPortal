@@ -64,9 +64,10 @@ For a **long** entry:
 - **Option A:** OB bottom of the triggering block.
 - **Option B:** Below the closest support line, with gap = `(entry_price − support_price) / 2`.
 
-- **Mandatory:** Stop cannot be higher than `entry_candle.low − 1` (must be below the bar's low).
 
-Choose the **higher** of the two (closer to entry, tighter risk). The ATR cap further tightens when the structural stop would be very wide.
+Choose the **higher** of the two (closer to entry, tighter risk). The ATR cap further tightens when the structural stop would be very wide.\
+
+- **Mandatory:** Stop cannot be higher than `entry_candle.low − 1` (must be below the bar's low).
 
 For a **short** entry: use OB top or above resistance with the same logic reversed. ATR cap: `entry + atr_stop_mult × ATR`. **Mandatory:** Stop cannot be lower than `entry_candle.high + 1` (must be above the bar's high).
 ---
