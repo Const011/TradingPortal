@@ -17,6 +17,8 @@ class Settings(BaseSettings):
     bybit_rest_base_url: str = "https://api.bybit.com"
     bybit_ws_public_spot_url: str = "wss://stream.bybit.com/v5/public/spot"
     bybit_ws_public_linear_url: str = "wss://stream.bybit.com/v5/public/linear"
+    # Trading market: "spot" or "linear" (linear = USDT perpetuals).
+    market: Literal["spot", "linear"] = "spot"
     cors_origins: list[str] = Field(default_factory=_default_cors_origins)
 
     # Simulation: 9000. Trading: 9001, 9002, ... (one per ticker/timeframe)

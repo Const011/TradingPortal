@@ -102,6 +102,22 @@ To avoid unstable early complexity, v1 must prioritize safety, observability, an
 - **Why:** Extensible output format; frontend maps each type to LWC drawing; volume profile remains optimized for its use case; new primitives (boxes, labels, vertical lines) can be added without changing VP.
 - **Consequence:** Stream payload has `graphics: { volumeProfile, supportResistance: { lines } }`. Frontend consumes `graphics.volumeProfile` and `graphics.supportResistance.lines`; draws VP as before and S/R as horizontal line primitives.
 
+### D16: Exchange Execution via Dedicated Execution Service + BybitClient (Spot v1)
+
+- **Decision:** All live Spot order placement, cancellation, and reconciliation flow through a dedicated **Execution Service** that wraps Bybit v5 Spot REST via `BybitClient`. Trading Strategy emits abstract `TradeEvent` objects only; it never calls Bybit directly.
+- **Why:** Keeps strategy logic pure and testable, centralizes signing, retry and idempotency logic, and provides a single audited layer for all order/position side effects.
+- **Consequence:**
+  - `BybitClient` is extended with authenticated helpers for:
+    - `POST /v5/order/create` (place Spot orders).
+    - `POST /v5/order/cancel` (cancel Spot orders).
+    - `GET /v5/order/realtime` (query open orders).
+    - `GET /v5/account/wallet-balance` (account balances for synthetic position computation).
+  - Execution Service maps `TradeEvent` → `OrderIntent` → Bybit requests; it:
+    - Persists `OrderIntent` and order lifecycle transitions.
+    - Maintains local `current.json` open-position state per trading gateway.
+    - Implements **logical stops** (stop levels tracked locally, closed via opposite-side market orders) instead of relying on native Spot stop orders in v1.
+  - A scheduled reconciliation job compares `current.json` against Bybit balances/open orders and raises drift flags; this directly supports FR-2/FR-3 state consistency goals.
+
 ## Alternatives Considered
 
 - **Microservices from day one:** rejected for early operational complexity.

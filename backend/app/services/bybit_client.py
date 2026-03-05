@@ -11,10 +11,22 @@ from app.schemas.market import BarUpdate, Candle, SymbolInfo, TickerSnapshot, Ti
 class BybitClient:
     """Client for Bybit REST and WebSocket APIs. All methods communicate with Bybit."""
 
+    def _market_category(self) -> str:
+        """Return Bybit category based on app-level market setting."""
+        return "spot" if settings.market == "spot" else "linear"
+
+    def _ws_public_url(self) -> str:
+        """Return correct public WS URL for current market."""
+        return (
+            settings.bybit_ws_public_spot_url
+            if settings.market == "spot"
+            else settings.bybit_ws_public_linear_url
+        )
+
     async def list_spot_symbols(self) -> list[SymbolInfo]:
-        """[Bybit] REST GET /v5/market/instruments-info. Returns tradable spot symbols."""
+        """[Bybit] REST GET /v5/market/instruments-info. Returns tradable symbols for current market."""
         url = f"{settings.bybit_rest_base_url}/v5/market/instruments-info"
-        params = {"category": "spot"}
+        params = {"category": self._market_category()}
         async with httpx.AsyncClient(timeout=15.0) as client:
             response = await client.get(url, params=params)
             response.raise_for_status()
@@ -35,7 +47,7 @@ class BybitClient:
     async def get_tickers(self, symbols: list[str] | None = None) -> list[TickerSnapshot]:
         """[Bybit] REST GET /v5/market/tickers. Returns 24h snapshots for ticker list."""
         url = f"{settings.bybit_rest_base_url}/v5/market/tickers"
-        params = {"category": "spot"}
+        params = {"category": self._market_category()}
         async with httpx.AsyncClient(timeout=15.0) as client:
             response = await client.get(url, params=params)
             response.raise_for_status()
@@ -61,7 +73,7 @@ class BybitClient:
         """[Bybit] WebSocket tickers.{symbol}. Streams lastPrice, volume24h, change%.
         For ticker list only; do not use for chart bar updates."""
         topic = f"tickers.{symbol}"
-        async with websockets.connect(settings.bybit_ws_public_spot_url) as connection:
+        async with websockets.connect(self._ws_public_url()) as connection:
             subscribe_message = json.dumps({"op": "subscribe", "args": [topic]})
             await connection.send(subscribe_message)
 
@@ -99,7 +111,7 @@ class BybitClient:
             batch_limit = min(remaining, BYBIT_MAX)
             url = f"{settings.bybit_rest_base_url}/v5/market/kline"
             params: dict = {
-                "category": "spot",
+                "category": self._market_category(),
                 "symbol": symbol,
                 "interval": interval,
                 "limit": batch_limit,
@@ -135,9 +147,9 @@ class BybitClient:
         self, symbol: str, interval: str
     ) -> AsyncGenerator[BarUpdate, None]:
         """[Bybit] WebSocket kline.{interval}.{symbol}. Streams current bar OHLCV updates.
-        confirm=false while bar is open; confirm=true when closed. Uses spot stream."""
+        confirm=false while bar is open; confirm=true when closed. Uses market-specific stream."""
         topic = f"kline.{interval}.{symbol}"
-        async with websockets.connect(settings.bybit_ws_public_spot_url) as connection:
+        async with websockets.connect(self._ws_public_url()) as connection:
             subscribe_message = json.dumps({"op": "subscribe", "args": [topic]})
             await connection.send(subscribe_message)
 

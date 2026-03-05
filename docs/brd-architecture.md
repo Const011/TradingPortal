@@ -79,11 +79,82 @@ This document is intentionally scoped to **Spot trading only** for v1 to reduce 
 - Persist all order lifecycle transitions (new, partially filled, filled, canceled, rejected).
 - Use idempotency keys to avoid duplicate order placement during retries.
 
+#### FR-2.a: Bybit Spot Trading API Integration (v1)
+
+For v1 we integrate Bybit **v5 Spot REST** trading endpoints via an extended `BybitClient` and a dedicated **Execution Service**:
+
+- **Private REST wiring**
+  - Add authenticated helpers to `BybitClient` for signed private requests (API key/secret from `settings`), including timestamp, recvWindow, and signature.
+  - Implement thin wrappers over:
+    - `POST /v5/order/create` (place Spot orders; `category=spot`).
+    - `POST /v5/order/cancel` (cancel specific Spot order; `category=spot`).
+    - `GET /v5/order/realtime` (query open orders; `category=spot`).
+    - `GET /v5/account/wallet-balance` or equivalent Spot account endpoint (for balances used to synthesize positions).
+
+- **Execution Service responsibilities**
+  - Accept normalized `OrderIntent` from the Trading Strategy / gateway (symbol, side, qty, optional limit price, intended stop level).
+  - Map `OrderIntent` → Bybit request:
+    - Spot **entry**: `POST /v5/order/create` with `orderType="Market"` or `"Limit"`, `category="spot"`, `symbol`, `qty`, optional `price`, and `orderLinkId` = idempotency key.
+    - **Stop management**: v1 keeps stop levels **locally** (in trade log + `current.json`) and closes via a separate exit order when hit, rather than native exchange stop orders.
+  - Persist:
+    - `OrderIntent` (pre-submission).
+    - Bybit order acknowledgements and status updates (new, partial, filled, canceled, rejected).
+
+- **Position / trade state reconciliation**
+  - Periodic job (and on gateway start) will:
+    1. Read open positions from the trade log’s `current.json` (local source of truth for strategy-level positions).
+    2. Call `BybitClient` to fetch:
+       - Spot account balances (`GET /v5/account/wallet-balance` or similar).
+       - Open Spot orders (`GET /v5/order/realtime`).
+    3. Compute **synthetic Spot positions** from balances and compare to `current.json`:
+       - Flag drift (e.g. local open position but zero exchange quantity, or vice versa).
+       - Optionally write reconciliation markers into the trade log / monitoring.
+    4. Surface reconciliation status to the UI (e.g. “Exchange vs local positions: in sync / drifted”).
+
+#### FR-2.b: Close-Position Semantics (v1)
+
+- **Open position with stop (entry + intended stop)**
+  - Strategy emits `TradeEvent` with `initial_stop_price`.
+  - Gateway converts `TradeEvent` to `OrderIntent` (side, qty, entry price, stop level).
+  - Execution Service:
+    - Places entry order via `POST /v5/order/create`.
+    - On fill (or immediate market execution), records a local **position** in `current.json` including:
+      - `side`, `entryPrice`, `qty`, `initialStopPrice`, `symbol`, `tradeId`.
+    - No native exchange stop is placed in v1; the **effective stop** is held in our state.
+
+- **Stop hit / position close**
+  - Candle stream + strategy are still responsible for detecting when price touches the effective stop level.
+  - When a stop (or manual close) is triggered:
+    - Gateway emits an **exit intent** (close reason: stop / manual / end_of_data).
+    - Execution Service submits an opposite-side market order via `POST /v5/order/create`:
+      - Long → send a Sell market order for `qty`.
+      - Short (if ever used in Spot/leveraged context later) → send a Buy market order for `qty`.
+    - On confirmation/fill:
+      - Update trade log (`index.jsonl`) and `current.json` (position removed).
+      - Mark any reconciliation metadata so FR-3 jobs can verify against Bybit balances.
+
 ### FR-3: Position and Balance Tracking
 
 - Compute synthetic Spot positions from fills/balances.
 - Track realized and unrealized PnL per symbol and strategy run.
 - Reconcile local state with Bybit account snapshots on schedule.
+
+#### FR-3.a: Open Positions vs Trade Log (`current.json`)
+
+- **Source-of-truth layering**
+  - **Local strategy state:** `current.json` contains open positions per gateway (symbol, interval, side, qty, entry, stop).
+  - **Exchange state:** Bybit Spot account balances and open orders from private v5 REST.
+- **Reconciliation flow**
+  - On a fixed schedule and on gateway startup:
+    - Load `current.json` and derive expected positions.
+    - Fetch balances and open orders from Bybit via `BybitClient`.
+    - For each symbol of interest:
+      - Derive “net Spot position” from balances (base and quote assets).
+      - Compare to local `current.json` entries.
+      - If mismatch:
+        - Flag the position as “reconciliation required” with details (local vs exchange).
+        - Optionally auto-mark local trades as closed with a “reconciled” reason, if policy allows.
+  - Expose reconciliation status via a small backend API (`GET /api/v1/reconciliation-status`) for operator visibility.
 
 ### FR-4: Indicator Engine
 

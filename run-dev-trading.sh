@@ -7,6 +7,7 @@ set -e
 #   TRADING_INTERVAL    - timeframe: 1,5,15,60,240,D (default 60)
 #   BARS_WINDOW         - bars for chart, e.g. 2000 or 5000 (default 2000)
 #   FETCH_INTERVAL_SEC  - data fetch frequency in seconds (default 60)
+#   MARKET              - "spot" or "linear" (default spot)
 #
 # Examples:
 #   ./run-dev-trading.sh
@@ -18,6 +19,7 @@ export TRADING_SYMBOL="${TRADING_SYMBOL:-BTCUSDT}"
 export TRADING_INTERVAL="${TRADING_INTERVAL:-60}"
 export BARS_WINDOW="${BARS_WINDOW:-2000}"
 export FETCH_INTERVAL_SEC="${FETCH_INTERVAL_SEC:-60}"
+export MARKET="${MARKET:-spot}"
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 
