@@ -49,12 +49,12 @@ Even when a signal is triggered and confirmed, **block** the order if (each can 
    - **Short:** Block if the current candle color is **not bearish** (the strategy’s `is_bear` flag is False).
    This matches the implementation where entries and reversals are only allowed when the candle color is classified as bullish (for longs) or bearish (for shorts); all other colors are blocked for that direction.
 
-2. **Nearby active opposite OB** (`block_opposite_ob_enabled`, default True):  
+2. **Nearby active opposite OB** (`block_opposite_ob_enabled`, default True):  - unverified
    - **Long:** Block if active bearish OB below entry (breakers excluded — they act as support when broken).  
    - **Short:** Block if active bullish OB above entry (breakers excluded).  
    - Distance threshold: `block_ob_distance_mult × width` of the triggering OB (default 2).
 
-3. **Strong S/R in direction of trade** (`block_sr_enabled`, default True):  
+3. **Strong S/R in direction of trade** (`block_sr_enabled`, default True):  - unverified
    - **Long:** Block if strong **resistance above** entry (ceiling would cap the move).  
    - **Short:** Block if strong **support below** entry (floor would cap the short).  
    - Strength = line `width` from volume profile S/R (higher = stronger).  
@@ -108,7 +108,6 @@ For **short**: breakeven when close below `entry − 0.1×|entry_bar_close − e
 | `block_sr_enabled`         | True   | Enable blocking by strong S/R in direction of trade       |
 | `block_ob_distance_mult`  | 2.0     | Block if opposite OB within N × trigger OB width |
 | `block_sr_distance_mult`  | 2.0     | Block if strong S/R within N × trigger OB width            |
-| `entry_price_range_mult`  | 2.0     | Legacy: previously constrained entry close to N × OB width of OB; currently unused in entry logic |
 | `min_sr_strength`         | 4.0     | Min S/R line width to count as “strong” support            |
 | `trail_sr_min_strength`   | 0.0     | Min S/R line width for trailing levels; 0 = include all    |
 | `trail_param`             | 0.75    | Trailing stop: level − N × (level − prev_stop)             |

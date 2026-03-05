@@ -37,8 +37,6 @@ BEARISH_COLORS = {"#b91c1c","#dc2626", "#15803d",}  # when swing trend bearish
 # Default parameters
 DEFAULT_ENTRY_ZONE_MULT = 1.0  # Used by strategy for crossover detection
 DEFAULT_MAX_OB_ENTRY_SIGNALS = 2  # Used by strategy to cap actual trade entries per OB (not boundary crosses)
-DEFAULT_ENTRY_PRICE_RANGE_MULT = 1.5  # Used by strategy to check if close is within N×OB width
-
 DEFAULT_VOLUME_SPIKE_MULT = 1.5
 DEFAULT_VOLUME_CONFIRMATION_LOOKBACK = 10  # Bars for volume avg in confirmation (volume > mult × avg)
 DEFAULT_CONSECUTIVE_CLOSES = 2
@@ -500,7 +498,6 @@ def compute_order_block_trend_following(
     block_sr_enabled: bool = False,
     block_ob_distance_mult: float = DEFAULT_BLOCK_OB_DISTANCE_MULT,
     block_sr_distance_mult: float = DEFAULT_BLOCK_SR_DISTANCE_MULT,
-    entry_price_range_mult: float = DEFAULT_ENTRY_PRICE_RANGE_MULT,  # Legacy: no longer used in entry logic
     min_sr_strength: float = DEFAULT_MIN_SR_STRENGTH,
     trail_sr_min_strength: float = DEFAULT_TRAIL_SR_MIN_STRENGTH,
     trail_param: float = DEFAULT_TRAIL_PARAM,
