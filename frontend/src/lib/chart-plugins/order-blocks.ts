@@ -17,6 +17,7 @@ interface BoxToDraw {
   x2: number;
   y2: number;
   fillColor: string;
+  strengthText?: string;
 }
 
 class OrderBlocksRenderer implements IPrimitivePaneRenderer {
@@ -36,6 +37,15 @@ class OrderBlocksRenderer implements IPrimitivePaneRenderer {
         const w = Math.abs(box.x2 - box.x1);
         const h = Math.abs(box.y2 - box.y1);
         ctx.fillRect(x, y, w, h);
+
+        if (box.strengthText) {
+          ctx.font = "11px system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif";
+          ctx.fillStyle = "#4b5563"; // neutral dark gray
+          ctx.textBaseline = "middle";
+          const textX = Math.max(box.x1, box.x2) + 4;
+          const textY = y + h / 2;
+          ctx.fillText(box.strengthText, textX, textY);
+        }
       }
     });
   }
@@ -61,7 +71,8 @@ class OrderBlocksPaneView implements IPrimitivePaneView {
       p1: number,
       t2: number,
       p2: number,
-      fillColor: string
+      fillColor: string,
+      strengthText?: string
     ): void {
       const x1 = timeScale.timeToCoordinate(t1 as Time);
       const x2 = timeScale.timeToCoordinate(t2 as Time);
@@ -74,6 +85,7 @@ class OrderBlocksPaneView implements IPrimitivePaneView {
           x2,
           y2,
           fillColor,
+          strengthText,
         });
       }
     }
@@ -85,11 +97,17 @@ class OrderBlocksPaneView implements IPrimitivePaneView {
         const top = ob.top;
         const bottom = ob.bottom;
         const breakerT = ob.breakerTime ?? ob.breakTime;
+        const strength =
+          typeof ob.strengthIndex === "number" && Number.isFinite(ob.strengthIndex)
+            ? ob.strengthIndex
+            : undefined;
+        const strengthText =
+          strength && strength > 0 ? strength.toFixed(2) : undefined;
         if (ob.breaker && breakerT != null) {
-          addBox(tStart, top, breakerT, bottom, ob.fillColor);
-          addBox(breakerT, top, tEnd, bottom, ob.fillColor);
+          addBox(tStart, top, breakerT, bottom, ob.fillColor, strengthText);
+          addBox(breakerT, top, tEnd, bottom, ob.fillColor, strengthText);
         } else {
-          addBox(tStart, top, tEnd, bottom, ob.fillColor);
+          addBox(tStart, top, tEnd, bottom, ob.fillColor, strengthText);
         }
       }
     }

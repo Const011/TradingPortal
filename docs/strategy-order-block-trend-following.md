@@ -6,11 +6,11 @@ Strategy that generates buy/sell signals based on order blocks, candle trend col
 
 ## 1. Trend Filter (Candle Coloring)
 
-- **Direction constraint:** We only trade when **both** swing and internal trend align on the current bar.
-- **Trend source:** Candle coloring (swing × internal trend from Smart Money structure).
-- **Bullish** (bright green = swing bullish AND internal bullish) → only **buy** orders.
-- **Bearish** (bright red = swing bearish AND internal bearish) → only **sell** orders.
-- Mixed colors (swing/internal disagree) do not generate signals.
+- **Trend source:** Candle coloring from Smart Money structure.
+- The strategy receives a **single color per candle** and interprets it as:
+  - **Bullish color** → allowed direction for **long** entries and long→short reversals.
+  - **Bearish color** → allowed direction for **short** entries and short→long reversals.
+- Any other/mixed color is treated as **neutral** and will not open new positions or trigger reversals (see Section 4 for the blocking rule).
 
 ---
 
@@ -29,9 +29,9 @@ Both cases are treated as breakout/continuation above a significant level.
 
 ## 3. Entry Conditions
 
-Entry when **both** of the following are true for the last N bars (N = `consecutive_closes`, default 2):
+Entry when **both** of the following are true for the last N bars (N = `consecutive_closes`, default 2), **excluding** the initial warm-up window of `warmup_bars` (default 1000 bars). No trades are opened before bar index `warmup_bars`:
 
-1. **OB event:** On any of the last N bars, there is an order block boundary cross or breaker event for the OB.
+1. **OB event (strong OBs only):** On any of the last N bars, there is an order block boundary cross or breaker event for an order block **whose strength is above a relative threshold** (see Section 7).
 2. **Volume spike:** On any of the last N bars, there is a bar in the direction of trade (bullish for long, bearish for short) with volume ≥ `volume_spike_mult` × average volume of previous 10 bars (default 1.2).
 
 We watch these conditions over the last N bars; if both are true → entry.
@@ -44,12 +44,17 @@ We watch these conditions over the last N bars; if both are true → entry.
 
 Even when a signal is triggered and confirmed, **block** the order if (each can be enabled/disabled via parameters):
 
-1. **Nearby active opposite OB** (`block_opposite_ob_enabled`, default True):  
+1. **Trend mismatch (hard filter, always on):**  - confirmed substantial improvement
+   - **Long:** Block if the current candle color is **not bullish** (the strategy’s `is_bull` flag is False).
+   - **Short:** Block if the current candle color is **not bearish** (the strategy’s `is_bear` flag is False).
+   This matches the implementation where entries and reversals are only allowed when the candle color is classified as bullish (for longs) or bearish (for shorts); all other colors are blocked for that direction.
+
+2. **Nearby active opposite OB** (`block_opposite_ob_enabled`, default True):  
    - **Long:** Block if active bearish OB below entry (breakers excluded — they act as support when broken).  
    - **Short:** Block if active bullish OB above entry (breakers excluded).  
    - Distance threshold: `block_ob_distance_mult × width` of the triggering OB (default 2).
 
-2. **Strong S/R in direction of trade** (`block_sr_enabled`, default True):  
+3. **Strong S/R in direction of trade** (`block_sr_enabled`, default True):  
    - **Long:** Block if strong **resistance above** entry (ceiling would cap the move).  
    - **Short:** Block if strong **support below** entry (floor would cap the short).  
    - Strength = line `width` from volume profile S/R (higher = stronger).  
@@ -111,6 +116,8 @@ For **short**: breakeven when close below `entry − 0.1×|entry_bar_close − e
 | `atr_length`              | 14      | ATR period for stop cap                                    |
 | `atr_stop_mult`           | 2.0     | Cap initial stop at entry ± N × ATR; 0 = disabled           |
 | `breakeven_body_frac`     | 0.1     | Trail toward entry + N×(close−open); 0 = disabled            |
+| `warmup_bars`             | 1000    | Number of initial bars used for indicator warm-up; no entries are taken before this bar index |
+| `min_ob_strength`         | 0.0     | **Relative OB strength filter (strategy only)**. When > 0, the strategy uses only order blocks whose strength is greater than `min_ob_strength × average_strength` across **all** identified order blocks. The indicator itself keeps all blocks; filtering is applied only at the strategy layer. |
 
 ---
 

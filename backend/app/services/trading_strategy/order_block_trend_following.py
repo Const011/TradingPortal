@@ -16,10 +16,11 @@ _DEBUG_TS_END = int(datetime(2026, 3, 2, 19, 0).timestamp() * 1000)
 
 def _ts_human(ts_ms: int) -> str:
     return datetime.fromtimestamp(ts_ms / 1000).strftime("%Y-%m-%d %H:%M:%S")
-    
+
 from app.services.indicators.order_blocks import (
     OrderBlock,
     _iter_order_blocks_from_pivots,
+    _compute_order_blocks_from_pivots,
 )
 from app.services.trading_strategy.types import TradeEvent, StopSegment
 
@@ -27,8 +28,11 @@ logger = logging.getLogger(__name__)
 
 # Candle colors from smart_money_structure: only when BOTH swing AND internal agree
 # #22c55e = swing bullish + internal bullish; #dc2626 = swing bearish + internal bearish
-BULLISH_COLORS = {"#22c55e"}
-BEARISH_COLORS = {"#dc2626"}
+#BULLISH_COLORS = {"#22c55e"} # both in bullish
+#BEARISH_COLORS = {"#dc2626"} # both in bearish
+BULLISH_COLORS = {"#15803d","#22c55e", "#b91c1c",}  # when swing trend bullish
+BEARISH_COLORS = {"#b91c1c","#dc2626", "#15803d",}  # when swing trend bearish
+
 
 # Default parameters
 DEFAULT_ENTRY_ZONE_MULT = 1.0  # Used by strategy for crossover detection
@@ -47,6 +51,9 @@ DEFAULT_TRAIL_PARAM = 0.8
 DEFAULT_ATR_LENGTH = 14
 DEFAULT_ATR_STOP_MULT = 2.0
 DEFAULT_BREAKEVEN_BODY_FRAC = 0.1  # Trail toward open + N*(close-open); 0 = disabled
+DEFAULT_WARMUP_BARS = 1000
+
+DEFAULT_MIN_OB_STRENGTH = 0.75
 
 
 @dataclass
@@ -501,6 +508,8 @@ def compute_order_block_trend_following(
     atr_length: int = DEFAULT_ATR_LENGTH,
     atr_stop_mult: float = DEFAULT_ATR_STOP_MULT,
     breakeven_body_frac: float = DEFAULT_BREAKEVEN_BODY_FRAC,
+    warmup_bars: int = DEFAULT_WARMUP_BARS,
+    min_ob_strength: float = DEFAULT_MIN_OB_STRENGTH,
 ) -> tuple[list[TradeEvent], list[StopSegment]]:
     """
     Run Order Block Trend-Following strategy.
@@ -517,6 +526,22 @@ def compute_order_block_trend_following(
     ob_entry_counts: dict[tuple[float, float, int], int] = {}  # Count actual trades per OB, not crosses
     events_history: deque[tuple[int, list[dict]]] = deque(maxlen=consecutive_closes)
 
+    # Precompute global average OB strength (bullish + bearish) for relative filtering.
+    all_bull, all_bear = _compute_order_blocks_from_pivots(
+        candles,
+        swing_pivots,
+        keep_breakers=True,
+    )
+    all_obs: list[OrderBlock] = [*all_bull, *all_bear]
+    avg_strength = (
+        sum(ob.strength_index for ob in all_obs) / len(all_obs)
+        if all_obs
+        else 0.0
+    )
+    strength_threshold = (
+        min_ob_strength * avg_strength if avg_strength > 0.0 and min_ob_strength > 0.0 else 0.0
+    )
+
     # Use the same pivot-based OB engine as the indicator, driven by Smart Money
     # structure pivots passed in from `compute_structure`. This ensures the
     # strategy sees exactly the same OB topology as the graphics layer.
@@ -525,6 +550,12 @@ def compute_order_block_trend_following(
         swing_pivots,
         keep_breakers=True,
     ):
+        # Relative strength filter: keep only OBs whose strength is above
+        # (min_ob_strength × average strength) across all identified blocks.
+        if strength_threshold > 0.0:
+            bullish_ob = [ob for ob in bullish_ob if ob.strength_index >= strength_threshold]
+            bearish_ob = [ob for ob in bearish_ob if ob.strength_index >= strength_threshold]
+
         raw_events = _detect_ob_events(
             i, c, candles, bullish_ob, bearish_ob,
             entry_zone_mult=entry_zone_mult,
@@ -770,11 +801,12 @@ def compute_order_block_trend_following(
                 "[OB_STRAT] bar=%d time=%s | SKIP entry window: len_history=%d < consecutive_closes=%d",
                 i, _ts_human(c.time), len(events_history), consecutive_closes,
             )
-        if len(events_history) >= consecutive_closes:
+        # Do not generate new entries during warmup period (first warmup_bars indices).
+        if len(events_history) >= consecutive_closes and i >= warmup_bars:
             if _debug:
                 logger.info(
-                    "[OB_STRAT] bar=%d time=%s | entry window check: len_history=%d position=%s",
-                    i, _ts_human(c.time), len(events_history), position,
+                    "[OB_STRAT] bar=%d time=%s | entry window check: len_history=%d position=%s warmup_bars=%d",
+                    i, _ts_human(c.time), len(events_history), position, warmup_bars,
                 )
             # Collect OBs that had events in the last N bars
             bullish_obs: set[tuple[float, float, int]] = set()
@@ -1054,18 +1086,55 @@ def compute_order_block_trend_following(
                         chosen = short_candidate
                     else:
                         chosen = long_candidate
+
+                # New blocking condition: swing trend must align with entry direction.
                 if chosen is not None:
-                    _open_from_candidate(chosen)
+                    if chosen.side == "long" and not is_bull:
+                        if _debug:
+                            logger.info(
+                                "[OB_STRAT_LONG] bar=%d time=%s | BLOCKED by trend filter (is_bull=%s)",
+                                i,
+                                _ts_human(c.time),
+                                is_bull,
+                            )
+                    elif chosen.side == "short" and not is_bear:
+                        if _debug:
+                            logger.info(
+                                "[OB_STRAT_SHORT] bar=%d time=%s | BLOCKED by trend filter (is_bear=%s)",
+                                i,
+                                _ts_human(c.time),
+                                is_bear,
+                            )
+                    else:
+                        _open_from_candidate(chosen)
             elif current_side == "long" and short_candidate is not None:
-                if _debug:
-                    logger.info("[OB_STRAT] bar=%d time=%s | REVERSAL long→short", i, _ts_human(c.time))
-                position = None
-                _open_from_candidate(short_candidate)
+                # Reversal long→short only if swing trend is bearish.
+                if is_bear:
+                    if _debug:
+                        logger.info("[OB_STRAT] bar=%d time=%s | REVERSAL long→short", i, _ts_human(c.time))
+                    position = None
+                    _open_from_candidate(short_candidate)
+                elif _debug:
+                    logger.info(
+                        "[OB_STRAT] bar=%d time=%s | REVERSAL long→short BLOCKED by trend filter (is_bear=%s)",
+                        i,
+                        _ts_human(c.time),
+                        is_bear,
+                    )
             elif current_side == "short" and long_candidate is not None:
-                if _debug:
-                    logger.info("[OB_STRAT] bar=%d time=%s | REVERSAL short→long", i, _ts_human(c.time))
-                position = None
-                _open_from_candidate(long_candidate)
+                # Reversal short→long only if swing trend is bullish.
+                if is_bull:
+                    if _debug:
+                        logger.info("[OB_STRAT] bar=%d time=%s | REVERSAL short→long", i, _ts_human(c.time))
+                    position = None
+                    _open_from_candidate(long_candidate)
+                elif _debug:
+                    logger.info(
+                        "[OB_STRAT] bar=%d time=%s | REVERSAL short→long BLOCKED by trend filter (is_bull=%s)",
+                        i,
+                        _ts_human(c.time),
+                        is_bull,
+                    )
 
         # --- Trailing stop for active position ---
         # Position open price = entry bar close (we enter on bar close when conditions met)

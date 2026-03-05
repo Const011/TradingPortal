@@ -113,6 +113,8 @@ export type OrderBlockData = {
   breakTime?: number | null;
   breaker: boolean;
   fillColor: string;
+  /** Relative volume-based strength index (N-bar impulse vs previous M bars). */
+  strengthIndex?: number;
 };
 
 /** Bar marker from order blocks (boundary cross, breaker created). */
