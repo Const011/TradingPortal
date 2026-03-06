@@ -73,14 +73,14 @@ For a **short** entry: use OB top or above resistance with the same logic revers
 When price is above a **higher** level (support line, OB top, or breaker block acting as support):
 
 - **Breakeven (relaxed):** Trail toward `entry + 0.1×|entry_bar_close − entry_bar_open|` when current bar closes above that level. No volume spike or consecutive closes required.
-- **Levels considered:** S/R support lines (filtered by `trail_sr_min_strength`), bullish OB tops, bearish breaker bottoms (support when broken), position open, breakeven target (`entry_close + frac × (entry_close − entry_open)`).
-- **Confirmation required** for S/R/OB levels (reduces false moves from noise). Either:
+- **Levels considered:** S/R support lines (filtered by `trail_sr_min_strength`), bullish OB tops, position open, breakeven target (`entry_close + frac × (entry_close − entry_open)`), and **previous bar’s low** when it is above the current stop (higher low = support). With default `keep_breakers=False`, bearish breaker bottoms are not included (crossed OBs are removed from the list).
+- **Confirmation required** for S/R/OB/prev-bar levels (reduces false moves from noise). Either:
   - **Option A:** One bar with close above the level **and** unusual volume (`volume ≥ N × avg volume`).
   - **Option B:** N consecutive bars closed above the level (`trail_consecutive_closes`, default 2).
-- **New stop** = `level − trail_param × (level − previous_stop)`
-- Default `trail_param` = 0.8.
+- **New stop** = `level − trail_param × (level − previous_stop)`. When the level is **previous bar’s low**, the strategy uses a more relaxed multiplier `trail_param_prev_bar` (default 0.9) instead of `trail_param` (default 0.7). This helps **end the position after price has been locked in a range**: trailing off the last bar’s low (long) or high (short) with a gentler move allows the stop to catch up when price chops instead of relying only on S/R or OB levels.
+- Default `trail_param` = 0.7; default `trail_param_prev_bar` = 0.9.
 
-For **short**: breakeven when close below `entry − 0.1×|entry_bar_close − entry_bar_open|`; levels = S/R resistance, bearish OB bottoms, bullish breaker tops, position open, breakeven target. Confirmation by volume spike (one bar) or N consecutive closes below the level.
+For **short**: breakeven when close below `entry − 0.1×|entry_bar_close − entry_bar_open|`; levels = S/R resistance, bearish OB bottoms, position open, breakeven target, and **previous bar’s high** when it is below the current stop (lower high = resistance). With default `keep_breakers=False`, bullish breaker tops are not included. Same confirmation and relaxed param for prev-bar high (`trail_param_prev_bar`).
 
 ---
 
@@ -95,13 +95,15 @@ For **short**: breakeven when close below `entry − 0.1×|entry_bar_close − e
 | `trail_consecutive_closes`  | 2       | Consecutive closes above/below level for trail confirmation|
 | `min_sr_strength`         | 4.0     | Min S/R line width to count as “strong” support            |
 | `trail_sr_min_strength`   | 0.0     | Min S/R line width for trailing levels; 0 = include all    |
-| `trail_param`             | 0.8     | Trailing stop: level − N × (level − prev_stop)             |
+| `trail_param`             | 0.7     | Trailing stop: level − N × (level − prev_stop) for S/R/OB levels |
+| `trail_param_prev_bar`    | 0.9     | Same formula when level is previous bar’s low (long) or high (short); more relaxed to help exit when price is locked in a range |
 | `max_ob_entry_signals`    | 2       | Max **actual trade entries** per OB; counts only confirmed trades, not boundary crosses |
 | `atr_length`              | 14      | ATR period for stop cap                                    |
 | `atr_stop_mult`           | 2.0     | Cap initial stop at entry ± N × ATR; 0 = disabled           |
 | `breakeven_body_frac`     | 0.1     | Trail toward entry + N×(close−open); 0 = disabled            |
 | `warmup_bars`             | 1000    | Number of initial bars used for indicator warm-up; no entries are taken before this bar index |
 | `min_ob_strength`         | 0.75    | **Relative OB strength filter (strategy only)**. When > 0, the strategy uses only order blocks whose strength is greater than `min_ob_strength × average_strength` across **all** identified order blocks. The indicator itself keeps all blocks; filtering is applied only at the strategy layer. |
+| `keep_breakers`           | False   | **Whether to keep OBs after price closes beyond them.** When **False** (default, both indicator and strategy): an order block is **removed** from the list once price **closes** beyond its level (bullish OB when close > OB top, bearish OB when close < OB bottom). Only those OBs disappear; others stay. When **True**: OBs that have been crossed stay in the list so breaker bottoms (long) and breaker tops (short) can be used as trailing levels. The strategy uses **False** by default (crossed breakers disabled), so trailing levels are S/R, active OBs, entry, breakeven target, and previous bar low/high only. |
 
 ---
 
