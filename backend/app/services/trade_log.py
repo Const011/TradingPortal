@@ -15,6 +15,7 @@ def _format_ts_local(ts: int, unit: str = "s") -> str:
 from app.config import settings
 from app.schemas.market import Candle
 from app.services.trading_strategy.types import TradeEvent, StopSegment
+from app.utils.intervals import interval_seconds
 from app.utils.timefmt import ts_human
 
 logger = logging.getLogger(__name__)
@@ -434,6 +435,9 @@ def get_trades(
             elif rec_type == "exit":
                 exits[trade_id] = rec
 
+    # Map interval string to seconds (same mapping as candle_stream).
+    interval_sec = interval_seconds(interval, default=0)
+
     # Build trades; include both completed (have exit) and still-open (no exit yet).
     trades: list[dict[str, Any]] = []
     for trade_id, entry in entries.items():
@@ -464,12 +468,14 @@ def get_trades(
         # For completed trades, the last segment ends at exit time.
         # For open trades, the last segment ends at the last known stop-move time (or entry time if none).
         last_time = exit_rec.get("time", prev_time) if exit_rec is not None else prev_time
-        chart_stop_segments.append({
-            "startTime": prev_time,
-            "endTime": last_time,
-            "price": prev_price,
-            "side": side,
-        })
+        chart_stop_segments.append(
+            {
+                "startTime": prev_time,
+                "endTime": last_time,
+                "price": prev_price,
+                "side": side,
+            }
+        )
 
         # Markers (single entry marker)
         markers = [
@@ -481,18 +487,74 @@ def get_trades(
             }
         ]
 
-        # Stop lines for chart
-        stop_lines = [
-            {
-                "type": "lineSegment",
-                "from": {"time": s["startTime"], "price": s["price"]},
-                "to": {"time": s["endTime"], "price": s["price"]},
-                "color": "#f59e0b",
-                "width": 2,
-                "style": "dashed",
-            }
-            for s in chart_stop_segments
-        ]
+        # Stop lines for chart: connect successive stop levels directly,
+        # with a horizontal segment for the first bar and a final horizontal
+        # extension so the last stop remains visible.
+        stop_lines: list[dict[str, Any]] = []
+        if chart_stop_segments:
+            segs_sorted = sorted(chart_stop_segments, key=lambda s: s["startTime"])
+            # Nodes are (time, price) at each segment start.
+            nodes: list[tuple[int, float]] = [
+                (s["startTime"], s["price"]) for s in segs_sorted
+            ]
+            # Deduplicate consecutive identical nodes.
+            deduped_nodes: list[tuple[int, float]] = []
+            for t, p in nodes:
+                if not deduped_nodes or (t, p) != deduped_nodes[-1]:
+                    deduped_nodes.append((t, p))
+            if deduped_nodes:
+                first_time, first_price = deduped_nodes[0]
+                last_seg = segs_sorted[-1]
+                last_end_time = last_seg["endTime"]
+
+                # Initial horizontal segment for the first bar.
+                initial_start_time = (
+                    first_time - interval_sec if interval_sec > 0 else first_time
+                )
+                stop_lines.append(
+                    {
+                        "type": "lineSegment",
+                        "from": {"time": initial_start_time, "price": first_price},
+                        "to": {"time": first_time, "price": first_price},
+                        "color": "#f59e0b",
+                        "width": 2,
+                        "style": "dashed",
+                    }
+                )
+
+                # Connect successive nodes with straight segments.
+                for (t_prev, p_prev), (t_cur, p_cur) in zip(
+                    deduped_nodes, deduped_nodes[1:]
+                ):
+                    stop_lines.append(
+                        {
+                            "type": "lineSegment",
+                            "from": {"time": t_prev, "price": p_prev},
+                            "to": {"time": t_cur, "price": p_cur},
+                            "color": "#f59e0b",
+                            "width": 2,
+                            "style": "dashed",
+                        }
+                    )
+
+                # Final horizontal segment from last node to last_end_time.
+                if last_end_time > deduped_nodes[-1][0]:
+                    stop_lines.append(
+                        {
+                            "type": "lineSegment",
+                            "from": {
+                                "time": deduped_nodes[-1][0],
+                                "price": deduped_nodes[-1][1],
+                            },
+                            "to": {
+                                "time": last_end_time,
+                                "price": deduped_nodes[-1][1],
+                            },
+                            "color": "#f59e0b",
+                            "width": 2,
+                            "style": "dashed",
+                        }
+                    )
 
         if exit_rec is not None:
             close_dt_iso = _ts_to_iso(exit_rec.get("time", 0))

@@ -183,6 +183,9 @@ def _compute_initial_stop_long(
 ) -> float:
     """Higher of OB bottom or support-gap (tighter = better for long). Optionally cap by ATR."""
     support = _get_closest_support_below(sr_lines, entry_price, min_strength)
+    rule = "OB_ONLY"
+    support_price = None
+    stop_below_support = None
     if support is None:
         structural = ob_bottom
     else:
@@ -190,15 +193,39 @@ def _compute_initial_stop_long(
         gap = (entry_price - support_price) / 2
         stop_below_support = support_price - gap
         structural = max(ob_bottom, stop_below_support)
+        rule = "SUPPORT_GAP"
+    atr_cap = None
     if atr_stop_mult > 0 and candles and bar_index >= atr_length:
         atr_val = _atr(candles, atr_length, bar_index)
         if atr_val > 0:
             atr_cap = entry_price - atr_stop_mult * atr_val
             structural = max(structural, atr_cap)
     # Mandatory: stop cannot be higher than entry candle low - 1 (must be below the bar's low)
+    max_stop = None
     if candles and 0 <= bar_index < len(candles):
         max_stop = candles[bar_index].low - 1.0
         structural = min(structural, max_stop)
+
+    # Debug: explain which rule determined the initial long stop.
+    if candles and 0 <= bar_index < len(candles):
+        c = candles[bar_index]
+        _debug = _DEBUG_TS_START <= c.time <= _DEBUG_TS_END
+        if _debug:
+            logger.info(
+                "[OB_STOP_RULE_LONG] bar=%d time=%s | entry=%.1f ob_bottom=%.1f rule=%s "
+                "support_price=%s stop_below_support=%s atr_cap=%s max_stop_guard=%s final_stop=%.1f",
+                bar_index,
+                ts_human(c.time),
+                entry_price,
+                ob_bottom,
+                rule,
+                f"{support_price:.1f}" if support_price is not None else "None",
+                f"{stop_below_support:.1f}" if stop_below_support is not None else "None",
+                f"{atr_cap:.1f}" if atr_cap is not None else "None",
+                f"{max_stop:.1f}" if max_stop is not None else "None",
+                structural,
+            )
+
     return structural
 
 
@@ -214,6 +241,9 @@ def _compute_initial_stop_short(
 ) -> float:
     """Lower of OB top or resistance+gap (tighter = better for short). Optionally cap by ATR."""
     resistance = _get_closest_resistance_above(sr_lines, entry_price, min_strength)
+    rule = "OB_ONLY"
+    res_price = None
+    stop_above_res = None
     if resistance is None:
         structural = ob_top
     else:
@@ -221,15 +251,39 @@ def _compute_initial_stop_short(
         gap = (res_price - entry_price) / 2
         stop_above_res = res_price + gap
         structural = min(ob_top, stop_above_res)
+        rule = "RESISTANCE_GAP"
+    atr_cap = None
     if atr_stop_mult > 0 and candles and bar_index >= atr_length:
         atr_val = _atr(candles, atr_length, bar_index)
         if atr_val > 0:
             atr_cap = entry_price + atr_stop_mult * atr_val
             structural = min(structural, atr_cap)
     # Mandatory: stop cannot be lower than entry candle high + 1 (must be above the bar's high)
+    min_stop = None
     if candles and 0 <= bar_index < len(candles):
         min_stop = candles[bar_index].high + 1.0
         structural = max(structural, min_stop)
+
+    # Debug: explain which rule determined the initial short stop.
+    if candles and 0 <= bar_index < len(candles):
+        c = candles[bar_index]
+        _debug = _DEBUG_TS_START <= c.time <= _DEBUG_TS_END
+        if _debug:
+            logger.info(
+                "[OB_STOP_RULE_SHORT] bar=%d time=%s | entry=%.1f ob_top=%.1f rule=%s "
+                "resistance_price=%s stop_above_res=%s atr_cap=%s min_stop_guard=%s final_stop=%.1f",
+                bar_index,
+                ts_human(c.time),
+                entry_price,
+                ob_top,
+                rule,
+                f"{res_price:.1f}" if res_price is not None else "None",
+                f"{stop_above_res:.1f}" if stop_above_res is not None else "None",
+                f"{atr_cap:.1f}" if atr_cap is not None else "None",
+                f"{min_stop:.1f}" if min_stop is not None else "None",
+                structural,
+            )
+
     return structural
 
 

@@ -21,33 +21,11 @@ from app.services.trade_log import (
     compute_trade_results,
     load_current_trades,
 )
+from app.utils.intervals import interval_seconds
 from app.utils.timefmt import ts_human
 
 logger = logging.getLogger(__name__)
 DEFAULT_VOLUME_PROFILE_WINDOW = 2000
-
-# Bybit interval string -> seconds (for current-bar detection in trade logging)
-_INTERVAL_SECONDS: dict[str, int] = {
-    "1": 60,
-    "3": 180,
-    "5": 300,
-    "15": 900,
-    "30": 1800,
-    "60": 3600,
-    "120": 7200,
-    "240": 14400,
-    "360": 21600,
-    "720": 43200,
-    "D": 86400,
-    "W": 604800,
-    "M": 2592000,
-}
-
-
-def _interval_seconds(interval: str) -> int:
-    """Return bar duration in seconds for Bybit interval string."""
-    return _INTERVAL_SECONDS.get(interval, 3600)
-
 
 def _restore_current_trades(symbol: str, interval: str, state: "CandleStreamState") -> None:
     """Load current trades from file and merge into state. Called once per stream on start."""
@@ -117,7 +95,7 @@ def _apply_trade_logging(
 
     current_bar_index = len(candles) - 1
     current_bar_start_sec = candles[-1].time // 1000
-    interval_sec = _interval_seconds(interval)
+    interval_sec = interval_seconds(interval, default=3600)
     current_bar_end_sec = current_bar_start_sec + interval_sec
 
     skip_entry_and_stop = current_bar_start_sec in state.signals_emitted_for_bar
@@ -294,7 +272,9 @@ def _make_snapshot_payload(
                     candle_colors=structure_result.get("candleColors"),
                     sr_lines=sr_lines,
                 )
-                chart_data = strategy_output_to_chart(trade_events, stop_segments)
+                chart_data = strategy_output_to_chart(
+                    trade_events, stop_segments, interval
+                )
                 graphics["strategySignals"] = chart_data
                 _apply_trade_logging(
                     symbol, interval, trade_events, stop_segments, candles, graphics, state,
