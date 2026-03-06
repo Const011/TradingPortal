@@ -492,10 +492,6 @@ def compute_order_block_trend_following(
     volume_confirmation_lookback: int = DEFAULT_VOLUME_CONFIRMATION_LOOKBACK,
     consecutive_closes: int = DEFAULT_CONSECUTIVE_CLOSES,
     trail_consecutive_closes: int = DEFAULT_TRAIL_CONSECUTIVE_CLOSES,
-    block_opposite_ob_enabled: bool = False,
-    block_sr_enabled: bool = False,
-    block_ob_distance_mult: float = DEFAULT_BLOCK_OB_DISTANCE_MULT,
-    block_sr_distance_mult: float = DEFAULT_BLOCK_SR_DISTANCE_MULT,
     min_sr_strength: float = DEFAULT_MIN_SR_STRENGTH,
     trail_sr_min_strength: float = DEFAULT_TRAIL_SR_MIN_STRENGTH,
     trail_param: float = DEFAULT_TRAIL_PARAM,
@@ -678,34 +674,6 @@ def compute_order_block_trend_following(
                 if not (c1 and c2):
                     continue
                 entry = c.close
-                if block_opposite_ob_enabled:
-                    bear_ob_closest = _get_closest_bearish_ob_below(bearish_ob, entry, active_only=True)
-                    dist_to_bear = (entry - bear_ob_closest) if bear_ob_closest is not None else None
-                    blocked_bear = bear_ob_closest is not None and (entry - bear_ob_closest) < block_ob_distance_mult * ob_width
-                    if _debug:
-                        logger.info(
-                            "[OB_STRAT_LONG] bar=%d time=%s | block_opposite_ob: bear_closest=%s dist=%s threshold=%.1f blocked=%s",
-                            i, ts_human(c.time),
-                            "%.1f" % bear_ob_closest if bear_ob_closest is not None else "None",
-                            "%.1f" % dist_to_bear if dist_to_bear is not None else "N/A",
-                            block_ob_distance_mult * ob_width, blocked_bear,
-                        )
-                    if blocked_bear:
-                        continue
-                if block_sr_enabled:
-                    resistance = _get_closest_resistance_above(sr_lines, entry, min_sr_strength)
-                    dist_to_res = (resistance[0] - entry) if resistance is not None else None
-                    blocked_sr = resistance is not None and (resistance[0] - entry) < block_sr_distance_mult * ob_width
-                    if _debug:
-                        logger.info(
-                            "[OB_STRAT_LONG] bar=%d time=%s | block_sr: resistance=%s dist=%s threshold=%.1f blocked=%s",
-                            i, ts_human(c.time),
-                            "%.1f" % resistance[0] if resistance is not None else "None",
-                            "%.1f" % dist_to_res if dist_to_res is not None else "N/A",
-                            block_sr_distance_mult * ob_width, blocked_sr,
-                        )
-                    if blocked_sr:
-                        continue
                 stop = _compute_initial_stop_long(
                     ob_bottom, sr_lines, entry, min_sr_strength,
                     candles=candles, bar_index=i, atr_length=atr_length, atr_stop_mult=atr_stop_mult,
@@ -743,34 +711,6 @@ def compute_order_block_trend_following(
                 if not (c1 and c2):
                     continue
                 entry = c.close
-                if block_opposite_ob_enabled:
-                    bull_ob_closest = _get_closest_bullish_ob_above(bullish_ob, entry, active_only=True)
-                    dist_to_bull = (bull_ob_closest - entry) if bull_ob_closest is not None else None
-                    blocked_bull = bull_ob_closest is not None and (bull_ob_closest - entry) < block_ob_distance_mult * ob_width
-                    if _debug:
-                        logger.info(
-                            "[OB_STRAT_SHORT] bar=%d time=%s | block_opposite_ob: bull_closest=%s dist=%s threshold=%.1f blocked=%s",
-                            i, ts_human(c.time),
-                            "%.1f" % bull_ob_closest if bull_ob_closest is not None else "None",
-                            "%.1f" % dist_to_bull if dist_to_bull is not None else "N/A",
-                            block_ob_distance_mult * ob_width, blocked_bull,
-                        )
-                    if blocked_bull:
-                        continue
-                if block_sr_enabled:
-                    support = _get_closest_support_below(sr_lines, entry, min_sr_strength)
-                    dist_to_sup = (entry - support[0]) if support is not None else None
-                    blocked_sr = support is not None and (entry - support[0]) < block_sr_distance_mult * ob_width
-                    if _debug:
-                        logger.info(
-                            "[OB_STRAT_SHORT] bar=%d time=%s | block_sr: support=%s dist=%s threshold=%.1f blocked=%s",
-                            i, ts_human(c.time),
-                            "%.1f" % support[0] if support is not None else "None",
-                            "%.1f" % dist_to_sup if dist_to_sup is not None else "N/A",
-                            block_sr_distance_mult * ob_width, blocked_sr,
-                        )
-                    if blocked_sr:
-                        continue
                 stop = _compute_initial_stop_short(
                     ob_top, sr_lines, entry, min_sr_strength,
                     candles=candles, bar_index=i, atr_length=atr_length, atr_stop_mult=atr_stop_mult,

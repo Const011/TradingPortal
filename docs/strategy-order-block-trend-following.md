@@ -42,23 +42,12 @@ We watch these conditions over the last N bars; if both are true → entry.
 
 ## 4. Blocking Conditions
 
-Even when a signal is triggered and confirmed, **block** the order if (each can be enabled/disabled via parameters):
+Even when a signal is triggered and confirmed, **block** the order if:
 
 1. **Trend mismatch (hard filter, always on):**  - confirmed substantial improvement
    - **Long:** Block if the current candle color is **not bullish** (the strategy’s `is_bull` flag is False).
    - **Short:** Block if the current candle color is **not bearish** (the strategy’s `is_bear` flag is False).
    This matches the implementation where entries and reversals are only allowed when the candle color is classified as bullish (for longs) or bearish (for shorts); all other colors are blocked for that direction.
-
-2. **Nearby active opposite OB** (`block_opposite_ob_enabled`, default True):  - unverified
-   - **Long:** Block if active bearish OB below entry (breakers excluded — they act as support when broken).  
-   - **Short:** Block if active bullish OB above entry (breakers excluded).  
-   - Distance threshold: `block_ob_distance_mult × width` of the triggering OB (default 2).
-
-3. **Strong S/R in direction of trade** (`block_sr_enabled`, default True):  - unverified
-   - **Long:** Block if strong **resistance above** entry (ceiling would cap the move).  
-   - **Short:** Block if strong **support below** entry (floor would cap the short).  
-   - Strength = line `width` from volume profile S/R (higher = stronger).  
-   - Distance threshold: `block_sr_distance_mult × width`. `min_sr_strength` is a parameter.
 
 ---
 
@@ -104,10 +93,6 @@ For **short**: breakeven when close below `entry − 0.1×|entry_bar_close − e
 | `volume_confirmation_lookback` | 10 | Bars for volume average (previous N bars)                  |
 | `consecutive_closes`      | 2       | Window size for entry: last N bars checked for OB event + volume spike conditions |
 | `trail_consecutive_closes`  | 2       | Consecutive closes above/below level for trail confirmation|
-| `block_opposite_ob_enabled` | False  | Enable blocking by nearby opposite OB                     |
-| `block_sr_enabled`         | False  | Enable blocking by strong S/R in direction of trade       |
-| `block_ob_distance_mult`  | 1.0     | Block if opposite OB within N × trigger OB width |
-| `block_sr_distance_mult`  | 1.0     | Block if strong S/R within N × trigger OB width            |
 | `min_sr_strength`         | 4.0     | Min S/R line width to count as “strong” support            |
 | `trail_sr_min_strength`   | 0.0     | Min S/R line width for trailing levels; 0 = include all    |
 | `trail_param`             | 0.8     | Trailing stop: level − N × (level − prev_stop)             |
@@ -138,6 +123,5 @@ For **sell** signals:
 
 - Trigger: price touched the **entry zone** (OB top − N×OB height to OB top) and closed below with bearish candle, or crossed below a breaker that acts as resistance. The entry zone extends from the OB upper boundary downward by N×OB height (`entry_zone_mult`). The same OB entry limit (max N **actual trades** per OB) applies.
 - Entry: same 2 conditions (OB event and volume spike) over last N bars. Reversal (long→short or short→long) on opposite signal applies as in Section 3.
-- Blocking: `block_opposite_ob_enabled`, `block_sr_enabled` (both default True).
 - Initial stop: OB top or above closest resistance with gap/2.
 - Trailing: when price crosses a lower level (resistance, lower OB), move stop down.
