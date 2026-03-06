@@ -384,11 +384,14 @@ class CandleStreamHub:
             if state is None:
                 return
             state.queues.discard(queue)
+            # In simulation mode, stop heartbeat when no clients are listening.
+            # In trading mode, keep heartbeat running independent of clients.
             if state.queues:
                 return
-            if state.task:
-                state.task.cancel()
-            self._streams.pop(stream_key, None)
+            if settings.mode != "trading":
+                if state.task:
+                    state.task.cancel()
+                self._streams.pop(stream_key, None)
 
     async def _run_heartbeat(self, symbol: str, interval: str) -> None:
         """Heartbeat loop: fetch from Bybit REST at fetch_interval_sec, compute, broadcast."""

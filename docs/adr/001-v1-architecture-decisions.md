@@ -12,11 +12,13 @@ To avoid unstable early complexity, v1 must prioritize safety, observability, an
 
 ## Decisions
 
-### D1: Scope v1 to Spot only
+### D1: Scope v1 to Bybit unified account (Spot + Linear-capable)
 
-- **Decision:** Start with Bybit Spot only, no futures/leverage in v1.
-- **Why:** Simplifies risk logic, reduces margin/funding complexity, speeds delivery.
-- **Consequence:** Futures-specific abstractions are deferred but kept in adapter design.
+- **Decision:** Operate against Bybit’s unified account API, with an application-level `market` switch that selects between **Spot** (`category=spot`) and **Linear** (`category=linear`) markets per gateway.
+- **Why:** The v5 unified spec exposes a common surface for Spot and Linear; supporting both behind a single Execution Service and `BybitClient` keeps the architecture flexible while still gatekeeping leverage and risk via configuration.
+- **Consequence:** Execution and reconciliation layers must understand:
+  - Spot: positions are synthesized from wallet balances (`GET /v5/account/wallet-balance`) plus open Spot orders (`GET /v5/order/realtime?category=spot`).
+  - Linear: positions come directly from `GET /v5/position/list?category=linear&symbol=...`, with stop/TP managed via `POST /v5/position/trading-stop`. The “market” dimension becomes part of gateway configuration and must be logged/audited for each trade.
 
 ### D2: Local/dev-first deployment
 
@@ -66,11 +68,11 @@ To avoid unstable early complexity, v1 must prioritize safety, observability, an
 - **Why:** REST is reliable for deterministic history fetch while WebSocket is required for low-latency updates.
 - **Consequence:** Backend must own stream lifecycle, reconnection policy, and frontend fanout endpoint.
 
-### D10: Unified Spot market for chart data
+### D10: Unified market per gateway for chart data
 
-- **Decision:** Use Bybit Spot for both REST kline and kline WebSocket; never mix Spot REST with Linear WebSocket.
-- **Why:** Spot and Linear are different products; mixing causes volume/price mismatches and apparent "accumulation" or "reset" artifacts.
-- **Consequence:** All chart-related endpoints (candles, candle stream) use `category=spot` and `wss://stream.bybit.com/v5/public/spot` for kline topic.
+- **Decision:** For each backend gateway, use a **single Bybit market** consistently for both REST kline and kline WebSocket: Spot (`category=spot` + Spot WS host) or Linear (`category=linear` + Linear WS host), as determined by the `market` setting.
+- **Why:** Mixing Spot REST with Linear WebSocket (or vice versa) causes volume/price mismatches and apparent "accumulation" or "reset" artifacts.
+- **Consequence:** All chart-related endpoints (candles, candle stream) use the same `category` and WS host per gateway; the frontend is unaware of which market is selected.
 
 ### D11: Backend-owned candle merge
 

@@ -160,6 +160,12 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
     setSwingLabelsShow(prefs.swingLabelsShow);
   }, []);
 
+  // When user selects a new ticker, re-enable auto scale so the chart rescales like pressing "Auto".
+  useEffect(() => {
+    if (!selectedSymbol) return;
+    setAutoScaleEnabled(true);
+  }, [selectedSymbol]);
+
   useEffect(() => {
     if (isTrading && gatewayConfig) {
       const symbol = gatewayConfig.symbol ?? "BTCUSDT";

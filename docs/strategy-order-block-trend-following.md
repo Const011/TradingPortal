@@ -18,7 +18,7 @@ Strategy that generates buy/sell signals based on order blocks, candle trend col
 
 A **buy** signal can originate from:
 
-1. **Price broke up from a bullish order block** — Price touched the **entry zone** (OB bottom to OB bottom + N×OB height) and closed above the OB top with a bullish candle. The entry zone extends from the OB lower boundary upward by N×OB height (`entry_zone_mult`, default 1.2); the enablement (breaker) still uses the original OB boundaries (bottom + width).
+1. **Price broke up from a bullish order block** — Price touched the **entry zone** (OB bottom to OB bottom + N×OB height) and closed above the OB top with a bullish candle. The entry zone extends from the OB lower boundary upward by N×OB height (`entry_zone_mult`, default 1.0); the enablement (breaker) still uses the original OB boundaries (bottom + width).
 2. **Trend continued and crossed a breaker block** — A bearish OB that became a breaker (price wicked above it) now acts as support; price crosses back above it in line with bullish trend.
 
 Both cases are treated as breakout/continuation above a significant level.
@@ -32,7 +32,7 @@ Both cases are treated as breakout/continuation above a significant level.
 Entry when **both** of the following are true for the last N bars (N = `consecutive_closes`, default 2), **excluding** the initial warm-up window of `warmup_bars` (default 1000 bars). No trades are opened before bar index `warmup_bars`:
 
 1. **OB event (strong OBs only):** On any of the last N bars, there is an order block boundary cross or breaker event for an order block **whose strength is above a relative threshold** (see Section 7).
-2. **Volume spike:** On any of the last N bars, there is a bar in the direction of trade (bullish for long, bearish for short) with volume ≥ `volume_spike_mult` × average volume of previous 10 bars (default 1.2).
+2. **Volume spike:** On any of the last N bars, there is a bar in the direction of trade (bullish for long, bearish for short) with volume ≥ `volume_spike_mult` × average volume of previous 10 bars (default 1.5).
 
 We watch these conditions over the last N bars; if both are true → entry.
 
@@ -89,7 +89,7 @@ When price is above a **higher** level (support line, OB top, or breaker block a
   - **Option A:** One bar with close above the level **and** unusual volume (`volume ≥ N × avg volume`).
   - **Option B:** N consecutive bars closed above the level (`trail_consecutive_closes`, default 2).
 - **New stop** = `level − trail_param × (level − previous_stop)`
-- Default `trail_param` = 0.75 (3/4).
+- Default `trail_param` = 0.8.
 
 For **short**: breakeven when close below `entry − 0.1×|entry_bar_close − entry_bar_open|`; levels = S/R resistance, bearish OB bottoms, bullish breaker tops, position open, breakeven target. Confirmation by volume spike (one bar) or N consecutive closes below the level.
 
@@ -99,24 +99,24 @@ For **short**: breakeven when close below `entry − 0.1×|entry_bar_close − e
 
 | Parameter                 | Default | Description                                                |
 |---------------------------|---------|------------------------------------------------------------|
-| `entry_zone_mult`         | 1.2     | Entry zone extends OB boundary by N×OB height (bullish: up from bottom; bearish: down from top) |
-| `volume_spike_mult`       | 1.2     | Bar volume ≥ N × avg volume for confirmation              |
+| `entry_zone_mult`         | 1.0     | Entry zone extends OB boundary by N×OB height (bullish: up from bottom; bearish: down from top) |
+| `volume_spike_mult`       | 1.5     | Bar volume ≥ N × avg volume for confirmation              |
 | `volume_confirmation_lookback` | 10 | Bars for volume average (previous N bars)                  |
 | `consecutive_closes`      | 2       | Window size for entry: last N bars checked for OB event + volume spike conditions |
 | `trail_consecutive_closes`  | 2       | Consecutive closes above/below level for trail confirmation|
-| `block_opposite_ob_enabled` | True   | Enable blocking by nearby opposite OB                     |
-| `block_sr_enabled`         | True   | Enable blocking by strong S/R in direction of trade       |
-| `block_ob_distance_mult`  | 2.0     | Block if opposite OB within N × trigger OB width |
-| `block_sr_distance_mult`  | 2.0     | Block if strong S/R within N × trigger OB width            |
+| `block_opposite_ob_enabled` | False  | Enable blocking by nearby opposite OB                     |
+| `block_sr_enabled`         | False  | Enable blocking by strong S/R in direction of trade       |
+| `block_ob_distance_mult`  | 1.0     | Block if opposite OB within N × trigger OB width |
+| `block_sr_distance_mult`  | 1.0     | Block if strong S/R within N × trigger OB width            |
 | `min_sr_strength`         | 4.0     | Min S/R line width to count as “strong” support            |
 | `trail_sr_min_strength`   | 0.0     | Min S/R line width for trailing levels; 0 = include all    |
-| `trail_param`             | 0.75    | Trailing stop: level − N × (level − prev_stop)             |
+| `trail_param`             | 0.8     | Trailing stop: level − N × (level − prev_stop)             |
 | `max_ob_entry_signals`    | 2       | Max **actual trade entries** per OB; counts only confirmed trades, not boundary crosses |
 | `atr_length`              | 14      | ATR period for stop cap                                    |
 | `atr_stop_mult`           | 2.0     | Cap initial stop at entry ± N × ATR; 0 = disabled           |
 | `breakeven_body_frac`     | 0.1     | Trail toward entry + N×(close−open); 0 = disabled            |
 | `warmup_bars`             | 1000    | Number of initial bars used for indicator warm-up; no entries are taken before this bar index |
-| `min_ob_strength`         | 0.0     | **Relative OB strength filter (strategy only)**. When > 0, the strategy uses only order blocks whose strength is greater than `min_ob_strength × average_strength` across **all** identified order blocks. The indicator itself keeps all blocks; filtering is applied only at the strategy layer. |
+| `min_ob_strength`         | 0.75    | **Relative OB strength filter (strategy only)**. When > 0, the strategy uses only order blocks whose strength is greater than `min_ob_strength × average_strength` across **all** identified order blocks. The indicator itself keeps all blocks; filtering is applied only at the strategy layer. |
 
 ---
 

@@ -81,6 +81,7 @@ length   = input.int(10, 'Swing Lookback'     , minval = 3, group = BLOCKS_GROUP
 showBull = input.int(3, 'Show Last Bullish OB', minval = 0, group = BLOCKS_GROUP)
 showBear = input.int(3, 'Show Last Bearish OB', minval = 0, group = BLOCKS_GROUP)
 useBody  = input(false, 'Use Candle Body', group = BLOCKS_GROUP)
+obStrengthLength = input.int(2, 'OB Strength Window (vol bars)', minval = 1, maxval = 100, group = BLOCKS_GROUP, tooltip = 'Number of candles (including the initiating candle) used to sum volume for OB strength, matching Python implementation')
 
 //Style
 bullCss      = input(color.new(#2157f3, 80), 'Bullish OB'   , inline = 'bullcss', group = BLOCKS_GROUP)
@@ -94,6 +95,8 @@ dataOutputGroup = "Data Output"
 showDataPlots = input.bool(true, "Show Data Plots", group = dataOutputGroup)
 showShapes = input.bool(true, "Show Position Indicators", group = dataOutputGroup)
 showTable = input.bool(false, "Show Status Table", group = dataOutputGroup)
+showStrengthLabels = input.bool(true, "Show OB Strength Labels", group = dataOutputGroup)
+strengthLabelOffsetBars = input.int(5, "Strength Label Offset (bars to the right)", minval = 1, maxval = 50, group = dataOutputGroup, tooltip = "How many bars to the right of the last candle to place OB strength labels (Pine cannot position by pixels, so this uses bars as an approximate horizontal offset)")
 
 // Display Limits Settings
 LIMITS_GROUP = "Display Limits"
@@ -112,6 +115,7 @@ type ob
     int   loc = bar_index
     bool  breaker = false
     int   break_loc = na
+    float strength = 0.0
 
 type swing
     float y = na
@@ -210,6 +214,8 @@ var bool price_in_bull_breaker = false
 var bool price_in_bear_breaker = false
 var float distance_to_nearest_bull = na
 var float distance_to_nearest_bear = na
+var float latest_bull_ob_strength = na
+var float latest_bear_ob_strength = na
 
 // Structure signals for data output
 var bool internal_bullish_bos = false
@@ -232,6 +238,7 @@ var bool bullish_boundary_crossed = false
 var bool bearish_boundary_crossed = false
 var bool bullish_breaker_created = false
 var bool bearish_breaker_created = false
+var array<label> obStrengthLabels = array.new<label>()
 
 //------------------------------------------------------------------------------
 //Element Management Functions
@@ -341,6 +348,35 @@ swings(len)=>
         btm := swing.new(low[length], bar_index[length])
 
     [top, btm]
+
+// Compute order block strength based on raw volume over a window ending at the
+// initiating candle (loc bar), mirroring Python `_compute_ob_strength`.
+// - loc_bar_index: absolute bar_index of the candle that defines the OB range
+// - n_window: number of candles (including loc bar) in the strength window
+ob_strength_for_loc(int loc_bar_index, int n_window) =>
+    win = math.max(1, n_window)
+    lookback = bar_index - loc_bar_index
+    float vol_sum = 0.0
+
+    // Sum volume from loc bar backwards for win candles, staying within history buffer.
+    for k = 0 to win - 1
+        idx = lookback - k
+        if idx >= 0 and idx <= maxLookback
+            vol_sum += volume[idx]
+    vol_sum
+
+// Format large strength values with units (k, M) and 2 decimals.
+format_strength(float v) =>
+    v_abs = math.abs(v)
+    float scaled = v
+    string suffix = ""
+    if v_abs >= 1000000
+        scaled := v / 1000000.0
+        suffix := "M"
+    else if v_abs >= 1000
+        scaled := v / 1000.0
+        suffix := "k"
+    str.tostring(scaled, "#.00") + suffix
 
 method notransp(color css) => color.rgb(color.r(css), color.g(css), color.b(css))
 
@@ -605,6 +641,8 @@ bullish_boundary_crossed := false
 bearish_boundary_crossed := false
 bullish_breaker_created := false
 bearish_breaker_created := false
+latest_bull_ob_strength := na
+latest_bear_ob_strength := na
 
 // Bullish OB Detection
 if close > top.y and not top.crossed and bullish_ob.size() < showBull
@@ -619,7 +657,9 @@ if close > top.y and not top.crossed and bullish_ob.size() < showBull
         maxima := minima == min[i] ? max[i] : maxima
         loc_bar_index := minima == min[i] ? bar_index[i] : loc_bar_index  // Use bar_index[i]
 
-    bullish_ob.unshift(ob.new(top=maxima, btm=minima, loc=loc_bar_index))
+    strength = ob_strength_for_loc(loc_bar_index, obStrengthLength)
+    latest_bull_ob_strength := strength
+    bullish_ob.unshift(ob.new(top=maxima, btm=minima, loc=loc_bar_index, breaker=false, break_loc=na, strength=strength))
     
     // Merge overlapping order blocks
     //bullish_ob := mergeOverlappingOBs(bullish_ob)
@@ -663,7 +703,9 @@ if close < btm.y and not btm.crossed and bearish_ob.size() < showBear
         minima := maxima == max[i] ? min[i] : minima
         loc := maxima == max[i] ? bar_index[i] : loc
 
-    bearish_ob.unshift(ob.new(top=maxima, btm=minima, loc=loc))
+    strength = ob_strength_for_loc(loc, obStrengthLength)
+    latest_bear_ob_strength := strength
+    bearish_ob.unshift(ob.new(top=maxima, btm=minima, loc=loc, breaker=false, break_loc=na, strength=strength))
     
     // Merge overlapping order blocks
     //bearish_ob := mergeOverlappingOBs(bearish_ob)
@@ -830,6 +872,8 @@ plot(showDataPlots ? active_bullish_obs : na, "Active Bullish OBs", color.new(co
 plot(showDataPlots ? active_bearish_obs : na, "Active Bearish OBs", color.new(color.red, 0), 1, plot.style_line)
 plot(showDataPlots ? active_bullish_breakers : na, "Bullish Breakers", color.new(color.blue, 50), 1, plot.style_line)
 plot(showDataPlots ? active_bearish_breakers : na, "Bearish Breakers", color.new(color.red, 50), 1, plot.style_line)
+plot(showDataPlots ? latest_bull_ob_strength : na, "Latest Bull OB Strength", color.new(color.blue, 40), 1, plot.style_histogram)
+plot(showDataPlots ? latest_bear_ob_strength : na, "Latest Bear OB Strength", color.new(color.red, 40), 1, plot.style_histogram)
 
 // Nearest order block levels - keep visible as they are actual price levels
 plot(nearest_bull_top, "Nearest Bull Top", color.new(color.blue, 0), 2, plot.style_stepline)
@@ -926,6 +970,50 @@ if barstate.islast
         for i = 0 to math.min(showBear-1, bearish_ob.size()-1)
             get_ob = bearish_ob.get(i)
             get_ob.display(bearCss, bearBreakCss)
+
+    // OB Strength Labels (approx. 50px to the right of last candle using bar offset)
+    if showStrengthLabels
+        // Delete previous strength labels so we only keep current ones
+        if obStrengthLabels.size() > 0
+            for i = 0 to obStrengthLabels.size() - 1
+                label.delete(obStrengthLabels.get(i))
+            obStrengthLabels.clear()
+
+        // Bullish: annotate each displayed bullish OB (respecting showBull)
+        if bullish_ob.size() > 0 and showBull > 0
+            for i = 0 to math.min(showBull - 1, bullish_ob.size() - 1)
+                latest_bull_ob = bullish_ob.get(i)
+                bull_y = (latest_bull_ob.top + latest_bull_ob.btm) / 2.0
+                bull_text = format_strength(latest_bull_ob.strength)
+                lbl = label.new(
+                     bar_index + strengthLabelOffsetBars,  // a few bars to the right of the last candle
+                     bull_y,
+                     bull_text,
+                     xloc = xloc.bar_index,
+                     yloc = yloc.price,
+                     style = label.style_label_left,
+                     textcolor = color.white,
+                     color = color.new(color.blue, 80),
+                     size = size.small)
+                obStrengthLabels.push(lbl)
+
+        // Bearish: annotate each displayed bearish OB (respecting showBear)
+        if bearish_ob.size() > 0 and showBear > 0
+            for i = 0 to math.min(showBear - 1, bearish_ob.size() - 1)
+                latest_bear_ob = bearish_ob.get(i)
+                bear_y = (latest_bear_ob.top + latest_bear_ob.btm) / 2.0
+                bear_text = format_strength(latest_bear_ob.strength)
+                lbl_bear = label.new(
+                     bar_index + strengthLabelOffsetBars,
+                     bear_y,
+                     bear_text,
+                     xloc = xloc.bar_index,
+                     yloc = yloc.price,
+                     style = label.style_label_left,
+                     textcolor = color.white,
+                     color = color.new(color.red, 80),
+                     size = size.small)
+                obStrengthLabels.push(lbl_bear)
 
 //------------------------------------------------------------------------------
 //Status Table

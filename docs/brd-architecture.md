@@ -88,8 +88,8 @@ For v1 we integrate Bybit **v5 Spot REST** trading endpoints via an extended `By
   - Implement thin wrappers over:
     - `POST /v5/order/create` (place Spot orders; `category=spot`).
     - `POST /v5/order/cancel` (cancel specific Spot order; `category=spot`).
-    - `GET /v5/order/realtime` (query open orders; `category=spot`).
-    - `GET /v5/account/wallet-balance` or equivalent Spot account endpoint (for balances used to synthesize positions).
+    - `GET /v5/order/realtime` (query open Spot orders; `category=spot`).
+    - `GET /v5/account/wallet-balance` (Spot balances from unified account; derive effective Spot position size by comparing base/quote coin balances before/after trades).
 
 - **Execution Service responsibilities**
   - Accept normalized `OrderIntent` from the Trading Strategy / gateway (symbol, side, qty, optional limit price, intended stop level).
@@ -114,7 +114,7 @@ For v1 we integrate Bybit **v5 Spot REST** trading endpoints via an extended `By
 #### FR-2.b: Close-Position Semantics (v1)
 
 - **Open position with stop (entry + intended stop)**
-  - Strategy emits `TradeEvent` with `initial_stop_price`.
+  - Strategy emits `TradeEvent` with `initial_stop_price` and entry direction; the Execution Service derives **entry size** from gateway config (`POSITION_SIZE`) and risk rules.
   - Gateway converts `TradeEvent` to `OrderIntent` (side, qty, entry price, stop level).
   - Execution Service:
     - Places entry order via `POST /v5/order/create`.
@@ -130,16 +130,16 @@ For v1 we integrate Bybit **v5 Spot REST** trading endpoints via an extended `By
     3. After entries/reversals are decided, the strategy computes the **new effective stop level for the current bar** (initial stop for new positions, breakeven/trailing for existing ones) and records it as a stop segment. This stop level is considered **active from the next bar onward** for stop-hit checks.
   - When a stop (or manual close) is triggered:
     - Gateway emits an **exit intent** (close reason: stop / manual / end_of_data).
-    - Execution Service submits an opposite-side market order via `POST /v5/order/create`:
-      - Long → send a Sell market order for `qty`.
-      - Short (if ever used in Spot/leveraged context later) → send a Buy market order for `qty`.
+    - Execution Service queries the **current open size on the exchange** (Spot: via wallet balances + open orders; Linear: via `GET /v5/position/list`) and submits an opposite-side market order via `POST /v5/order/create` sized to fully close the live position:
+      - Long → send a Sell market order for the current open size.
+      - Short (in Linear mode) → send a Buy market order for the current open size.
     - On confirmation/fill:
       - Update trade log (`index.jsonl`) and `current.json` (position removed).
       - Mark any reconciliation metadata so FR-3 jobs can verify against Bybit balances.
 
 ### FR-3: Position and Balance Tracking
 
-- Compute synthetic Spot positions from fills/balances.
+- Compute synthetic Spot positions from fills/balances, and direct **Linear** positions from Bybit’s position API.
 - Track realized and unrealized PnL per symbol and strategy run.
 - Reconcile local state with Bybit account snapshots on schedule.
 
@@ -147,17 +147,20 @@ For v1 we integrate Bybit **v5 Spot REST** trading endpoints via an extended `By
 
 - **Source-of-truth layering**
   - **Local strategy state:** `current.json` contains open positions per gateway (symbol, interval, side, qty, entry, stop).
-  - **Exchange state:** Bybit Spot account balances and open orders from private v5 REST.
+  - **Exchange state (Spot):** Bybit Spot account balances and open orders from private v5 REST.
+  - **Exchange state (Linear):** Bybit position info from `GET /v5/position/list?category=linear&symbol=...` plus wallet-balance for margin.
 - **Reconciliation flow**
   - On a fixed schedule and on gateway startup:
     - Load `current.json` and derive expected positions.
-    - Fetch balances and open orders from Bybit via `BybitClient`.
-    - For each symbol of interest:
-      - Derive “net Spot position” from balances (base and quote assets).
-      - Compare to local `current.json` entries.
-      - If mismatch:
-        - Flag the position as “reconciliation required” with details (local vs exchange).
-        - Optionally auto-mark local trades as closed with a “reconciled” reason, if policy allows.
+    - For **Spot**:
+      - Fetch unified-account wallet balances via `GET /v5/account/wallet-balance` and open Spot orders via `GET /v5/order/realtime?category=spot`.
+      - Derive “net Spot position” from base and quote balances for each symbol.
+    - For **Linear**:
+      - Fetch current open positions via `GET /v5/position/list?category=linear&symbol=...` (position size, avg entry price, margin, etc).
+    - Compare exchange state (Spot or Linear) to local `current.json` entries.
+    - If mismatch:
+      - Flag the position as “reconciliation required” with details (local vs exchange).
+      - Optionally auto-mark local trades as closed with a “reconciled” reason, if policy allows.
   - Expose reconciliation status via a small backend API (`GET /api/v1/reconciliation-status`) for operator visibility.
 
 ### FR-4: Indicator Engine
@@ -211,6 +214,8 @@ For v1 we integrate Bybit **v5 Spot REST** trading endpoints via an extended `By
 ### Security
 
 - API keys stored via environment secrets, never in source control.
+- Bybit v5 private REST authentication uses `X-BAPI-API-KEY`, `X-BAPI-TIMESTAMP` (ms), `X-BAPI-RECV-WINDOW`, and `X-BAPI-SIGN` headers (HMAC-SHA256 over `timestamp + apiKey + recvWindow + query/body` with the API secret).
+- Backend settings include `BYBIT_API_KEY`, `BYBIT_API_SECRET`, and an optional `BYBIT_RECV_WINDOW`; these are loaded into `Settings` and used **only** in the Execution Service / `BybitClient` for request signing.
 - Role-gated endpoints for execution and strategy approval actions.
 - Immutable audit log for order intents, AI suggestions, approvals, and simulation runs.
 
@@ -312,6 +317,7 @@ Each trading gateway is configured at startup via environment variables:
 | `BARS_WINDOW` | 2000 | Number of bars for chart |
 | `FETCH_INTERVAL_SEC` | 60 | Data fetch frequency in seconds; heartbeat polls Bybit REST at this interval (applies to both simulation and trading) |
 | `TRADE_LOG_DIR` | logs/trades | Base dir for trade log; files use `{symbol}_{interval}/` subdirs |
+| `POSITION_SIZE` | 1.0 | Default position size per entry. For **Spot**, this is base-asset quantity (e.g. 0.01 BTC). For **Linear**, this is contract size or base quantity depending on the selected contract; the Execution Service is responsible for mapping this to an exact `qty` for `POST /v5/order/create`. |
 
 Example: `TRADING_SYMBOL=ETHUSDT TRADING_INTERVAL=15 FETCH_INTERVAL_SEC=30 BACKEND_PORT=9002 ./run-dev-trading.sh`
 
