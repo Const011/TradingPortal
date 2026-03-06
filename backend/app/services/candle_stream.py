@@ -98,9 +98,11 @@ def _apply_trade_logging(
     interval_sec = interval_seconds(interval, default=3600)
     current_bar_end_sec = current_bar_start_sec + interval_sec
 
-    skip_entry_and_stop = current_bar_start_sec in state.signals_emitted_for_bar
+    # Prevent duplicate entries per bar, but allow multiple stop updates
+    # (we rely on last_stop_price_per_trade to avoid duplicate prices).
+    entry_emitted_for_bar = current_bar_start_sec in state.signals_emitted_for_bar
 
-    if not skip_entry_and_stop:
+    if not entry_emitted_for_bar:
         # Log new entries (only on current bar)
         for ev in trade_events:
             if ev.bar_index != current_bar_index:
@@ -111,45 +113,53 @@ def _apply_trade_logging(
                 state.logged_entry_ids.add(trade_id)
                 state.last_stop_price_per_trade[trade_id] = ev.initial_stop_price
                 state.signals_emitted_for_bar.add(current_bar_start_sec)
-                skip_entry_and_stop = True
+                entry_emitted_for_bar = True
                 break
 
-    if not skip_entry_and_stop:
-        events_by_side: dict[str, list[tuple[int, str]]] = {"long": [], "short": []}
-        for ev in trade_events:
-            if ev.side in events_by_side:
-                events_by_side[ev.side].append((ev.time, str(ev.time)))
+    # Always consider trailing-stop updates for the current bar; we only log
+    # when the *effective* stop for the bar (latest segment) changes vs the
+    # last logged value for that trade.
+    events_by_side: dict[str, list[tuple[int, str]]] = {"long": [], "short": []}
+    for ev in trade_events:
+        if ev.side in events_by_side:
+            events_by_side[ev.side].append((ev.time, str(ev.time)))
+    for t in getattr(state, "restored_trades", []):
+        sid = t.get("side", "")
+        if sid in events_by_side:
+            et = t.get("entryTime", 0)
+            tid = t.get("tradeId", "")
+            if (et, tid) not in [(x, y) for x, y in events_by_side[sid]]:
+                events_by_side[sid].append((et, tid))
+    for side in events_by_side:
+        events_by_side[side].sort(key=lambda x: x[0])
+
+    # For each trade, pick the stop segment with the greatest end_time in this bar.
+    best_seg_per_trade: dict[str, StopSegment] = {}
+    for seg in stop_segments:
+        if seg.side not in events_by_side:
+            continue
+        if not (current_bar_start_sec <= seg.end_time < current_bar_end_sec):
+            continue
+        candidates = [(t, tid) for t, tid in events_by_side[seg.side] if t <= seg.start_time]
+        if not candidates:
+            continue
+        _, trade_id = max(candidates, key=lambda x: x[0])
+        if trade_id not in state.logged_entry_ids:
+            continue
+        existing = best_seg_per_trade.get(trade_id)
+        if existing is None or seg.end_time >= existing.end_time:
+            best_seg_per_trade[trade_id] = seg
+
+    for trade_id, seg in best_seg_per_trade.items():
+        prev = state.last_stop_price_per_trade.get(trade_id)
+        if prev is None or seg.price == prev:
+            continue
+        append_stop_move(symbol, interval, trade_id, seg.end_time, seg.price, seg.side)
+        state.last_stop_price_per_trade[trade_id] = seg.price
+        # Keep in-memory restored trades consistent with file stop updates.
         for t in getattr(state, "restored_trades", []):
-            sid = t.get("side", "")
-            if sid in events_by_side:
-                et = t.get("entryTime", 0)
-                tid = t.get("tradeId", "")
-                if (et, tid) not in [(x, y) for x, y in events_by_side[sid]]:
-                    events_by_side[sid].append((et, tid))
-        for side in events_by_side:
-            events_by_side[side].sort(key=lambda x: x[0])
-
-        for seg in stop_segments:
-            if seg.side not in events_by_side:
-                continue
-            if not (current_bar_start_sec <= seg.end_time < current_bar_end_sec):
-                continue
-            candidates = [(t, tid) for t, tid in events_by_side[seg.side] if t <= seg.start_time]
-            if not candidates:
-                continue
-            _, trade_id = max(candidates, key=lambda x: x[0])
-            if trade_id not in state.logged_entry_ids:
-                continue
-            prev = state.last_stop_price_per_trade.get(trade_id)
-            if prev is not None and seg.price != prev:
-                append_stop_move(symbol, interval, trade_id, seg.end_time, seg.price, seg.side)
-                state.last_stop_price_per_trade[trade_id] = seg.price
-                # Keep in-memory restored trades consistent with file stop updates.
-                for t in getattr(state, "restored_trades", []):
-                    if t.get("tradeId") == trade_id:
-                        t["currentStopPrice"] = seg.price
-                state.signals_emitted_for_bar.add(current_bar_start_sec)
-                break
+            if t.get("tradeId") == trade_id:
+                t["currentStopPrice"] = seg.price
 
     # Build events + segments for exit detection (include restored trades not in strategy output)
     all_events = list(trade_events)
