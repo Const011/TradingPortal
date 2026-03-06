@@ -122,8 +122,12 @@ For v1 we integrate Bybit **v5 Spot REST** trading endpoints via an extended `By
       - `side`, `entryPrice`, `qty`, `initialStopPrice`, `symbol`, `tradeId`.
     - No native exchange stop is placed in v1; the **effective stop** is held in our state.
 
-- **Stop hit / position close**
-  - Candle stream + strategy are still responsible for detecting when price touches the effective stop level.
+- **Stop hit / position close (per-bar sequence)**
+  - Candle stream + strategy are still responsible for detecting when price touches the effective stop level, **but the evaluation is strictly bar-sequenced**:
+    1. **On each new bar**, the strategy first checks whether the bar’s range touches the **stop level defined on the previous bar**.
+       - If yes → emit a stop-hit event (OB\_STOP\_HIT in logs / exit intent upstream), close the position, and **do not** trail or recalculate the stop on that bar.
+    2. With the (possibly closed) position state, the strategy evaluates **entry / reversal** conditions for the current bar and may open a new position.
+    3. After entries/reversals are decided, the strategy computes the **new effective stop level for the current bar** (initial stop for new positions, breakeven/trailing for existing ones) and records it as a stop segment. This stop level is considered **active from the next bar onward** for stop-hit checks.
   - When a stop (or manual close) is triggered:
     - Gateway emits an **exit intent** (close reason: stop / manual / end_of_data).
     - Execution Service submits an opposite-side market order via `POST /v5/order/create`:

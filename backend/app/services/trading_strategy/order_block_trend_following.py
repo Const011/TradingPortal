@@ -569,108 +569,10 @@ def compute_order_block_trend_following(
                 i, _ts_human(c.time), len(raw_events), [e["type"] for e in raw_events],
             )
 
-        # --- Trailing stop and stop-hit check for existing position (runs BEFORE new entries/reversals). ---
+        # --- Stop-hit check for existing position (uses stop defined on previous bar, before new entries/reversals). ---
         # Position open price = entry bar close (we enter on bar close when conditions met)
         if position and prev_candle is not None:
             if position.side == "long":
-                # Breakeven: trail toward entry + 0.1×entry_bar_body when close above that level
-                breakeven_target_long = position.entry_price
-                if 0 <= position.entry_bar < len(candles):
-                    ec = candles[position.entry_bar]
-                    breakeven_target_long = position.entry_price + breakeven_body_frac * abs(
-                        ec.close - ec.open
-                    )
-                if position.entry_price > position.stop_price and c.close > breakeven_target_long:
-                    new_stop = breakeven_target_long - trail_param * (
-                        breakeven_target_long - position.stop_price
-                    )
-                    if new_stop > position.stop_price:
-                        if _debug:
-                            logger.info(
-                                "[OB_STOP_BREAKEVEN_LONG] bar=%d time=%s | old_stop=%.1f new_stop=%.1f breakeven_target=%.1f",
-                                i,
-                                _ts_human(c.time),
-                                position.stop_price,
-                                new_stop,
-                                breakeven_target_long,
-                            )
-                        position.stop_price = new_stop
-                        if stop_segments and stop_segments[-1].side == "long":
-                            last = stop_segments[-1]
-                            stop_segments[-1] = StopSegment(
-                                start_time=last.start_time,
-                                end_time=time_s,
-                                price=last.price,
-                                side="long",
-                            )
-                        stop_segments.append(
-                            StopSegment(
-                                start_time=time_s,
-                                end_time=time_s,
-                                price=new_stop,
-                                side="long",
-                            )
-                        )
-                # S/R support + bullish OB tops + bearish breaker bottoms (act as support when broken)
-                # + entry price + optional breakeven target (entry + frac*body)
-                # Use trail_sr_min_strength for trailing (include more levels); min_sr_strength is for blocking only
-                levels = [l["price"] for l in sr_lines if l.get("width", 0) >= trail_sr_min_strength]
-                levels.extend([ob.top for ob in bullish_ob])
-                levels.extend([ob.bottom for ob in bearish_ob if ob.breaker])
-                levels.append(position.entry_price)  # Position open = entry bar close
-                if breakeven_body_frac > 0 and 0 <= position.entry_bar < len(candles):
-                    ec = candles[position.entry_bar]
-                    breakeven_target = position.entry_price + breakeven_body_frac * (
-                        ec.close - ec.open
-                    )
-                    levels.append(breakeven_target)
-                crossed = _confirmed_level_cross_long(
-                    candles,
-                    i,
-                    prev_candle,
-                    levels,
-                    position.stop_price,
-                    volume_spike_mult,
-                    trail_consecutive_closes,
-                    vol_lookback,
-                )
-                if crossed is not None:
-                    new_stop = crossed - trail_param * (crossed - position.stop_price)
-                    if new_stop > position.stop_price:
-                        if _debug:
-                            logger.info(
-                                "[OB_STOP_TRAIL_LONG] bar=%d time=%s | level=%.1f old_stop=%.1f new_stop=%.1f",
-                                i,
-                                _ts_human(c.time),
-                                crossed,
-                                position.stop_price,
-                                new_stop,
-                            )
-                        position.stop_price = new_stop
-                        if stop_segments and stop_segments[-1].side == "long":
-                            last = stop_segments[-1]
-                            stop_segments[-1] = StopSegment(
-                                start_time=last.start_time,
-                                end_time=time_s,
-                                price=last.price,
-                                side="long",
-                            )
-                        stop_segments.append(
-                            StopSegment(
-                                start_time=time_s,
-                                end_time=time_s,
-                                price=new_stop,
-                                side="long",
-                            )
-                        )
-                elif stop_segments and stop_segments[-1].side == "long":
-                    last = stop_segments[-1]
-                    stop_segments[-1] = StopSegment(
-                        start_time=last.start_time,
-                        end_time=time_s,
-                        price=position.stop_price,
-                        side="long",
-                    )
                 if _debug and c.low <= position.stop_price:
                     logger.info(
                         "[OB_STOP_HIT_LONG] bar=%d time=%s | low=%.1f stop=%.1f entry=%.1f",
@@ -681,105 +583,16 @@ def compute_order_block_trend_following(
                         position.entry_price,
                     )
                 if c.low <= position.stop_price:
+                    if stop_segments and stop_segments[-1].side == "long":
+                        last = stop_segments[-1]
+                        stop_segments[-1] = StopSegment(
+                            start_time=last.start_time,
+                            end_time=time_s,
+                            price=last.price,
+                            side="long",
+                        )
                     position = None
             else:
-                # Breakeven: trail toward entry - 0.1×entry_bar_body when close below that level
-                breakeven_target_short = position.entry_price
-                if 0 <= position.entry_bar < len(candles):
-                    ec = candles[position.entry_bar]
-                    breakeven_target_short = position.entry_price - breakeven_body_frac * abs(
-                        ec.close - ec.open
-                    )
-                if position.entry_price < position.stop_price and c.close < breakeven_target_short:
-                    new_stop = breakeven_target_short + trail_param * (
-                        position.stop_price - breakeven_target_short
-                    )
-                    if new_stop < position.stop_price:
-                        if _debug:
-                            logger.info(
-                                "[OB_STOP_BREAKEVEN_SHORT] bar=%d time=%s | old_stop=%.1f new_stop=%.1f breakeven_target=%.1f",
-                                i,
-                                _ts_human(c.time),
-                                position.stop_price,
-                                new_stop,
-                                breakeven_target_short,
-                            )
-                        position.stop_price = new_stop
-                        if stop_segments and stop_segments[-1].side == "short":
-                            last = stop_segments[-1]
-                            stop_segments[-1] = StopSegment(
-                                start_time=last.start_time,
-                                end_time=time_s,
-                                price=last.price,
-                                side="short",
-                            )
-                        stop_segments.append(
-                            StopSegment(
-                                start_time=time_s,
-                                end_time=time_s,
-                                price=new_stop,
-                                side="short",
-                            )
-                        )
-                # S/R resistance + bearish OB bottoms + bullish breaker tops (act as resistance when broken)
-                # + entry price + optional breakeven target (entry + frac*body)
-                levels = [l["price"] for l in sr_lines if l.get("width", 0) >= trail_sr_min_strength]
-                levels.extend([ob.bottom for ob in bearish_ob])
-                levels.extend([ob.top for ob in bullish_ob if ob.breaker])
-                levels.append(position.entry_price)  # Position open = entry bar close
-                if breakeven_body_frac > 0 and 0 <= position.entry_bar < len(candles):
-                    ec = candles[position.entry_bar]
-                    breakeven_target = position.entry_price + breakeven_body_frac * (
-                        ec.close - ec.open
-                    )
-                    levels.append(breakeven_target)
-                crossed = _confirmed_level_cross_short(
-                    candles,
-                    i,
-                    prev_candle,
-                    levels,
-                    position.stop_price,
-                    volume_spike_mult,
-                    trail_consecutive_closes,
-                    vol_lookback,
-                )
-                if crossed is not None:
-                    new_stop = crossed + trail_param * (position.stop_price - crossed)
-                    if new_stop < position.stop_price:
-                        if _debug:
-                            logger.info(
-                                "[OB_STOP_TRAIL_SHORT] bar=%d time=%s | level=%.1f old_stop=%.1f new_stop=%.1f",
-                                i,
-                                _ts_human(c.time),
-                                crossed,
-                                position.stop_price,
-                                new_stop,
-                            )
-                        position.stop_price = new_stop
-                        if stop_segments and stop_segments[-1].side == "short":
-                            last = stop_segments[-1]
-                            stop_segments[-1] = StopSegment(
-                                start_time=last.start_time,
-                                end_time=time_s,
-                                price=last.price,
-                                side="short",
-                            )
-                        stop_segments.append(
-                            StopSegment(
-                                start_time=time_s,
-                                end_time=time_s,
-                                price=new_stop,
-                                side="short",
-                            )
-                        )
-                elif stop_segments and stop_segments[-1].side == "short":
-                    last = stop_segments[-1]
-                    stop_segments[-1] = StopSegment(
-                        start_time=last.start_time,
-                        end_time=time_s,
-                        price=position.stop_price,
-                        side="short",
-                    )
                 if _debug and c.high >= position.stop_price:
                     logger.info(
                         "[OB_STOP_HIT_SHORT] bar=%d time=%s | high=%.1f stop=%.1f entry=%.1f",
@@ -790,6 +603,14 @@ def compute_order_block_trend_following(
                         position.entry_price,
                     )
                 if c.high >= position.stop_price:
+                    if stop_segments and stop_segments[-1].side == "short":
+                        last = stop_segments[-1]
+                        stop_segments[-1] = StopSegment(
+                            start_time=last.start_time,
+                            end_time=time_s,
+                            price=last.price,
+                            side="short",
+                        )
                     position = None
 
         # --- Entry window: OB + volume over last N bars; allow reversal (close + open opposite). ---
@@ -1133,8 +954,207 @@ def compute_order_block_trend_following(
                         is_bull,
                     )
 
-        # --- Trailing stop for active position ---
+        # --- Trailing stop for active position (define stop level for next bar) ---
         # Position open price = entry bar close (we enter on bar close when conditions met)
+        if position and prev_candle is not None and position.entry_bar < i:
+            if position.side == "long":
+                # Breakeven: trail toward entry + 0.1×entry_bar_body when close above that level
+                breakeven_target_long = position.entry_price
+                if 0 <= position.entry_bar < len(candles):
+                    ec = candles[position.entry_bar]
+                    breakeven_target_long = position.entry_price + breakeven_body_frac * abs(
+                        ec.close - ec.open
+                    )
+                if position.entry_price > position.stop_price and c.close > breakeven_target_long:
+                    new_stop = breakeven_target_long - trail_param * (
+                        breakeven_target_long - position.stop_price
+                    )
+                    if new_stop > position.stop_price:
+                        if _debug:
+                            logger.info(
+                                "[OB_STOP_BREAKEVEN_LONG] bar=%d time=%s | old_stop=%.1f new_stop=%.1f breakeven_target=%.1f",
+                                i,
+                                _ts_human(c.time),
+                                position.stop_price,
+                                new_stop,
+                                breakeven_target_long,
+                            )
+                        position.stop_price = new_stop
+                        if stop_segments and stop_segments[-1].side == "long":
+                            last = stop_segments[-1]
+                            stop_segments[-1] = StopSegment(
+                                start_time=last.start_time,
+                                end_time=time_s,
+                                price=last.price,
+                                side="long",
+                            )
+                        stop_segments.append(
+                            StopSegment(
+                                start_time=time_s,
+                                end_time=time_s,
+                                price=new_stop,
+                                side="long",
+                            )
+                        )
+                # S/R support + bullish OB tops + bearish breaker bottoms (act as support when broken)
+                # + entry price + optional breakeven target (entry + frac*body)
+                # Use trail_sr_min_strength for trailing (include more levels); min_sr_strength is for blocking only
+                levels = [l["price"] for l in sr_lines if l.get("width", 0) >= trail_sr_min_strength]
+                levels.extend([ob.top for ob in bullish_ob])
+                levels.extend([ob.bottom for ob in bearish_ob if ob.breaker])
+                levels.append(position.entry_price)  # Position open = entry bar close
+                if breakeven_body_frac > 0 and 0 <= position.entry_bar < len(candles):
+                    ec = candles[position.entry_bar]
+                    breakeven_target = position.entry_price + breakeven_body_frac * (
+                        ec.close - ec.open
+                    )
+                    levels.append(breakeven_target)
+                crossed = _confirmed_level_cross_long(
+                    candles,
+                    i,
+                    prev_candle,
+                    levels,
+                    position.stop_price,
+                    volume_spike_mult,
+                    trail_consecutive_closes,
+                    vol_lookback,
+                )
+                if crossed is not None:
+                    new_stop = crossed - trail_param * (crossed - position.stop_price)
+                    if new_stop > position.stop_price:
+                        if _debug:
+                            logger.info(
+                                "[OB_STOP_TRAIL_LONG] bar=%d time=%s | level=%.1f old_stop=%.1f new_stop=%.1f",
+                                i,
+                                _ts_human(c.time),
+                                crossed,
+                                position.stop_price,
+                                new_stop,
+                            )
+                        position.stop_price = new_stop
+                        if stop_segments and stop_segments[-1].side == "long":
+                            last = stop_segments[-1]
+                            stop_segments[-1] = StopSegment(
+                                start_time=last.start_time,
+                                end_time=time_s,
+                                price=last.price,
+                                side="long",
+                            )
+                        stop_segments.append(
+                            StopSegment(
+                                start_time=time_s,
+                                end_time=time_s,
+                                price=new_stop,
+                                side="long",
+                            )
+                        )
+                elif stop_segments and stop_segments[-1].side == "long":
+                    last = stop_segments[-1]
+                    stop_segments[-1] = StopSegment(
+                        start_time=last.start_time,
+                        end_time=time_s,
+                        price=position.stop_price,
+                        side="long",
+                    )
+            else:
+                # Breakeven: trail toward entry - 0.1×entry_bar_body when close below that level
+                breakeven_target_short = position.entry_price
+                if 0 <= position.entry_bar < len(candles):
+                    ec = candles[position.entry_bar]
+                    breakeven_target_short = position.entry_price - breakeven_body_frac * abs(
+                        ec.close - ec.open
+                    )
+                if position.entry_price < position.stop_price and c.close < breakeven_target_short:
+                    new_stop = breakeven_target_short + trail_param * (
+                        position.stop_price - breakeven_target_short
+                    )
+                    if new_stop < position.stop_price:
+                        if _debug:
+                            logger.info(
+                                "[OB_STOP_BREAKEVEN_SHORT] bar=%d time=%s | old_stop=%.1f new_stop=%.1f breakeven_target=%.1f",
+                                i,
+                                _ts_human(c.time),
+                                position.stop_price,
+                                new_stop,
+                                breakeven_target_short,
+                            )
+                        position.stop_price = new_stop
+                        if stop_segments and stop_segments[-1].side == "short":
+                            last = stop_segments[-1]
+                            stop_segments[-1] = StopSegment(
+                                start_time=last.start_time,
+                                end_time=time_s,
+                                price=last.price,
+                                side="short",
+                            )
+                        stop_segments.append(
+                            StopSegment(
+                                start_time=time_s,
+                                end_time=time_s,
+                                price=new_stop,
+                                side="short",
+                            )
+                        )
+                # S/R resistance + bearish OB bottoms + bullish breaker tops (act as resistance when broken)
+                # + entry price + optional breakeven target (entry + frac*body)
+                levels = [l["price"] for l in sr_lines if l.get("width", 0) >= trail_sr_min_strength]
+                levels.extend([ob.bottom for ob in bearish_ob])
+                levels.extend([ob.top for ob in bullish_ob if ob.breaker])
+                levels.append(position.entry_price)  # Position open = entry bar close
+                if breakeven_body_frac > 0 and 0 <= position.entry_bar < len(candles):
+                    ec = candles[position.entry_bar]
+                    breakeven_target = position.entry_price + breakeven_body_frac * (
+                        ec.close - ec.open
+                    )
+                    levels.append(breakeven_target)
+                crossed = _confirmed_level_cross_short(
+                    candles,
+                    i,
+                    prev_candle,
+                    levels,
+                    position.stop_price,
+                    volume_spike_mult,
+                    trail_consecutive_closes,
+                    vol_lookback,
+                )
+                if crossed is not None:
+                    new_stop = crossed + trail_param * (position.stop_price - crossed)
+                    if new_stop < position.stop_price:
+                        if _debug:
+                            logger.info(
+                                "[OB_STOP_TRAIL_SHORT] bar=%d time=%s | level=%.1f old_stop=%.1f new_stop=%.1f",
+                                i,
+                                _ts_human(c.time),
+                                crossed,
+                                position.stop_price,
+                                new_stop,
+                            )
+                        position.stop_price = new_stop
+                        if stop_segments and stop_segments[-1].side == "short":
+                            last = stop_segments[-1]
+                            stop_segments[-1] = StopSegment(
+                                start_time=last.start_time,
+                                end_time=time_s,
+                                price=last.price,
+                                side="short",
+                            )
+                        stop_segments.append(
+                            StopSegment(
+                                start_time=time_s,
+                                end_time=time_s,
+                                price=new_stop,
+                                side="short",
+                            )
+                        )
+                elif stop_segments and stop_segments[-1].side == "short":
+                    last = stop_segments[-1]
+                    stop_segments[-1] = StopSegment(
+                        start_time=last.start_time,
+                        end_time=time_s,
+                        price=position.stop_price,
+                        side="short",
+                    )
+
         prev_candle = c
 
     return events, stop_segments
