@@ -16,6 +16,8 @@ export type GatewayMode = "simulation" | "trade";
 
 export type GatewayConfig = {
   mode: GatewayMode;
+  /** Backend market: "spot" or "linear" (for ticker bookmarks key). */
+  market?: string;
   symbol?: string;
   interval?: string;
   bars_window?: number;
@@ -84,12 +86,14 @@ export function GatewayProvider({ children }: GatewayProviderProps) {
       }
       const data = (await res.json()) as {
         mode: string;
+        market?: string;
         symbol?: string;
         interval?: string;
         bars_window?: number;
       };
       const config: GatewayConfig = {
         mode: data.mode === "trading" ? "trade" : "simulation",
+        market: data.market === "linear" ? "linear" : "spot",
         symbol: data.symbol,
         interval: data.interval,
         bars_window: data.bars_window,

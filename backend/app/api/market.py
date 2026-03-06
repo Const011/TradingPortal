@@ -22,8 +22,13 @@ router = APIRouter(prefix="/api/v1", tags=["market"])
 
 @router.get("/mode")
 async def get_mode() -> dict:
-    """Return backend mode and gateway config. When mode=trading, symbol, interval, bars_window are fixed."""
-    payload: dict = {"mode": settings.mode, "fetch_interval_sec": settings.fetch_interval_sec}
+    """Return backend mode and gateway config. When mode=trading, symbol, interval, bars_window are fixed.
+    market is always returned (spot or linear) for frontend ticker bookmarks."""
+    payload: dict = {
+        "mode": settings.mode,
+        "market": settings.market,
+        "fetch_interval_sec": settings.fetch_interval_sec,
+    }
     if settings.mode == "trading":
         payload["symbol"] = settings.trading_symbol
         payload["interval"] = settings.trading_interval

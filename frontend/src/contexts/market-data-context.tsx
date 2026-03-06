@@ -30,6 +30,7 @@ import {
   getTicksWebSocketUrl,
   type TradeLogTrade,
 } from "@/lib/api/market";
+import { getBookmarkedTickers } from "@/lib/ticker-bookmarks-storage";
 import { useGateway } from "@/contexts/gateway-context";
 import {
   Candle,
@@ -233,15 +234,37 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
             setSelectedSymbol((current) => current || fetchedSymbols[0].symbol);
           }
           if (fetchedSymbols.length > 0) {
-            const requested = fetchedSymbols.slice(0, 100).map((item) => item.symbol);
+            const market = gatewayConfig?.market ?? "spot";
+            const symbolSet = new Set(fetchedSymbols.map((s) => s.symbol));
+            const bookmarkedFirst = getBookmarkedTickers(market).filter((sym) =>
+              symbolSet.has(sym)
+            );
+            const rest = fetchedSymbols
+              .filter((s) => !bookmarkedFirst.includes(s.symbol))
+              .map((s) => s.symbol)
+              .slice(0, Math.max(0, 100 - bookmarkedFirst.length));
+
             try {
-              const snapshots = await fetchTickers(backendBaseUrl, requested);
-              if (!mounted) return;
               const bySymbol: Record<string, TickerSnapshot> = {};
-              for (const snapshot of snapshots) {
-                bySymbol[snapshot.symbol] = snapshot;
+              if (bookmarkedFirst.length > 0) {
+                const snapshotsBookmarked = await fetchTickers(
+                  backendBaseUrl,
+                  bookmarkedFirst
+                );
+                if (!mounted) return;
+                for (const snapshot of snapshotsBookmarked) {
+                  bySymbol[snapshot.symbol] = snapshot;
+                }
+                setTickers((prev) => ({ ...prev, ...bySymbol }));
               }
-              setTickers(bySymbol);
+              if (rest.length > 0) {
+                const snapshotsRest = await fetchTickers(backendBaseUrl, rest);
+                if (!mounted) return;
+                for (const snapshot of snapshotsRest) {
+                  bySymbol[snapshot.symbol] = snapshot;
+                }
+                setTickers((prev) => ({ ...prev, ...bySymbol }));
+              }
             } catch {
               if (mounted) setError("Failed to fetch tickers");
             }
@@ -260,7 +283,7 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
     return () => {
       mounted = false;
     };
-  }, [backendBaseUrl, isTrading, gatewayConfig?.symbol]);
+  }, [backendBaseUrl, isTrading, gatewayConfig?.symbol, gatewayConfig?.market]);
 
   useEffect(() => {
     if (!backendBaseUrl || !selectedSymbol) {

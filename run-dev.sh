@@ -13,7 +13,7 @@ FRONTEND_PORT="${FRONTEND_PORT:-4000}"
 export BARS_WINDOW="${BARS_WINDOW:-2000}"
 
 export FETCH_INTERVAL_SEC="${FETCH_INTERVAL_SEC:-60}"
-export MARKET="${MARKET:-spot}"
+export MARKET="${MARKET:-linear}"
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 

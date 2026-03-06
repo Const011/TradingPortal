@@ -95,6 +95,9 @@ class BybitClient:
                     volume_24h=float(row.get("volume24h", 0.0)),
                     ts=int(data.get("ts", 0)),
                 )
+                # Skip invalid ticks (linear stream often sends zero price/volume)
+                if tick.price <= 0.0:
+                    continue
                 yield tick
     
     async def get_klines(
