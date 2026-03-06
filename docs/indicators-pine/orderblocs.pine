@@ -352,15 +352,18 @@ swings(len)=>
 // Compute order block strength based on raw volume over a window ending at the
 // initiating candle (loc bar), mirroring Python `_compute_ob_strength`.
 // - loc_bar_index: absolute bar_index of the candle that defines the OB range
-// - n_window: number of candles (including loc bar) in the strength window
+// - n_window: number of candles in the strength window (loc bar + N-1 preceding bars)
 ob_strength_for_loc(int loc_bar_index, int n_window) =>
     win = math.max(1, n_window)
-    lookback = bar_index - loc_bar_index
+    // loc_ago: how many bars ago the initiating candle is from the current bar
+    loc_ago = bar_index - loc_bar_index
     float vol_sum = 0.0
 
-    // Sum volume from loc bar backwards for win candles, staying within history buffer.
+    // Sum volume over the same window as Python:
+    // candles[loc_bar_index - win + 1 .. loc_bar_index]  ↔  volume[loc_ago + win - 1 .. loc_ago]
+    // (loc bar itself + win-1 preceding bars), respecting history buffer.
     for k = 0 to win - 1
-        idx = lookback - k
+        idx = loc_ago + k
         if idx >= 0 and idx <= maxLookback
             vol_sum += volume[idx]
     vol_sum
