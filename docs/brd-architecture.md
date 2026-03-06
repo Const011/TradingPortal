@@ -275,11 +275,21 @@ The frontend adapts:
 Each gateway uses files keyed by symbol and timeframe so multiple gateways can run side by side:
 
 - **Base dir:** `{TRADE_LOG_DIR}/{symbol}_{interval}/` (default `logs/trades/`, overridable via env)
-- **Index** (`index.jsonl`): JSONL records for entry, stop_move, exit.
+- **Index** (`index.jsonl`): JSONL records for entry, stop_move, exit. The backend aggregates these into per-trade objects for the `/api/v1/trade-log` endpoint.
 - **Entry snapshots** (`entry_{trade_id}.md`): One Markdown file per entry, same format as "Export for AI".
 - **Current trades** (`current.json`): Open positions for gateway restart recovery. Updated on entry, stop move, exit. Read on stream start to restore state.
 
-**Trade log semantics (trading mode only):** The trade log records **only actual trade signals generated at the current bar** (the bar being updated by live ticks). It does **not** simulate or log historical strategy calculations. On gateway start, the strategy may run over historical candles for display purposes, but those calculations are never written to the log. Only when a live bar update (upsert) arrives and the strategy emits an entry or stop move **on that bar** is it logged. Additionally, **at most one signal per bar**: once an entry or stop move has been logged for the current bar, no further signals are logged for that bar until the next bar.
+**Trading-mode restore + observability:** On trading gateway startup, the candle stream restores open positions from `current.json` and logs a `[TRADE_RESTORE]` record including the resolved file path, existence check, and the loaded trade(s). On every heartbeat in trading mode, the backend logs the current open position summary (tradeId, side, entryTime, entryPrice, currentStopPrice) so state continuity across restarts can be verified from logs.
+
+**Trade log semantics (trading mode only):** The trade log records **only actual trade signals generated at the current bar** (the bar being updated by live ticks). It does **not** simulate or log historical strategy calculations. On gateway start, the strategy may run over historical candles for display purposes, but those calculations are never written to the log. Only when a live bar update (upsert) arrives and the strategy emits an entry, stop move, or exit **on that bar** is it logged. Additionally, **at most one entry or stop move per bar**: once an entry or stop move has been logged for the current bar, no further signals are logged for that bar until the next bar.
+
+**Trade history API (`GET /api/v1/trade-log`):** In trading mode, the gateway exposes a trade history endpoint that returns **per-trade objects** in the same structure the simulation mode uses for chart overlays and profitability tables:
+
+- Each object includes: `entryDateTime`, `side`, `entryPrice`, `closeDateTime`, `closePrice`, `closeReason`, `points`, `markers`, `stopSegments`, `stopLines`, and `events` (normalized from strategy output).
+- Completed trades (have an `exit` record in `index.jsonl`) carry realized PnL and `closeReason = "stop" | "take_profit" | "manual"`.
+- Still-open trades (present in `current.json` but without an `exit` record) are also included with `closeReason = "open"` and **temporary** `points = 0.0` so the frontend can:
+  - Render entry markers and trailing stop lines on the chart.
+  - Show open positions in the results table without treating them as realized PnL.
 
 Example: Gateway BTCUSDT 60m → `logs/trades/BTCUSDT_60/`; Gateway ETHUSDT 15m → `logs/trades/ETHUSDT_15/`.
 

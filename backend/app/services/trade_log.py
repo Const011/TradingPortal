@@ -15,6 +15,7 @@ def _format_ts_local(ts: int, unit: str = "s") -> str:
 from app.config import settings
 from app.schemas.market import Candle
 from app.services.trading_strategy.types import TradeEvent, StopSegment
+from app.utils.timefmt import ts_human
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +76,7 @@ def add_current_trade(
     trades.append({
         "tradeId": trade_id,
         "entryTime": entry_time,
+        "entryTimeHuman": ts_human(entry_time, unit="s"),
         "entryPrice": entry_price,
         "currentStopPrice": initial_stop_price,
         "initialStopPrice": initial_stop_price,
@@ -96,6 +98,8 @@ def update_current_trade_stop(
     for t in trades:
         if t.get("tradeId") == trade_id:
             t["currentStopPrice"] = current_stop_price
+            t["currentStopTime"] = int(datetime.utcnow().timestamp())
+            t["currentStopTimeHuman"] = ts_human(t["currentStopTime"], unit="s")
             save_current_trades(symbol, interval, trades)
             return
     logger.warning("Trade log: update_current_trade_stop trade_id=%s not found", trade_id)
@@ -310,6 +314,7 @@ def append_entry(
         "type": "entry",
         "tradeId": trade_id,
         "time": event.time,
+        "timeHuman": ts_human(event.time, unit="s"),
         "barIndex": event.bar_index,
         "side": event.side,
         "price": event.price,
@@ -350,6 +355,7 @@ def append_stop_move(
         "type": "stop_move",
         "tradeId": trade_id,
         "time": time,
+        "timeHuman": ts_human(time, unit="s"),
         "price": price,
         "side": side,
     }
@@ -376,6 +382,7 @@ def append_exit(
         "type": "exit",
         "tradeId": trade_id,
         "time": time,
+        "timeHuman": ts_human(time, unit="s"),
         "closePrice": close_price,
         "closeReason": close_reason,
         "points": points,
@@ -427,16 +434,14 @@ def get_trades(
             elif rec_type == "exit":
                 exits[trade_id] = rec
 
-    # Build completed trades (have both entry and exit)
+    # Build trades; include both completed (have exit) and still-open (no exit yet).
     trades: list[dict[str, Any]] = []
     for trade_id, entry in entries.items():
-        if trade_id not in exits:
-            continue
-        exit_rec = exits[trade_id]
+        exit_rec = exits.get(trade_id)
         segments = stop_segments.get(trade_id, [])
 
         # Build stop segments for chart (startTime, endTime, price, side)
-        # Entry time -> first stop_move or exit
+        # Entry time -> first stop_move -> ... -> exit (or last stop_move for open trades)
         entry_time = entry.get("time", 0)
         initial_stop = entry.get("initialStopPrice", 0.0)
         side = entry.get("side", "long")
@@ -455,9 +460,13 @@ def get_trades(
             })
             prev_time = t
             prev_price = p
+
+        # For completed trades, the last segment ends at exit time.
+        # For open trades, the last segment ends at the last known stop-move time (or entry time if none).
+        last_time = exit_rec.get("time", prev_time) if exit_rec is not None else prev_time
         chart_stop_segments.append({
             "startTime": prev_time,
-            "endTime": exit_rec.get("time", prev_time),
+            "endTime": last_time,
             "price": prev_price,
             "side": side,
         })
@@ -485,15 +494,27 @@ def get_trades(
             for s in chart_stop_segments
         ]
 
+        if exit_rec is not None:
+            close_dt_iso = _ts_to_iso(exit_rec.get("time", 0))
+            close_price = exit_rec.get("closePrice")
+            close_reason = exit_rec.get("closeReason", "manual")
+            points = exit_rec.get("points", 0.0)
+        else:
+            # Still-open trade: no realized PnL yet. Represent as "open" with zero points.
+            close_dt_iso = _ts_to_iso(last_time)
+            close_price = entry.get("price")
+            close_reason = "open"
+            points = 0.0
+
         trades.append({
             "tradeId": trade_id,
             "entryDateTime": _ts_to_iso(entry_time),
             "side": side,
             "entryPrice": entry.get("price"),
-            "closeDateTime": _ts_to_iso(exit_rec.get("time", 0)),
-            "closePrice": exit_rec.get("closePrice"),
-            "closeReason": exit_rec.get("closeReason", "manual"),
-            "points": exit_rec.get("points", 0.0),
+            "closeDateTime": close_dt_iso,
+            "closePrice": close_price,
+            "closeReason": close_reason,
+            "points": points,
             "markers": markers,
             "stopSegments": chart_stop_segments,
             "stopLines": stop_lines,

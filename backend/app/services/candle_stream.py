@@ -2,6 +2,7 @@ import asyncio
 import logging
 from collections import defaultdict
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from app.config import settings
 from app.schemas.market import Candle
@@ -20,6 +21,7 @@ from app.services.trade_log import (
     compute_trade_results,
     load_current_trades,
 )
+from app.utils.timefmt import ts_human
 
 logger = logging.getLogger(__name__)
 DEFAULT_VOLUME_PROFILE_WINDOW = 2000
@@ -51,6 +53,14 @@ def _restore_current_trades(symbol: str, interval: str, state: "CandleStreamStat
     """Load current trades from file and merge into state. Called once per stream on start."""
     if getattr(state, "current_trades_restored", False):
         return
+    path = Path(settings.trade_log_dir) / f"{symbol}_{interval}" / "current.json"
+    logger.info(
+        "[TRADE_RESTORE] symbol=%s interval=%s path=%s exists=%s",
+        symbol,
+        interval,
+        str(path),
+        path.exists(),
+    )
     current = load_current_trades(symbol, interval)
     for t in current:
         tid = t.get("tradeId", "")
@@ -59,6 +69,22 @@ def _restore_current_trades(symbol: str, interval: str, state: "CandleStreamStat
             state.last_stop_price_per_trade[tid] = t.get("currentStopPrice", 0.0)
     state.restored_trades = current
     state.current_trades_restored = True
+    logger.info(
+        "[TRADE_RESTORE] loaded %d trade(s): %s",
+        len(current),
+        [
+            {
+                "tradeId": t.get("tradeId"),
+                "side": t.get("side"),
+                "entryTime": t.get("entryTime"),
+                "entryTimeHuman": ts_human(t.get("entryTime", 0), unit="s") if isinstance(t.get("entryTime", 0), (int, float)) else None,
+                "entryPrice": t.get("entryPrice"),
+                "currentStopPrice": t.get("currentStopPrice"),
+                "initialStopPrice": t.get("initialStopPrice"),
+            }
+            for t in current
+        ],
+    )
 
 
 def _apply_trade_logging(
@@ -140,6 +166,10 @@ def _apply_trade_logging(
             if prev is not None and seg.price != prev:
                 append_stop_move(symbol, interval, trade_id, seg.end_time, seg.price, seg.side)
                 state.last_stop_price_per_trade[trade_id] = seg.price
+                # Keep in-memory restored trades consistent with file stop updates.
+                for t in getattr(state, "restored_trades", []):
+                    if t.get("tradeId") == trade_id:
+                        t["currentStopPrice"] = seg.price
                 state.signals_emitted_for_bar.add(current_bar_start_sec)
                 break
 
@@ -209,6 +239,9 @@ def _apply_trade_logging(
             r["points"],
         )
         state.logged_exit_ids.add(tid)
+        # Keep in-memory restored trades consistent with file exits.
+        if getattr(state, "restored_trades", None):
+            state.restored_trades = [t for t in state.restored_trades if t.get("tradeId") != tid]
 
 
 def _make_snapshot_payload(
@@ -309,6 +342,8 @@ class CandleStreamHub:
             state = self._streams[stream_key]
             state.volume_profile_window = volume_profile_window
             state.strategy_markers = strategy_markers
+            if settings.mode == "trading":
+                _restore_current_trades(symbol.upper(), interval, state)
             if state.task is None or state.task.done():
                 state.task = asyncio.create_task(self._run_heartbeat(symbol.upper(), interval))
 
@@ -389,12 +424,29 @@ class CandleStreamHub:
                     is_live_update=True,
                 )
                 await self._broadcast(stream_key, payload)
+                # Trading mode debug: show current open position/stop each heartbeat.
+                open_trades = load_current_trades(symbol, interval) if settings.mode == "trading" else []
+                if settings.mode == "trading":
+                    if open_trades:
+                        t0 = open_trades[0]
+                        pos_summary = (
+                            f"count={len(open_trades)} "
+                            f"tradeId={t0.get('tradeId')} side={t0.get('side')} "
+                            f"entryTime={t0.get('entryTime')}({ts_human(t0.get('entryTime', 0), unit='s')}) "
+                            f"entry={t0.get('entryPrice')} stop={t0.get('currentStopPrice')} "
+                            f"initStop={t0.get('initialStopPrice')}"
+                        )
+                    else:
+                        pos_summary = "count=0"
+                else:
+                    pos_summary = "n/a"
                 logger.info(
-                    "Heartbeat: %s %s fetched %d candles, broadcast to %d client(s)",
+                    "Heartbeat: %s %s fetched %d candles, broadcast to %d client(s) | open_position: %s",
                     symbol,
                     interval,
                     len(candles),
                     len(state.queues),
+                    pos_summary,
                 )
             except asyncio.CancelledError:
                 break

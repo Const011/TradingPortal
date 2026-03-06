@@ -13,9 +13,7 @@ logger = logging.getLogger(__name__)
 _DEBUG_TS_START = int(datetime(2025, 3, 2, 15, 0).timestamp() * 1000)
 _DEBUG_TS_END = int(datetime(2025, 3, 2, 19, 0).timestamp() * 1000)
 
-
-def _ts_human(ts_ms: int) -> str:
-    return datetime.fromtimestamp(ts_ms / 1000).strftime("%Y-%m-%d %H:%M:%S")
+from app.utils.timefmt import ts_human
 
 from app.services.indicators.order_blocks import (
     OrderBlock,
@@ -476,7 +474,7 @@ def _detect_ob_events(
             trigger_bar = ev.get("trigger_bar", i)
             logger.info(
                 "[OB_EVENTS] bar=%d time=%s | RESULT: %s ob=[%.1f,%.1f] trigger_bar=%s (i=%d)",
-                i, _ts_human(c.time), ev["type"], ev["ob_top"], ev["ob_bottom"],
+                i, ts_human(c.time), ev["type"], ev["ob_top"], ev["ob_bottom"],
                 trigger_bar, i,
             )
 
@@ -566,7 +564,7 @@ def compute_order_block_trend_following(
         if _debug and raw_events:
             logger.info(
                 "[OB_STRAT] bar=%d time=%s | raw_events=%d types=%s",
-                i, _ts_human(c.time), len(raw_events), [e["type"] for e in raw_events],
+                i, ts_human(c.time), len(raw_events), [e["type"] for e in raw_events],
             )
 
         # --- Stop-hit check for existing position (uses stop defined on previous bar, before new entries/reversals). ---
@@ -577,7 +575,7 @@ def compute_order_block_trend_following(
                     logger.info(
                         "[OB_STOP_HIT_LONG] bar=%d time=%s | low=%.1f stop=%.1f entry=%.1f",
                         i,
-                        _ts_human(c.time),
+                        ts_human(c.time),
                         c.low,
                         position.stop_price,
                         position.entry_price,
@@ -597,7 +595,7 @@ def compute_order_block_trend_following(
                     logger.info(
                         "[OB_STOP_HIT_SHORT] bar=%d time=%s | high=%.1f stop=%.1f entry=%.1f",
                         i,
-                        _ts_human(c.time),
+                        ts_human(c.time),
                         c.high,
                         position.stop_price,
                         position.entry_price,
@@ -617,14 +615,14 @@ def compute_order_block_trend_following(
         if _debug and len(events_history) < consecutive_closes:
             logger.info(
                 "[OB_STRAT] bar=%d time=%s | SKIP entry window: len_history=%d < consecutive_closes=%d",
-                i, _ts_human(c.time), len(events_history), consecutive_closes,
+                i, ts_human(c.time), len(events_history), consecutive_closes,
             )
         # Do not generate new entries during warmup period (first warmup_bars indices).
         if len(events_history) >= consecutive_closes and i >= warmup_bars:
             if _debug:
                 logger.info(
                     "[OB_STRAT] bar=%d time=%s | entry window check: len_history=%d position=%s warmup_bars=%d",
-                    i, _ts_human(c.time), len(events_history), position, warmup_bars,
+                    i, ts_human(c.time), len(events_history), position, warmup_bars,
                 )
             # Collect OBs that had events in the last N bars
             bullish_obs: set[tuple[float, float, int]] = set()
@@ -642,7 +640,7 @@ def compute_order_block_trend_following(
             if _debug:
                 logger.info(
                     "[OB_STRAT] bar=%d time=%s | OBs in history: bullish=%d bearish=%d",
-                    i, _ts_human(c.time), len(bullish_obs), len(bearish_obs),
+                    i, ts_human(c.time), len(bullish_obs), len(bearish_obs),
                 )
 
             def _cond2_vol_spike(bar_idx: int, side: str) -> bool:
@@ -663,7 +661,7 @@ def compute_order_block_trend_following(
                     if _debug:
                         logger.info(
                             "[OB_STRAT_LONG] bar=%d time=%s ob=[%.1f,%.1f] | SKIP: entry cap (count=%d >= %d)",
-                            i, _ts_human(c.time), ob_top, ob_bottom,
+                            i, ts_human(c.time), ob_top, ob_bottom,
                             ob_entry_counts.get(ob_key, 0), max_ob_entry_signals,
                         )
                     continue
@@ -674,7 +672,7 @@ def compute_order_block_trend_following(
                 if _debug:
                     logger.info(
                         "[OB_STRAT_LONG] bar=%d time=%s ob=[%.1f,%.1f] | c1=%s c2=%s (vol_spike_bars=%s) close=%.1f",
-                        i, _ts_human(c.time), ob_top, ob_bottom,
+                        i, ts_human(c.time), ob_top, ob_bottom,
                         c1, c2, c2_bars, c.close,
                     )
                 if not (c1 and c2):
@@ -687,7 +685,7 @@ def compute_order_block_trend_following(
                     if _debug:
                         logger.info(
                             "[OB_STRAT_LONG] bar=%d time=%s | block_opposite_ob: bear_closest=%s dist=%s threshold=%.1f blocked=%s",
-                            i, _ts_human(c.time),
+                            i, ts_human(c.time),
                             "%.1f" % bear_ob_closest if bear_ob_closest is not None else "None",
                             "%.1f" % dist_to_bear if dist_to_bear is not None else "N/A",
                             block_ob_distance_mult * ob_width, blocked_bear,
@@ -701,7 +699,7 @@ def compute_order_block_trend_following(
                     if _debug:
                         logger.info(
                             "[OB_STRAT_LONG] bar=%d time=%s | block_sr: resistance=%s dist=%s threshold=%.1f blocked=%s",
-                            i, _ts_human(c.time),
+                            i, ts_human(c.time),
                             "%.1f" % resistance[0] if resistance is not None else "None",
                             "%.1f" % dist_to_res if dist_to_res is not None else "N/A",
                             block_sr_distance_mult * ob_width, blocked_sr,
@@ -728,7 +726,7 @@ def compute_order_block_trend_following(
                     if _debug:
                         logger.info(
                             "[OB_STRAT_SHORT] bar=%d time=%s ob=[%.1f,%.1f] | SKIP: entry cap (count=%d >= %d)",
-                            i, _ts_human(c.time), ob_top, ob_bottom,
+                            i, ts_human(c.time), ob_top, ob_bottom,
                             ob_entry_counts.get(ob_key, 0), max_ob_entry_signals,
                         )
                     continue
@@ -739,7 +737,7 @@ def compute_order_block_trend_following(
                 if _debug:
                     logger.info(
                         "[OB_STRAT_SHORT] bar=%d time=%s ob=[%.1f,%.1f] | c1=%s c2=%s (vol_spike_bars=%s) close=%.1f",
-                        i, _ts_human(c.time), ob_top, ob_bottom,
+                        i, ts_human(c.time), ob_top, ob_bottom,
                         c1, c2, c2_bars, c.close,
                     )
                 if not (c1 and c2):
@@ -752,7 +750,7 @@ def compute_order_block_trend_following(
                     if _debug:
                         logger.info(
                             "[OB_STRAT_SHORT] bar=%d time=%s | block_opposite_ob: bull_closest=%s dist=%s threshold=%.1f blocked=%s",
-                            i, _ts_human(c.time),
+                            i, ts_human(c.time),
                             "%.1f" % bull_ob_closest if bull_ob_closest is not None else "None",
                             "%.1f" % dist_to_bull if dist_to_bull is not None else "N/A",
                             block_ob_distance_mult * ob_width, blocked_bull,
@@ -766,7 +764,7 @@ def compute_order_block_trend_following(
                     if _debug:
                         logger.info(
                             "[OB_STRAT_SHORT] bar=%d time=%s | block_sr: support=%s dist=%s threshold=%.1f blocked=%s",
-                            i, _ts_human(c.time),
+                            i, ts_human(c.time),
                             "%.1f" % support[0] if support is not None else "None",
                             "%.1f" % dist_to_sup if dist_to_sup is not None else "N/A",
                             block_sr_distance_mult * ob_width, blocked_sr,
@@ -797,7 +795,7 @@ def compute_order_block_trend_following(
                     if _debug:
                         logger.info(
                             "[OB_STRAT_LONG] bar=%d time=%s | ENTRY LONG ob=[%.1f,%.1f] price=%.1f (reversal_from=%s)",
-                            i, _ts_human(c.time), candidate.ob_top, candidate.ob_bottom, entry_price, current_side,
+                            i, ts_human(c.time), candidate.ob_top, candidate.ob_bottom, entry_price, current_side,
                         )
                     events.append(
                         TradeEvent(
@@ -834,7 +832,7 @@ def compute_order_block_trend_following(
                         logger.info(
                             "[OB_STOP_INIT_LONG] bar=%d time=%s | entry=%.1f stop=%.1f low=%.1f guard_low=%.1f violates_guard=%s",
                             i,
-                            _ts_human(c.time),
+                            ts_human(c.time),
                             position.entry_price,
                             position.stop_price,
                             entry_candle.low,
@@ -845,7 +843,7 @@ def compute_order_block_trend_following(
                     if _debug:
                         logger.info(
                             "[OB_STRAT_SHORT] bar=%d time=%s | ENTRY SHORT ob=[%.1f,%.1f] price=%.1f (reversal_from=%s)",
-                            i, _ts_human(c.time), candidate.ob_top, candidate.ob_bottom, entry_price, current_side,
+                            i, ts_human(c.time), candidate.ob_top, candidate.ob_bottom, entry_price, current_side,
                         )
                     events.append(
                         TradeEvent(
@@ -882,7 +880,7 @@ def compute_order_block_trend_following(
                         logger.info(
                             "[OB_STOP_INIT_SHORT] bar=%d time=%s | entry=%.1f stop=%.1f high=%.1f guard_high=%.1f violates_guard=%s",
                             i,
-                            _ts_human(c.time),
+                            ts_human(c.time),
                             position.entry_price,
                             position.stop_price,
                             entry_candle.high,
@@ -912,7 +910,7 @@ def compute_order_block_trend_following(
                             logger.info(
                                 "[OB_STRAT_LONG] bar=%d time=%s | BLOCKED by trend filter (is_bull=%s)",
                                 i,
-                                _ts_human(c.time),
+                                ts_human(c.time),
                                 is_bull,
                             )
                     elif chosen.side == "short" and not is_bear:
@@ -920,7 +918,7 @@ def compute_order_block_trend_following(
                             logger.info(
                                 "[OB_STRAT_SHORT] bar=%d time=%s | BLOCKED by trend filter (is_bear=%s)",
                                 i,
-                                _ts_human(c.time),
+                                ts_human(c.time),
                                 is_bear,
                             )
                     else:
@@ -929,28 +927,28 @@ def compute_order_block_trend_following(
                 # Reversal long→short only if swing trend is bearish.
                 if is_bear:
                     if _debug:
-                        logger.info("[OB_STRAT] bar=%d time=%s | REVERSAL long→short", i, _ts_human(c.time))
+                        logger.info("[OB_STRAT] bar=%d time=%s | REVERSAL long→short", i, ts_human(c.time))
                     position = None
                     _open_from_candidate(short_candidate)
                 elif _debug:
                     logger.info(
                         "[OB_STRAT] bar=%d time=%s | REVERSAL long→short BLOCKED by trend filter (is_bear=%s)",
                         i,
-                        _ts_human(c.time),
+                        ts_human(c.time),
                         is_bear,
                     )
             elif current_side == "short" and long_candidate is not None:
                 # Reversal short→long only if swing trend is bullish.
                 if is_bull:
                     if _debug:
-                        logger.info("[OB_STRAT] bar=%d time=%s | REVERSAL short→long", i, _ts_human(c.time))
+                        logger.info("[OB_STRAT] bar=%d time=%s | REVERSAL short→long", i, ts_human(c.time))
                     position = None
                     _open_from_candidate(long_candidate)
                 elif _debug:
                     logger.info(
                         "[OB_STRAT] bar=%d time=%s | REVERSAL short→long BLOCKED by trend filter (is_bull=%s)",
                         i,
-                        _ts_human(c.time),
+                        ts_human(c.time),
                         is_bull,
                     )
 
@@ -974,7 +972,7 @@ def compute_order_block_trend_following(
                             logger.info(
                                 "[OB_STOP_BREAKEVEN_LONG] bar=%d time=%s | old_stop=%.1f new_stop=%.1f breakeven_target=%.1f",
                                 i,
-                                _ts_human(c.time),
+                                ts_human(c.time),
                                 position.stop_price,
                                 new_stop,
                                 breakeven_target_long,
@@ -1026,7 +1024,7 @@ def compute_order_block_trend_following(
                             logger.info(
                                 "[OB_STOP_TRAIL_LONG] bar=%d time=%s | level=%.1f old_stop=%.1f new_stop=%.1f",
                                 i,
-                                _ts_human(c.time),
+                                ts_human(c.time),
                                 crossed,
                                 position.stop_price,
                                 new_stop,
@@ -1073,7 +1071,7 @@ def compute_order_block_trend_following(
                             logger.info(
                                 "[OB_STOP_BREAKEVEN_SHORT] bar=%d time=%s | old_stop=%.1f new_stop=%.1f breakeven_target=%.1f",
                                 i,
-                                _ts_human(c.time),
+                                ts_human(c.time),
                                 position.stop_price,
                                 new_stop,
                                 breakeven_target_short,
@@ -1124,7 +1122,7 @@ def compute_order_block_trend_following(
                             logger.info(
                                 "[OB_STOP_TRAIL_SHORT] bar=%d time=%s | level=%.1f old_stop=%.1f new_stop=%.1f",
                                 i,
-                                _ts_human(c.time),
+                                ts_human(c.time),
                                 crossed,
                                 position.stop_price,
                                 new_stop,
