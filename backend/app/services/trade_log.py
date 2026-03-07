@@ -343,6 +343,44 @@ def append_entry(
     return trade_id
 
 
+def get_effective_stop_segments_for_bar(
+    stop_segments: list[StopSegment],
+    bar_start_sec: int,
+    bar_end_sec: int,
+    events_by_side: dict[str, list[tuple[int, str]]],
+    logged_entry_ids: set[str],
+) -> dict[str, StopSegment]:
+    """Return the single best stop segment per trade for the given bar.
+
+    Used by trade logging and by the execution module to submit the correct stop price.
+    Strategy may emit multiple segments per bar (e.g. breakeven then level_cross); this
+    picks the best by end_time, then by price (long: max price, short: min price).
+    """
+    best: dict[str, StopSegment] = {}
+    for seg in stop_segments:
+        if seg.side not in events_by_side:
+            continue
+        if not (bar_start_sec <= seg.end_time < bar_end_sec):
+            continue
+        candidates = [(t, tid) for t, tid in events_by_side[seg.side] if t <= seg.start_time]
+        if not candidates:
+            continue
+        _, trade_id = max(candidates, key=lambda x: x[0])
+        if trade_id not in logged_entry_ids:
+            continue
+        existing = best.get(trade_id)
+        if existing is None:
+            best[trade_id] = seg
+        elif seg.end_time > existing.end_time:
+            best[trade_id] = seg
+        elif seg.end_time == existing.end_time:
+            if seg.side == "short" and seg.price < existing.price:
+                best[trade_id] = seg
+            elif seg.side == "long" and seg.price > existing.price:
+                best[trade_id] = seg
+    return best
+
+
 def append_stop_move(
     symbol: str,
     interval: str,

@@ -172,8 +172,9 @@ export function TickerList({ width = DEFAULT_TICKER_PANEL_WIDTH }: TickerListPro
                     whiteSpace: "nowrap",
                     color: changeColor,
                     fontSize: 13,
-                    textAlign: "right",
+                    textAlign: "left",
                     fontVariantNumeric: "tabular-nums",
+                    paddingRight: 5,
                   }}
                   title={
                     change !== null

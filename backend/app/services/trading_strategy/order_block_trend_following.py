@@ -10,8 +10,8 @@ from app.schemas.market import Candle
 logger = logging.getLogger(__name__)
 
 # Temporary debug: log bullish signal steps for bars around 2026-03-02 17:00
-_DEBUG_TS_START = int(datetime(2026, 3, 6, 17, 0).timestamp() * 1000)
-_DEBUG_TS_END = int(datetime(2026, 3, 6, 19, 0).timestamp() * 1000)
+_DEBUG_TS_START = int(datetime(2026, 3, 7, 11, 0).timestamp() * 1000)
+_DEBUG_TS_END = int(datetime(2026, 3, 7, 14, 0).timestamp() * 1000)
 
 from app.utils.timefmt import ts_human
 
@@ -952,7 +952,10 @@ def compute_order_block_trend_following(
                     )
 
         # --- Trailing stop for active position (define stop level for next bar) ---
-        # Position open price = entry bar close (we enter on bar close when conditions met)
+        # Each appended StopSegment has price=position.stop_price (after update). The strategy
+        # can emit multiple segments per bar (e.g. breakeven then level_cross). For execution
+        # and logging, use get_effective_stop_segments_for_bar() to get the single best stop
+        # per trade (long: max price, short: min price among segments for that bar).
         if position and prev_candle is not None and position.entry_bar < i:
             if position.side == "long":
                 # Breakeven: trail toward entry + 0.1×entry_bar_body when close above that level

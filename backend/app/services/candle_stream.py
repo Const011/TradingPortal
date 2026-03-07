@@ -19,6 +19,7 @@ from app.services.trade_log import (
     append_exit,
     append_stop_move,
     compute_trade_results,
+    get_effective_stop_segments_for_bar,
     load_current_trades,
 )
 from app.utils.intervals import interval_seconds
@@ -133,29 +134,30 @@ def _apply_trade_logging(
     for side in events_by_side:
         events_by_side[side].sort(key=lambda x: x[0])
 
-    # For each trade, pick the stop segment with the greatest end_time in this bar.
-    best_seg_per_trade: dict[str, StopSegment] = {}
-    for seg in stop_segments:
-        if seg.side not in events_by_side:
-            continue
-        if not (current_bar_start_sec <= seg.end_time < current_bar_end_sec):
-            continue
-        candidates = [(t, tid) for t, tid in events_by_side[seg.side] if t <= seg.start_time]
-        if not candidates:
-            continue
-        _, trade_id = max(candidates, key=lambda x: x[0])
-        if trade_id not in state.logged_entry_ids:
-            continue
-        existing = best_seg_per_trade.get(trade_id)
-        if existing is None or seg.end_time >= existing.end_time:
-            best_seg_per_trade[trade_id] = seg
+    best_seg_per_trade = get_effective_stop_segments_for_bar(
+        stop_segments,
+        current_bar_start_sec,
+        current_bar_end_sec,
+        events_by_side,
+        state.logged_entry_ids,
+    )
 
     for trade_id, seg in best_seg_per_trade.items():
         prev = state.last_stop_price_per_trade.get(trade_id)
-        if prev is None or seg.price == prev:
+        # Only log when the new stop is an improvement (never move stop against the trade).
+        if prev is not None:
+            if seg.side == "short" and seg.price >= prev:
+                continue
+            if seg.side == "long" and seg.price <= prev:
+                continue
+        if seg.price == prev:
+            continue
+        # At most one stop move per bar per trade to avoid wobble from repeated live updates.
+        if state.logged_stop_bar_per_trade.get(trade_id) == current_bar_start_sec:
             continue
         append_stop_move(symbol, interval, trade_id, seg.end_time, seg.price, seg.side)
         state.last_stop_price_per_trade[trade_id] = seg.price
+        state.logged_stop_bar_per_trade[trade_id] = current_bar_start_sec
         # Keep in-memory restored trades consistent with file stop updates.
         for t in getattr(state, "restored_trades", []):
             if t.get("tradeId") == trade_id:
@@ -307,6 +309,7 @@ class CandleStreamState:
     logged_entry_ids: set[str] = field(default_factory=set)
     logged_exit_ids: set[str] = field(default_factory=set)
     last_stop_price_per_trade: dict[str, float] = field(default_factory=dict)
+    logged_stop_bar_per_trade: dict[str, int] = field(default_factory=dict)  # trade_id -> bar_start_sec; one stop_move per bar
     current_trades_restored: bool = False
     restored_trades: list = field(default_factory=list)
     signals_emitted_for_bar: set[int] = field(default_factory=set)
