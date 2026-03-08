@@ -21,6 +21,16 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 
+if settings.mode == "trading":
+    dry_run_note = " [EXECUTOR_DRY_RUN=true: no real orders/stops]" if settings.executor_dry_run else ""
+    print(
+        f"Gateway: port={settings.backend_port} mode=trading "
+        f"symbol={settings.trading_symbol} interval={settings.trading_interval} "
+        f"position_size={settings.position_size or '(not set)'} leverage={settings.leverage}{dry_run_note}"
+    )
+else:
+    print(f"Gateway: port={settings.backend_port} mode=simulation")
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):

@@ -71,10 +71,11 @@ def add_current_trade(
     initial_stop_price: float,
     side: str,
     target_price: float | None = None,
+    size: float | None = None,
 ) -> None:
-    """Add trade to current trades file (on entry)."""
+    """Add trade to current trades file (on entry). size from exchange when executor confirms fill."""
     trades = load_current_trades(symbol, interval)
-    trades.append({
+    t: dict[str, Any] = {
         "tradeId": trade_id,
         "entryTime": entry_time,
         "entryTimeHuman": ts_human(entry_time, unit="s"),
@@ -83,7 +84,10 @@ def add_current_trade(
         "initialStopPrice": initial_stop_price,
         "side": side,
         "targetPrice": target_price,
-    })
+    }
+    if size is not None:
+        t["size"] = size
+    trades.append(t)
     save_current_trades(symbol, interval, trades)
     logger.debug("Trade log: added current trade %s", trade_id)
 
@@ -290,6 +294,65 @@ def _event_to_dict(ev: TradeEvent) -> dict[str, Any]:
         "initialStopPrice": ev.initial_stop_price,
         "context": ev.context,
     }
+
+
+def write_entry_snapshot_md_only(
+    symbol: str,
+    interval: str,
+    event: TradeEvent,
+    candles: list[Candle],
+    graphics: dict[str, Any],
+) -> str:
+    """Write only the entry_*.md snapshot (strategy-owned log). Does not write index.jsonl or current.json."""
+    trade_id = str(event.time)
+    log_dir = _log_dir(symbol, interval)
+    log_dir.mkdir(parents=True, exist_ok=True)
+    snapshot_path = _snapshot_path(symbol, interval, trade_id)
+    event_dict = _event_to_dict(event)
+    markdown = _build_entry_snapshot_markdown(
+        symbol, interval, candles, graphics, event_dict
+    )
+    snapshot_path.write_text(markdown, encoding="utf-8")
+    logger.debug("Trade log: wrote entry snapshot only trade_id=%s", trade_id)
+    return trade_id
+
+
+def append_entry_index_line(
+    symbol: str,
+    interval: str,
+    trade_id: str,
+    entry_time: int,
+    entry_price: float,
+    side: str,
+    initial_stop_price: float,
+    target_price: float | None = None,
+    size: float | None = None,
+    bar_index: int = 0,
+    context: dict | None = None,
+) -> None:
+    """Append only the entry line to index.jsonl (executor calls when confirming fill)."""
+    log_dir = _log_dir(symbol, interval)
+    log_dir.mkdir(parents=True, exist_ok=True)
+    record: dict[str, Any] = {
+        "type": "entry",
+        "tradeId": trade_id,
+        "time": entry_time,
+        "timeHuman": ts_human(entry_time, unit="s"),
+        "barIndex": bar_index,
+        "side": side,
+        "price": entry_price,
+        "initialStopPrice": initial_stop_price,
+        "targetPrice": target_price,
+        "snapshotFile": f"entry_{trade_id}.md",
+    }
+    if context is not None:
+        record["context"] = context
+    if size is not None:
+        record["size"] = size
+    index_path = _index_path(symbol, interval)
+    with index_path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(record, default=str) + "\n")
+    logger.debug("Trade log: appended entry index line trade_id=%s", trade_id)
 
 
 def append_entry(

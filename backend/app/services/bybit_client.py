@@ -33,7 +33,8 @@ class BybitClient:
         return bool(settings.bybit_api_key and settings.bybit_api_secret)
 
     async def _get_server_time_ms(self) -> int:
-        """GET /v5/market/time (no auth). Returns Bybit server time in milliseconds for request signing."""
+        """GET /v5/market/time (no auth). Returns Bybit server time in milliseconds for request signing.
+        API: https://bybit-exchange.github.io/docs/v5/market/time"""
         base = settings.bybit_rest_base_url.rstrip("/")
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.get(f"{base}/v5/market/time")
@@ -294,7 +295,8 @@ class BybitClient:
         price: str | float | None = None,
         **kwargs: str | float | None,
     ) -> dict:
-        """POST /v5/order/create. category: spot | linear. side: Buy | Sell. orderType: Market | Limit."""
+        """POST /v5/order/create. category: spot | linear. side: Buy | Sell. orderType: Market | Limit.
+        API: https://bybit-exchange.github.io/docs/v5/order/create-order"""
         body: dict = {
             "category": category,
             "symbol": symbol,
@@ -318,7 +320,8 @@ class BybitClient:
         orderId: str | None = None,
         orderLinkId: str | None = None,
     ) -> dict:
-        """POST /v5/order/cancel. Provide either orderId or orderLinkId."""
+        """POST /v5/order/cancel. Provide either orderId or orderLinkId.
+        API: https://bybit-exchange.github.io/docs/v5/order/cancel-order"""
         body: dict = {"category": category, "symbol": symbol}
         if orderId is not None:
             body["orderId"] = orderId
@@ -328,7 +331,8 @@ class BybitClient:
         return data.get("result", data)
 
     async def get_open_orders(self, *, category: str, symbol: str) -> list[dict]:
-        """GET /v5/order/realtime. Returns list of open orders."""
+        """GET /v5/order/realtime. Returns list of open orders.
+        API: https://bybit-exchange.github.io/docs/v5/order/open-order"""
         data = await self._request(
             "GET",
             "/v5/order/realtime",
@@ -342,7 +346,8 @@ class BybitClient:
         accountType: str = "UNIFIED",
         coin: str | None = None,
     ) -> dict:
-        """GET /v5/account/wallet-balance."""
+        """GET /v5/account/wallet-balance.
+        API: https://bybit-exchange.github.io/docs/v5/account/wallet-balance"""
         params: dict = {"accountType": accountType}
         if coin is not None:
             params["coin"] = coin
@@ -350,7 +355,8 @@ class BybitClient:
         return data.get("result", {})
 
     async def get_linear_positions(self, *, symbol: str) -> list[dict]:
-        """GET /v5/position/list. category=linear. Returns list of position objects."""
+        """GET /v5/position/list. category=linear. Returns list of position objects.
+        API: https://bybit-exchange.github.io/docs/v5/position/position-info"""
         data = await self._request(
             "GET",
             "/v5/position/list",
@@ -369,7 +375,8 @@ class BybitClient:
         tpTriggerBy: str | None = None,
         **kwargs: str | float | None,
     ) -> dict:
-        """POST /v5/position/trading-stop. Set SL/TP/TS on linear position."""
+        """POST /v5/position/trading-stop. Set SL/TP/TS on linear position.
+        API: https://bybit-exchange.github.io/docs/v5/position/trading-stop"""
         body: dict = {"symbol": symbol, "category": "linear"}
         if stopLoss is not None:
             body["stopLoss"] = str(stopLoss)
@@ -387,3 +394,20 @@ class BybitClient:
         data = await self._request("POST", "/v5/position/trading-stop", json_body=body)
         return data.get("result", data)
 
+    async def set_linear_leverage(
+        self,
+        *,
+        symbol: str,
+        buyLeverage: str | int,
+        sellLeverage: str | int | None = None,
+    ) -> dict:
+        """POST /v5/position/set-leverage. Set leverage for linear (one-way: buyLeverage=sellLeverage).
+        API: https://bybit-exchange.github.io/docs/v5/position/leverage"""
+        body: dict = {
+            "category": "linear",
+            "symbol": symbol,
+            "buyLeverage": str(buyLeverage),
+            "sellLeverage": str(sellLeverage if sellLeverage is not None else buyLeverage),
+        }
+        data = await self._request("POST", "/v5/position/set-leverage", json_body=body)
+        return data.get("result", data)

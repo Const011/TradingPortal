@@ -15,13 +15,14 @@ from app.services.trading_strategy.order_block_trend_following import compute_or
 from app.services.trading_strategy.chart_format import strategy_output_to_chart
 from app.services.trading_strategy.types import TradeEvent, StopSegment
 from app.services.trade_log import (
-    append_entry,
     append_exit,
     append_stop_move,
     compute_trade_results,
     get_effective_stop_segments_for_bar,
     load_current_trades,
+    write_entry_snapshot_md_only,
 )
+from app.services.execution_service import submit_entry, sync_from_exchange
 from app.utils.intervals import interval_seconds
 from app.utils.timefmt import ts_human
 
@@ -40,17 +41,11 @@ def _restore_current_trades(symbol: str, interval: str, state: "CandleStreamStat
         str(path),
         path.exists(),
     )
-    current = load_current_trades(symbol, interval)
-    for t in current:
-        tid = t.get("tradeId", "")
-        if tid:
-            state.logged_entry_ids.add(tid)
-            state.last_stop_price_per_trade[tid] = t.get("currentStopPrice", 0.0)
-    state.restored_trades = current
+    _refresh_current_trades_from_file(symbol, interval, state)
     state.current_trades_restored = True
     logger.info(
         "[TRADE_RESTORE] loaded %d trade(s): %s",
-        len(current),
+        len(state.restored_trades),
         [
             {
                 "tradeId": t.get("tradeId"),
@@ -61,12 +56,26 @@ def _restore_current_trades(symbol: str, interval: str, state: "CandleStreamStat
                 "currentStopPrice": t.get("currentStopPrice"),
                 "initialStopPrice": t.get("initialStopPrice"),
             }
-            for t in current
+            for t in state.restored_trades
         ],
     )
 
 
-def _apply_trade_logging(
+def _refresh_current_trades_from_file(
+    symbol: str, interval: str, state: "CandleStreamState"
+) -> None:
+    """Reload current.json into state (restored_trades, logged_entry_ids, last_stop_price_per_trade).
+    Called after executor sync so strategy sees executor-written state."""
+    current = load_current_trades(symbol, interval)
+    state.restored_trades = current
+    for t in current:
+        tid = t.get("tradeId", "")
+        if tid:
+            state.logged_entry_ids.add(tid)
+            state.last_stop_price_per_trade[tid] = t.get("currentStopPrice", 0.0)
+
+
+async def _apply_trade_logging(
     symbol: str,
     interval: str,
     trade_events: list,
@@ -76,12 +85,11 @@ def _apply_trade_logging(
     state: "CandleStreamState",
     *,
     is_live_update: bool,
+    bybit_client: BybitClient | None = None,
 ) -> None:
-    """When mode=trading: log entries, stop moves, exits. Mutates state.
+    """When mode=trading: send entry to executor (no current.json yet), write entry_*.md only; stop moves, exits. Mutates state.
 
-    In trading mode, only logs signals that occur on the current bar (live bar update).
-    Snapshot/resync (is_live_update=False) never logs; historical strategy output is ignored.
-    At most one entry or stop move per bar: once we log one, we skip further signals for that bar.
+    Executor owns current.json and index.jsonl; strategy only writes entry_*.md. On next heartbeat executor syncs from exchange.
     """
     if settings.mode != "trading":
         return
@@ -103,18 +111,25 @@ def _apply_trade_logging(
     # (we rely on last_stop_price_per_trade to avoid duplicate prices).
     entry_emitted_for_bar = current_bar_start_sec in state.signals_emitted_for_bar
 
-    if not entry_emitted_for_bar:
-        # Log new entries (only on current bar)
+    if not entry_emitted_for_bar and bybit_client is not None:
         for ev in trade_events:
             if ev.bar_index != current_bar_index:
                 continue
             trade_id = str(ev.time)
             if trade_id not in state.logged_entry_ids:
-                append_entry(symbol, interval, ev, candles, graphics)
-                state.logged_entry_ids.add(trade_id)
-                state.last_stop_price_per_trade[trade_id] = ev.initial_stop_price
-                state.signals_emitted_for_bar.add(current_bar_start_sec)
-                entry_emitted_for_bar = True
+                response = await submit_entry(ev, symbol, interval, bybit_client)
+                if response.order_received:
+                    write_entry_snapshot_md_only(symbol, interval, ev, candles, graphics)
+                    state.logged_entry_ids.add(trade_id)
+                    state.last_stop_price_per_trade[trade_id] = ev.initial_stop_price
+                    state.signals_emitted_for_bar.add(current_bar_start_sec)
+                    entry_emitted_for_bar = True
+                else:
+                    logger.warning(
+                        "Executor: entry not received trade_id=%s msg=%s",
+                        trade_id,
+                        response.message,
+                    )
                 break
 
     # Always consider trailing-stop updates for the current bar; we only log
@@ -162,6 +177,33 @@ def _apply_trade_logging(
         for t in getattr(state, "restored_trades", []):
             if t.get("tradeId") == trade_id:
                 t["currentStopPrice"] = seg.price
+        # Milestone 5: push trailing stop to exchange (whole position)
+        if bybit_client is not None and settings.market == "linear":
+            # ----- TEMPORARY DEBUG STUB: no real Bybit call, log params only -----
+            if settings.executor_dry_run:
+                print(
+                    f" [TEMPORARY DEBUG STUB] moving stop with params: symbol={symbol} trade_id={trade_id} "
+                    f"stopLoss={seg.price} side={seg.side}"
+                )
+            else:
+                # ----- LIVE (runs when EXECUTOR_DRY_RUN=false) -----
+                try:
+                    await bybit_client.set_linear_trading_stop(
+                        symbol=symbol,
+                        stopLoss=seg.price,
+                    )
+                    logger.debug(
+                        "Executor: set_linear_trading_stop trade_id=%s stopLoss=%s",
+                        trade_id,
+                        seg.price,
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "Executor: set_linear_trading_stop failed trade_id=%s err=%s",
+                        trade_id,
+                        e,
+                    )
+            # ----- end TEMPORARY DEBUG STUBS -----
 
     # Build events + segments for exit detection (include restored trades not in strategy output)
     all_events = list(trade_events)
@@ -234,7 +276,7 @@ def _apply_trade_logging(
             state.restored_trades = [t for t in state.restored_trades if t.get("tradeId") != tid]
 
 
-def _make_snapshot_payload(
+async def _make_snapshot_payload(
     candles: list[Candle],
     volume_profile_window: int,
     strategy_markers: str,
@@ -243,6 +285,7 @@ def _make_snapshot_payload(
     state: "CandleStreamState",
     *,
     is_live_update: bool = False,
+    bybit_client: BybitClient | None = None,
 ) -> dict:
     payload: dict = {
         "event": "snapshot",
@@ -288,9 +331,10 @@ def _make_snapshot_payload(
                     trade_events, stop_segments, interval
                 )
                 graphics["strategySignals"] = chart_data
-                _apply_trade_logging(
+                await _apply_trade_logging(
                     symbol, interval, trade_events, stop_segments, candles, graphics, state,
                     is_live_update=is_live_update,
+                    bybit_client=bybit_client,
                 )
                 if settings.mode == "trading":
                     del graphics["strategySignals"]
@@ -356,13 +400,14 @@ class CandleStreamHub:
             state.volume_profile_window = volume_profile_window
             state.strategy_markers = strategy_markers
             if state.candles:
-                snapshot_payload = _make_snapshot_payload(
+                snapshot_payload = await _make_snapshot_payload(
                     state.candles,
                     state.volume_profile_window,
                     state.strategy_markers,
                     symbol,
                     interval,
                     state,
+                    bybit_client=self._bybit_client,
                 )
             if state.task is None or state.task.done():
                 state.task = asyncio.create_task(self._run_heartbeat(symbol, interval))
@@ -402,6 +447,9 @@ class CandleStreamHub:
                     interval=interval,
                     limit=self._snapshot_limit,
                 )
+                exited_ids: list[str] = []
+                if settings.mode == "trading":
+                    exited_ids = await sync_from_exchange(symbol, interval, self._bybit_client)
                 async with self._lock:
                     state = self._streams.get(stream_key)
                     if state is None:
@@ -409,8 +457,12 @@ class CandleStreamHub:
                     state.candles = candles
                     vp_window = state.volume_profile_window
                     strategy_markers = state.strategy_markers
+                    if settings.mode == "trading":
+                        _refresh_current_trades_from_file(symbol, interval, state)
+                        for tid in exited_ids:
+                            state.logged_exit_ids.add(tid)
 
-                payload = _make_snapshot_payload(
+                payload = await _make_snapshot_payload(
                     candles,
                     vp_window,
                     strategy_markers,
@@ -418,6 +470,7 @@ class CandleStreamHub:
                     interval,
                     state,
                     is_live_update=True,
+                    bybit_client=self._bybit_client,
                 )
                 await self._broadcast(stream_key, payload)
                 # Trading mode debug: show current open position/stop each heartbeat.

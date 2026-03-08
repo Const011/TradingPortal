@@ -29,9 +29,16 @@ class OrderCreateBody(BaseModel):
     symbol: str = Field(..., description="e.g. BTCUSDT")
     side: str = Field(..., description="Buy | Sell")
     orderType: str = Field(..., description="Market | Limit")
-    qty: str = Field(..., description="Quantity (string for precision)")
+    qty: str = Field(..., description="Quantity (string); for spot market use marketUnit=quoteCoin and qty=USDT amount")
     price: str | None = Field(None, description="Required for Limit")
     category: str | None = Field(None, description="spot | linear; default from config")
+    marketUnit: str | None = Field(None, description="Spot market only: quoteCoin (qty in USDT) | baseCoin (qty in base)")
+    # TP/SL on order: applied automatically when the order fills (no separate trading-stop call needed).
+    takeProfit: float | None = Field(None, description="Take profit price; linear: use tpslMode/tpOrderType if needed")
+    stopLoss: float | None = Field(None, description="Stop loss price")
+    tpslMode: str | None = Field(None, description="Linear: Partial | Full (Full = entire position, tpOrderType/slOrderType Market)")
+    tpOrderType: str | None = Field(None, description="Linear: Market | Limit when tpslMode=Partial")
+    slOrderType: str | None = Field(None, description="Linear: Market | Limit when tpslMode=Partial")
 
 
 class OrderCancelBody(BaseModel):
@@ -53,6 +60,12 @@ class TradingStopBody(BaseModel):
 class ClosePositionBody(BaseModel):
     symbol: str = Field(...)
     category: str = Field(..., description="spot | linear")
+
+
+class SetLeverageBody(BaseModel):
+    symbol: str = Field(...)
+    buyLeverage: int = Field(..., description="e.g. 10 for 10x")
+    sellLeverage: int | None = Field(None, description="defaults to buyLeverage (one-way)")
 
 
 def _ensure_auth(client: BybitClient) -> None:
@@ -78,6 +91,15 @@ async def exec_create_order(
     """Place order (market or limit). Manual mode: no trade log."""
     _ensure_auth(client)
     category = body.category or _default_category()
+    order_kwargs: dict[str, str | float | None] = {"marketUnit": body.marketUnit}
+    if body.takeProfit is not None:
+        order_kwargs["takeProfit"] = str(body.takeProfit)
+    if body.stopLoss is not None:
+        order_kwargs["stopLoss"] = str(body.stopLoss)
+    for k in ("tpslMode", "tpOrderType", "slOrderType"):
+        v = getattr(body, k, None)
+        if v is not None:
+            order_kwargs[k] = v
     try:
         result = await client.create_order(
             category=category,
@@ -86,6 +108,7 @@ async def exec_create_order(
             orderType=body.orderType,
             qty=body.qty,
             price=body.price,
+            **order_kwargs,
         )
         return {"ok": True, "result": result}
     except BybitClientError as e:
@@ -172,6 +195,24 @@ async def exec_set_trading_stop(
             trailingStop=body.trailingStop,
             slTriggerBy=body.slTriggerBy,
             tpTriggerBy=body.tpTriggerBy,
+        )
+        return {"ok": True, "result": result}
+    except BybitClientError as e:
+        raise _bybit_error_to_http(e)
+
+
+@router.post("/positions/set-leverage")
+async def exec_set_leverage(
+    body: SetLeverageBody,
+    client: BybitClient = Depends(get_bybit_client),
+) -> dict[str, Any]:
+    """Set linear leverage (e.g. 10x). Call before placing orders."""
+    _ensure_auth(client)
+    try:
+        result = await client.set_linear_leverage(
+            symbol=body.symbol,
+            buyLeverage=body.buyLeverage,
+            sellLeverage=body.sellLeverage,
         )
         return {"ok": True, "result": result}
     except BybitClientError as e:

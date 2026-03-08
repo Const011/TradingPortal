@@ -19,6 +19,8 @@
   - Key params:
     - `category`: `"spot"` or `"linear"` (from app-level `market`).
     - `symbol`, `side` (`Buy`/`Sell`), `orderType` (`Market`/`Limit`), `qty`, optional `price`.
+    - For **market entry**: `slippageToleranceType="Percent"`, `slippageTolerance="0.01"` (0.01%).
+    - Optional `stopLoss` (and `takeProfit`) in the same request so the exchange attaches them when the order fills.
 
 - **Cancel order**  
   - `POST /v5/order/cancel`  
@@ -104,13 +106,16 @@ Implementation details:
 
 Both modes share the same `BybitClient` implementation and config (`BYBIT_API_KEY`, `BYBIT_API_SECRET`, `MARKET`, etc.).
 
-### 4.2 Responsibilities
+### 4.2 Responsibilities and ownership (trading mode)
 
-- Map strategy-level `TradeEvent` → `OrderIntent` → concrete Bybit orders (strategy-driven mode).
-- Own all live **order placement / cancellation / stop management** (via `BybitClient`).
-- Maintain and update (strategy-driven mode only):
-  - Trade log (`index.jsonl`, `entry_*.md`).
-  - `current.json` (open positions, including `currentStopPrice`).
+- **Executor module** owns:
+  - All live **order placement / cancellation / stop management** (via `BybitClient`).
+  - **`current.json`** — single source of truth for open position state (entry price, size, current stop). Updated by the executor from exchange state (e.g. after fill, on heartbeat).
+  - **`index.jsonl`** — trade log index (entry/stop_move/exit lines). Written by the executor when it confirms fills and stop updates.
+- **Strategy module** (trading mode):
+  - Sends **entry intent** to the executor (do not treat entry as performed until executor confirms).
+  - Does **not** write `current.json` or `index.jsonl` on entry; only reads `current.json` on each heartbeat to see if position was opened and stop is in place.
+  - Owns **`entry_*.md`** only — logs the orders/signals it issued (for audit and strategy-level notes).
 - Expose **manual test endpoints** (see § 12) for each execution primitive so effects can be verified on Bybit with `curl`.
 - Provide reconciliation views (Spot/Linear) for drift detection.
 
@@ -124,37 +129,44 @@ Both modes share the same `BybitClient` implementation and config (`BYBIT_API_KE
 - Gateway config:
   - `TRADING_SYMBOL`, `TRADING_INTERVAL`.
   - `MARKET` (`"spot" | "linear"`).
-  - `POSITION_SIZE` (float).
+  - `POSITION_SIZE` — order qty (executor always uses this; no runtime capping).
+  - `LEVERAGE` — linear only, e.g. 10 for 10x (default 10); executor calls `set_linear_leverage` for the symbol.
 
 ---
 
 ## 5. Entry Flow (Open Trade)
 
-### 5.1 Determine Qty from `POSITION_SIZE`
+### 5.1 Determine qty from `POSITION_SIZE`
 
-- **Spot**:
-  - Use `POSITION_SIZE` as base-asset quantity (e.g. `0.01 BTC`).
-  - Optionally cap by available base/quote balances from `wallet-balance`.
+- The executor **always** uses the qty from the initial gateway settings: **`POSITION_SIZE`** (env, set per run in `run-dev-trading.sh`). No runtime capping or recomputation from balances.
+- **Spot**: `POSITION_SIZE` = base-asset quantity (e.g. `0.01 BTC`).
+- **Linear**: `POSITION_SIZE` = base/contract qty for the order.
 
-- **Linear**:
-  - Use `POSITION_SIZE` as base/contract qty:
-    - Map to `qty` parameter respecting contract `lotSizeFilter` (future enhancement).
+### 5.2 Place entry order (trading mode)
 
-### 5.2 Place Order
+1. **Order type and slippage**
+   - Use **market order** with Bybit slippage protection: `slippageToleranceType="Percent"`, `slippageTolerance="0.01"` (0.01%).
+2. **Initial stop in same transaction**
+   - Include **`stopLoss`** (strategy’s initial stop price) in the **same** `POST /v5/order/create` request so that when the order fills, the exchange attaches the stop to the position immediately. No separate call to set initial stop after fill.
+3. **Executor behaviour after sending the order**
+   - Executor **registers** that it has received the entry order (e.g. stores pending order id / orderLinkId).
+   - Returns to the strategy a signal **“order received, no entry yet”**.
+   - **Strategy does not update `current.json`** at this point; it does not consider the entry as performed.
+4. **Executor owns `current.json` and `index.jsonl`**
+   - On the **next heartbeat** (or when the executor detects fill via position/order state):
+     - Executor reads **position** (and optionally order fill) from the exchange.
+     - If position is open: executor writes/updates **`current.json`** with **entry price**, **size** (new variable from exchange), `initialStopPrice`, `currentStopPrice`, `side`, `tradeId`, etc.
+     - Executor appends **`entry`** to **`index.jsonl`** when it confirms the entry from the exchange.
+   - Strategy **reads `current.json`** on each heartbeat to see whether the position was opened and the stop is in place; it does not write `current.json`.
 
-1. Build `OrderIntent`:
-   - `symbol`, `side` (`Buy` for long, `Sell` for short), `orderType="Market"` (v1), `qty`, `context`.
-2. Call `BybitClient.create_order(...)` with `category=settings.market`.
-3. On success/fill:
-   - Append `entry` record via `append_entry(...)` (trade log service).
-   - Write into `current.json` via `add_current_trade(...)` with:
-     - `tradeId`, `entryTime`, `entryPrice`, `initialStopPrice`, `currentStopPrice`, `side`.
+### 5.3 Strategy vs executor (trading vs simulation)
 
-### 5.3 Attach Stop (Linear only, optional)
-
-- For `MARKET=linear`, after entry:
-  - Call `set_linear_trading_stop(symbol, stopLoss=initial_stop_price, ...)`.
-  - Record that SL is “owned” by exchange; still mirror it into `current.json` for UI.
+- **Simulation mode**: Unchanged. Strategy receives current price from the stream and captures entry; strategy/stream own the in-memory state and any log writes as today.
+- **Trading mode**:
+  1. Strategy emits entry intent (e.g. `TradeEvent`) and sends it to the executor.
+  2. Executor places market order (slippage 0.01%) with `stopLoss` in the same request → confirms “order received”, returns “no entry yet”.
+  3. Strategy does **not** update `current.json`; it may log the intent in **`entry_*.md`** (strategy-owned).
+  4. On next heartbeat: executor updates `current.json` and `index.jsonl` from exchange state; strategy reads `current.json` to see if position is open and stop is in place.
 
 ---
 
@@ -203,18 +215,12 @@ After the close:
 
 ### 6.3 Trailing / Moving Stop
 
-- **Strategy**:
-  - Calculates new stop price per bar and emits stop segments (already implemented).
-- **Trading mode wiring** (already partially implemented in `candle_stream._apply_trade_logging`):
-  - For each new stop segment on the current bar:
-    - Log `stop_move` via `append_stop_move(...)`.
-    - Update `current.json`’s `currentStopPrice`.
-    - Before touching any on-exchange stop:
-      - **Re-query the live position size** to account for partial fills, manual adjustments, or margin changes:
-        - Spot: recompute effective exposure from wallet balances + open Spot orders.
-        - Linear: use `GET /v5/position/list?category=linear&symbol=...` as the source of truth.
-      - If the live size differs from the original `POSITION_SIZE`, adjust the **stop order size** accordingly so the stop still covers the full remaining position.
-    - **Linear only:** call `set_linear_trading_stop` with updated `stopLoss` **and, where applicable, size parameters (e.g. `slSize`)** so that both price and quantity of the SL/TS reflect the current live position.
+- **Strategy**: Calculates new stop price per bar and emits stop segments (already implemented).
+- **Trading mode (Linear)**:
+  - For each new stop segment on the current bar (strategy emits; executor acts):
+    - Executor logs `stop_move` via `append_stop_move(...)` and updates `current.json`’s `currentStopPrice`.
+    - **Trailing stop on exchange**: use **`POST /v5/position/trading-stop`** (see § 12.1.6 and `test.sh`), setting **`stopLoss`** to the new trailing level for the **whole position size** (full position). No partial size; the executor calls `set_linear_trading_stop(symbol, stopLoss=new_stop_price)` so the exchange applies the new stop to the entire position.
+  - Live position size remains the source of truth for “whole position”; if the user has partially closed externally, the next trailing update still applies to whatever size the exchange reports (full remaining position).
 
 ---
 
@@ -244,9 +250,8 @@ On mismatch:
 ## 8. Configuration Summary (Trading Gateway)
 
 - `MARKET`: `"spot"` or `"linear"` — drives `category` for all Bybit calls.
-- `POSITION_SIZE`: float — default entry size per signal:
-  - Spot: base quantity.
-  - Linear: contract/base qty.
+- `POSITION_SIZE`: order qty — executor always uses this (Spot: base qty; Linear: contract/base qty). Set per run in `run-dev-trading.sh`.
+- `LEVERAGE`: linear only — e.g. 10 for 10x (default 10). Executor calls `set_linear_leverage(symbol, buyLeverage=LEVERAGE)` for the trading symbol (e.g. before first entry).
 - `TRADING_SYMBOL`, `TRADING_INTERVAL`, `BARS_WINDOW`, `FETCH_INTERVAL_SEC`, `TRADE_LOG_DIR` — as already documented.
 
 ---
@@ -272,177 +277,104 @@ On mismatch:
 
 Concrete implementation steps, in order. Complete each milestone’s steps before moving to the next.
 
-### 10.1 Milestone 1: BybitClient auth & helpers
+### 10.1 Milestone 1: BybitClient auth & helpers — **DONE**
 
 **Config & private REST**
 
-1. **Add Bybit env to Settings**  
-   - File: `backend/app/config.py` (or `backend/app/core/config.py` if present).  
-   - Add: `bybit_api_key: str = ""`, `bybit_api_secret: str = ""`, `bybit_recv_window: int = 5000`, `bybit_base_url: str = "https://api.bybit.com"` (or testnet URL).  
-   - Load from env: `BYBIT_API_KEY`, `BYBIT_API_SECRET`, `BYBIT_RECV_WINDOW`, `BYBIT_BASE_URL`.
+1. ~~**Add Bybit env to Settings**~~ **DONE** — `bybit_api_key`, `bybit_api_secret`, `bybit_recv_window`, `bybit_rest_base_url` in `config.py`; server time used for signing.
+2. ~~**Implement private request signing**~~ **DONE** — `_sign_request` in `bybit_client.py`.
+3. ~~**Add generic private REST call**~~ **DONE** — `_request` in `BybitClient`.
 
-2. **Implement private request signing**  
-   - File: `backend/app/services/bybit_client.py`.  
-   - Add helper: `_sign_request(method, path, query_string, body) -> dict` that returns headers `X-BAPI-API-KEY`, `X-BAPI-TIMESTAMP`, `X-BAPI-RECV-WINDOW`, `X-BAPI-SIGN`.  
-   - Pre-sign string: GET = `timestamp + apiKey + recvWindow + queryString`; POST = `timestamp + apiKey + recvWindow + body`.  
-   - Sign with HMAC-SHA256(secret, pre_sign), hex-encode.
+**BybitClient methods**
 
-3. **Add generic private REST call**  
-   - In `BybitClient`: `async def _request(self, method, path, params=None, json_body=None) -> dict`.  
-   - Build full URL from `settings.bybit_base_url` + path; add query for GET.  
-   - Call `_sign_request`, set headers, use httpx (or aiohttp) to send request.  
-   - Parse JSON response; raise on HTTP error or Bybit `retCode != 0`.
-
-**BybitClient methods (one step per method)**
-
-4. **create_order**  
-   - `POST /v5/order/create`.  
-   - Params: `category`, `symbol`, `side`, `orderType`, `qty`, optional `price`, pass-through `**kwargs`.  
-   - Return full response or extract `result`.
-
-5. **cancel_order**  
-   - `POST /v5/order/cancel`.  
-   - Params: `category`, `symbol`, and either `orderId` or `orderLinkId`.
-
-6. **get_open_orders**  
-   - `GET /v5/order/realtime`.  
-   - Query: `category`, `symbol`.  
-   - Return `result.list` (or equivalent) as `list[dict]`.
-
-7. **get_wallet_balance**  
-   - `GET /v5/account/wallet-balance`.  
-   - Query: `accountType` (default `UNIFIED`), optional `coin`.  
-   - Return full `result` or normalized balance dict.
-
-8. **get_linear_positions**  
-   - `GET /v5/position/list`.  
-   - Query: `category=linear`, `symbol`.  
-   - Return list of position objects.
-
-9. **set_linear_trading_stop**  
-   - `POST /v5/position/trading-stop`.  
-   - Body: `symbol`, `category=linear`, optional `stopLoss`, `takeProfit`, `trailingStop`, `slTriggerBy`, `tpTriggerBy`.  
-   - Return Bybit response.
-
-10. **Unit tests (optional but recommended)**  
-    - File: e.g. `backend/tests/services/test_bybit_client.py`.  
-    - Mock HTTP; test signing and parameter building for each method.  
-    - If testnet available: one integration test with small order/cancel.
+4. ~~**create_order**~~ **DONE** — with `**kwargs` (e.g. `stopLoss`, `takeProfit`, `slippageTolerance`, `slippageToleranceType`).
+5. ~~**cancel_order**~~ **DONE**
+6. ~~**get_open_orders**~~ **DONE**
+7. ~~**get_wallet_balance**~~ **DONE**
+8. ~~**get_linear_positions**~~ **DONE**
+9. ~~**set_linear_trading_stop**~~ **DONE**
+10. ~~**set_linear_leverage**~~ **DONE** (added for manual mode).
+11. Unit tests — optional; not yet added.
 
 ---
 
-### 10.2 Milestone 2: Manual mode & test endpoints
+### 10.2 Milestone 2: Manual mode & test endpoints — **DONE**
 
-1. **Create exec router module**  
-   - File: `backend/app/api/exec.py` (or `backend/app/routers/exec.py`).  
-   - Define FastAPI `APIRouter(prefix="/api/v1/exec", tags=["exec"])`.
-
-2. **BybitClient dependency**  
-   - In the same app that runs the trading gateway, ensure `BybitClient` is instantiated from settings (api_key, api_secret, base_url) and injectable (e.g. `Depends(get_bybit_client)`).  
-   - Add `get_bybit_client()` that reads config and returns a `BybitClient` instance (create once per app or per request as needed).
-
-3. **POST /order**  
-   - Path: `/order` (under prefix).  
-   - Pydantic body: `symbol`, `side`, `orderType`, `qty`, `price` (optional), `category` (optional).  
-   - Resolve `category` from body or default from config (`market`).  
-   - Call `bybit_client.create_order(...)`.  
-   - Return `{"ok": True, "result": ...}` or HTTPException with Bybit error.
-
-4. **POST /order/cancel**  
-   - Body: `symbol`, `category`, optional `orderId`, optional `orderLinkId` (one required).  
-   - Call `bybit_client.cancel_order(...)`.  
-   - Return result.
-
-5. **GET /orders**  
-   - Query: `symbol`, `category`.  
-   - Call `bybit_client.get_open_orders(...)`.  
-   - Return list.
-
-6. **GET /wallet-balance**  
-   - Query: `accountType=UNIFIED`, optional `coin`.  
-   - Call `bybit_client.get_wallet_balance(...)`.  
-   - Return result.
-
-7. **GET /positions**  
-   - Query: `symbol`.  
-   - Call `bybit_client.get_linear_positions(...)`.  
-   - Return list.
-
-8. **POST /positions/trading-stop**  
-   - Body: `symbol`, optional `stopLoss`, `takeProfit`, etc.  
-   - Call `bybit_client.set_linear_trading_stop(...)`.  
-   - Return result.
-
-9. **POST /positions/close**  
-   - Body: `symbol`, `category`.  
-   - If linear: call `get_linear_positions(symbol)`, get size/side, then `create_order(category=linear, symbol, side=opposite, orderType=Market, qty=size)`.  
-   - If spot: compute net position from wallet + open orders, then place opposite market order with `qty=live_size`.  
-   - Return result. Do **not** write to trade log or `current.json`.
-
-10. **Mount router**  
-    - In the FastAPI app that serves the trading gateway (e.g. main or trading entrypoint): `app.include_router(exec_router)`.
-
-11. **Verify with curl**  
-    - Start gateway with valid Bybit env (testnet recommended).  
-    - Call each endpoint with curl as in § 12; confirm Bybit responds and exchange state changes as expected (e.g. place small order, then cancel; set stop on open position; close position).
+1. ~~**Create exec router**~~ **DONE** — `backend/app/api/exec.py`, prefix `/api/v1/exec`.
+2. ~~**BybitClient dependency**~~ **DONE** — `get_bybit_client()`.
+3. ~~**POST /order**~~ **DONE** — supports `stopLoss`/`takeProfit`/`tpslMode` on order; optional `marketUnit` for spot.
+4. ~~**POST /order/cancel**~~ **DONE**
+5. ~~**GET /orders**~~ **DONE**
+6. ~~**GET /wallet-balance**~~ **DONE**
+7. ~~**GET /positions**~~ **DONE**
+8. ~~**POST /positions/trading-stop**~~ **DONE**
+9. ~~**POST /positions/set-leverage**~~ **DONE**
+10. ~~**POST /positions/close**~~ **DONE**
+11. ~~**Mount router**~~ **DONE** — in `main.py`.
+12. Verify with curl — use `test.sh`; ongoing.
 
 ---
 
-### 10.3 Milestone 3: Execution Service skeleton
+### 10.3 Milestone 3: Execution Service skeleton (executor-owned state)
 
-1. **Define OrderIntent**  
-   - File: e.g. `backend/app/services/execution_types.py` or in `trade_log`/existing types.  
-   - Fields: `symbol`, `side` (`Buy`/`Sell`), `orderType`, `qty`, optional `price`, `context` (dict, for logging).
+1. **Define entry intent and executor response types**  
+   - Entry intent: symbol, side, qty (from `POSITION_SIZE`), `initial_stop_price`, context (e.g. trade_id, bar time).  
+   - Executor response: e.g. `{ "order_received": true, "entry_yet": false, "orderId"?: string }`; later extend with `entry_yet: true` and entry price/size when filled.
 
-2. **Entry handler (strategy → order)**  
-   - Create module e.g. `backend/app/services/execution_service.py`.  
-   - Function: `async def execute_entry(ev: TradeEvent, gateway_config, bybit_client) -> None`.  
-   - Map `ev.side` → `Buy`/`Sell`; `qty` from `POSITION_SIZE` (gateway config); build `OrderIntent`; call `bybit_client.create_order(category=gateway_config.market, ...)`.  
-   - On success: call `append_entry(...)` and `add_current_trade(...)` with `tradeId=str(ev.time)`, `entryTime=ev.time`, `entryPrice=ev.price`, `initialStopPrice=ev.initial_stop_price`, `currentStopPrice=ev.initial_stop_price`, `side=ev.side`.  
-   - Use symbol/interval from gateway config; pass candles/graphics if `append_entry` needs them.
+2. **Entry: market order + initial stop in one request**  
+   - **Linear only:** Before placing the first entry order (or on heartbeat when no position yet), executor calls `set_linear_leverage(symbol, buyLeverage=settings.leverage)` so the symbol uses the configured leverage (e.g. 10x from `LEVERAGE` env).
+   - On entry intent, executor uses **qty from `POSITION_SIZE`** only (no capping from balances). Call `create_order` with:
+     - `orderType="Market"`, `slippageToleranceType="Percent"`, `slippageTolerance="0.01"` (0.01%).
+     - `stopLoss=str(initial_stop_price)` in the **same** request so the exchange attaches the stop when the order fills.
+   - Do **not** call `append_entry` or `add_current_trade` at this point; only register “order received” (e.g. store orderId/orderLinkId) and return “no entry yet” to the strategy.
 
-3. **Wire into CandleStream**  
-   - File: `backend/app/services/candle_stream.py`.  
-   - In `_apply_trade_logging`, after detecting a new entry (trade_id not in `logged_entry_ids`), and before or after `append_entry`: call `execute_entry(ev, gateway_config, bybit_client)`.  
-   - Ensure `BybitClient` is available in the flow (inject or resolve from app state when starting the stream).  
-   - Only call when `settings.mode == "trading"` and gateway is connected.
+3. **Executor owns `current.json` and `index.jsonl`**  
+   - Move (or restrict) writes to `current.json` and `index.jsonl` to the **executor module** only.  
+   - On each **heartbeat** (or when executor checks exchange state):
+     - Query `get_linear_positions(symbol)` (and open orders if needed) to see if the pending entry order has filled and a position exists.
+     - If position is open and not yet in `current.json`: executor writes `current.json` with **entry price**, **size** (from exchange), `initialStopPrice`, `currentStopPrice`, `side`, `tradeId`, etc., and appends `entry` to `index.jsonl`.
+   - Strategy never writes `current.json` or `index.jsonl` in trading mode.
 
-4. **Linear: set initial stop on exchange**  
-   - After successful entry and `add_current_trade`, if `market == "linear"`: call `bybit_client.set_linear_trading_stop(symbol, stopLoss=ev.initial_stop_price)`.  
-   - Optional: do this inside `execute_entry` or in a small helper called from `_apply_trade_logging`.
+4. **Strategy: send intent, read state, own `entry_*.md` only**  
+   - Strategy sends entry intent to executor; on response “order received, no entry yet”, strategy does **not** update `current.json`.  
+   - Strategy continues to write **`entry_*.md`** (or equivalent) to log the orders/signals it issued.  
+   - On each heartbeat, strategy **reads** `current.json` to see if position was opened and stop is in place; use that to drive in-memory state (e.g. “we have an open position”) and optional UI.
+
+5. **Wire into CandleStream / heartbeat**  
+   - In trading mode: when strategy emits a new entry (TradeEvent), call executor’s entry handler; executor places order (market + stopLoss, slippage 0.01%) and returns “order received, no entry yet”.  
+   - Heartbeat loop: executor updates `current.json` and `index.jsonl` from exchange; strategy (or stream) reads `current.json` and exposes it to strategy for “do we have a position?” and “entry price / size”.
 
 ---
 
 ### 10.4 Milestone 4: Stop-hit wiring (trading mode)
 
 1. **Detect stop hit (Linear)**  
-   - In the same place that runs the heartbeat (e.g. CandleStream or a trading loop): periodically call `get_linear_positions(symbol)`.  
-   - If position size is 0 for the symbol but `current.json` still has an open trade for that symbol/interval → position was closed (e.g. by stop).  
-   - Alternatively: subscribe to Bybit WebSocket for position/order updates and detect stop fill.
+   - In the executor (same place as heartbeat): on each run, call `get_linear_positions(symbol)`.  
+   - If position size is 0 for the symbol but `current.json` (owned by executor) still has an open trade → position was closed (e.g. by exchange stop).  
+   - Executor then: append `exit` to `index.jsonl` and remove the trade from `current.json`.
 
 2. **Detect stop hit (Spot)**  
-   - Query wallet balance + open orders; infer net position. If net position is 0 but `current.json` has an open trade → treat as closed.
+   - Query wallet balance + open orders; infer net position. If net position is 0 but `current.json` has an open trade → treat as closed; executor appends exit and removes from `current.json`.
 
-3. **Close position helper**  
-   - Implement logic from § 6.2: given symbol, category, and optional “expected” trade from `current.json`:  
-     - Linear: `get_linear_positions` → if size > 0, `create_order` opposite side, qty = size.  
-     - Spot: compute live size from balance/orders → place opposite market order with that qty.  
-   - After successful close: call `append_exit(symbol, interval, trade_id, close_time, close_price, "stop", points)` and `remove_current_trade(symbol, interval, trade_id)`.
+3. **Close position helper (executor)**  
+   - As in § 6.2: Linear: `get_linear_positions` → if size > 0, `create_order` opposite side, qty = live size. Spot: compute live size → opposite market order.  
+   - After successful close: executor calls `append_exit(...)` and `remove_current_trade(...)` (executor owns both `index.jsonl` and `current.json`).
 
 4. **Call close from stop-hit detection**  
-   - When stop hit is detected (position gone on exchange), determine which `trade_id` from `current.json` corresponds to that symbol; call close helper (to ensure any residual is closed) and always append exit and remove from `current.json`.
+   - When executor detects position gone on exchange, it updates `current.json` (remove trade) and `index.jsonl` (append exit). No strategy write to these files.
 
 ---
 
-### 10.5 Milestone 5: Linear trading-stop support
+### 10.5 Milestone 5: Linear trailing stop (trading-stop for full position)
 
-1. **After stop_move log and current.json update**  
-   - In `_apply_trade_logging`, after `append_stop_move` and updating `current.json`’s `currentStopPrice`:  
-     - If `market == "linear"`: get live position size via `get_linear_positions(symbol)`; then call `set_linear_trading_stop(symbol, stopLoss=seg.price)` (and if Bybit supports size, pass `slSize` = live size).  
-   - Use same `BybitClient` instance as for entry/close.
+1. **Trailing stop via `POST /v5/position/trading-stop`**  
+   - When strategy emits a new stop segment (trailing move), executor:
+     - Logs `stop_move` via `append_stop_move(...)` and updates `current.json`’s `currentStopPrice`.
+     - Calls **`set_linear_trading_stop(symbol, stopLoss=new_stop_price)`** for the **whole position** (no partial size; Bybit applies the new stop to the full position).  
+   - Same `BybitClient` as entry/close. Reference: § 12.1.6 and `test.sh` (positions/trading-stop).
 
 2. **Handle Bybit errors**  
-   - If `set_linear_trading_stop` fails (e.g. position closed externally), log and optionally remove trade from `current.json` or mark for reconciliation.
+   - If `set_linear_trading_stop` fails (e.g. position closed externally), executor logs and on next heartbeat can remove trade from `current.json` or mark for reconciliation.
 
 ---
 
@@ -470,39 +402,28 @@ Concrete implementation steps, in order. Complete each milestone’s steps befor
 
 ## 11. Integration Points with `order_block_trend_following`
 
-The Trading Strategy module (`backend/app/services/trading_strategy/order_block_trend_following.py`) exposes **two primary integration points** that the Execution Service must consume:
+The Trading Strategy module (`backend/app/services/trading_strategy/order_block_trend_following.py`) exposes **two primary integration points** that the Execution Service (executor) consumes. In **trading mode**, the executor owns `current.json` and `index.jsonl`; the strategy does not treat entry as performed until the executor has confirmed it (via `current.json`).
 
 1. **Entry / reversal events (`TradeEvent`)**  
    - **Where in code:** inside `_open_from_candidate(...)` in `compute_order_block_trend_following`.  
-   - **What it emits:** a `TradeEvent` with:
-     - `type`: `"OB_TREND_BUY"` or `"OB_TREND_SELL"`.
-     - `side`: `"long"` or `"short"`.
-     - `time`: close time of the entry bar (Unix seconds).
-     - `bar_index`: index of the entry bar.
-     - `price`: entry price (close of bar).
-     - `initial_stop_price`: strategy-computed initial SL.
-     - `context`: OB metadata (`ob_top`, `ob_bottom`, `trigger`, `reversal_from`, etc.).
-   - **Execution Service hook:**
-     - Treat each `TradeEvent` whose `bar_index` is the **current bar** as a **new entry intent**.
-     - Derive `qty` from `POSITION_SIZE` + risk rules.
-     - Call `BybitClient.create_order(...)` with appropriate `category`, `symbol`, `side`, `orderType`, and `qty`.
-     - On success, record the trade via `append_entry(...)` and `add_current_trade(...)`.
+   - **What it emits:** a `TradeEvent` with `side`, `time`, `bar_index`, `price`, `initial_stop_price`, `context`.  
+   - **Executor hook (trading mode):**
+     - Treat each `TradeEvent` on the **current bar** as a **new entry intent**.
+     - Place **market order** with `slippageToleranceType="Percent"`, `slippageTolerance="0.01"`, and **`stopLoss=initial_stop_price`** in the **same** request.
+     - Return to strategy **“order received, no entry yet”**; strategy does **not** update `current.json`.
+     - Strategy may log the intent in **`entry_*.md`** (strategy-owned).
+     - On **next heartbeat**, executor updates `current.json` (and `index.jsonl`) from exchange state; strategy **reads** `current.json` to get **entry price** and **size** and to see if position is open and stop is in place.
+   - **Simulation mode:** unchanged; strategy receives current price and captures entry as today.
 
 2. **Trailing stop moves (`StopSegment`)**  
-   - **Where in code:** at the end of the main loop in `compute_order_block_trend_following`, in the block labeled:
-     - `# --- Trailing stop for active position (define stop level for next bar) ---`
-   - **What it emits:** `StopSegment` objects appended to `stop_segments`:
-     - `start_time`, `end_time`, `price`, `side` for each new stop level.
-   - **Execution Service hook:**
-     - On each heartbeat, inspect **new** stop segments that end on the current bar.
-     - For each segment associated with a logged trade:
-       - Log a `stop_move` via `append_stop_move(...)`.
-       - Update `current.json`’s `currentStopPrice`.
-       - **Live trading:** re-query live position size (Spot: balances + Spot orders; Linear: `position/list`) and:
-         - For Spot, update the local “logical stop” level; actual closure still uses opposite-side market order on stop-hit.
-         - For Linear, call `set_linear_trading_stop` with updated `stopLoss` (and, as needed, size parameters such as `slSize`) so the exchange-level SL/TS matches the strategy’s trailing decision.
+   - **Where in code:** block `# --- Trailing stop for active position (define stop level for next bar) ---` in `compute_order_block_trend_following`.  
+   - **What it emits:** `StopSegment` objects with `start_time`, `end_time`, `price`, `side`.  
+   - **Executor hook (trading mode):**
+     - On each heartbeat, for **new** stop segments that end on the current bar and correspond to an open trade in `current.json`:
+       - Executor logs `stop_move` via `append_stop_move(...)` and updates `current.json`’s `currentStopPrice`.
+       - **Linear:** call **`set_linear_trading_stop(symbol, stopLoss=new_stop_price)`** for the **whole position** (see § 12.1.6 / `test.sh`).
 
-In practice, CandleStream’s `_apply_trade_logging(...)` already sits at this integration boundary: it receives the `trade_events` and `stop_segments` produced by `compute_order_block_trend_following`. The Execution Service should be invoked from this layer (or directly downstream of it) so that **every new `TradeEvent` and stop move** produced by the strategy results in a corresponding **order/position action** on Bybit in trading mode.
+CandleStream’s `_apply_trade_logging(...)` sits at this boundary: it receives `trade_events` and `stop_segments` from the strategy. The executor is invoked from this layer in trading mode; the strategy reads `current.json` (written only by the executor) to know actual entry price, size, and whether the position and stop are in place.
 
 ---
 

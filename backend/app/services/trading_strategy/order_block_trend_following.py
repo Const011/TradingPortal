@@ -10,8 +10,8 @@ from app.schemas.market import Candle
 logger = logging.getLogger(__name__)
 
 # Temporary debug: log bullish signal steps for bars around 2026-03-02 17:00
-_DEBUG_TS_START = int(datetime(2026, 3, 7, 11, 0).timestamp() * 1000)
-_DEBUG_TS_END = int(datetime(2026, 3, 7, 14, 0).timestamp() * 1000)
+_DEBUG_TS_START = int(datetime(2025, 3, 7, 11, 0).timestamp() * 1000)
+_DEBUG_TS_END = int(datetime(2025, 3, 7, 14, 0).timestamp() * 1000)
 
 from app.utils.timefmt import ts_human
 
@@ -148,30 +148,6 @@ def _get_closest_resistance_above(
     if not candidates:
         return None
     return min(candidates, key=lambda x: x[0])  # Closest = lowest above price
-
-
-def _get_closest_bearish_ob_below(
-    bearish_ob: list[OrderBlock],
-    price: float,
-    *,
-    active_only: bool = True,
-) -> float | None:
-    """Closest bearish OB top below price. active_only=True excludes breakers (only block on strong bearish OB)."""
-    obs = [ob for ob in bearish_ob if not ob.breaker] if active_only else bearish_ob
-    tops_below = [ob.top for ob in obs if ob.top < price]
-    return max(tops_below) if tops_below else None
-
-
-def _get_closest_bullish_ob_above(
-    bullish_ob: list[OrderBlock],
-    price: float,
-    *,
-    active_only: bool = True,
-) -> float | None:
-    """Closest bullish OB bottom above price. active_only=True excludes breakers (only block on strong bullish OB)."""
-    obs = [ob for ob in bullish_ob if not ob.breaker] if active_only else bullish_ob
-    bottoms_above = [ob.bottom for ob in obs if ob.bottom > price]
-    return min(bottoms_above) if bottoms_above else None
 
 
 def _compute_initial_stop_long(
