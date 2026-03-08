@@ -16,13 +16,12 @@ from app.services.trading_strategy.chart_format import strategy_output_to_chart
 from app.services.trading_strategy.types import TradeEvent, StopSegment
 from app.services.trade_log import (
     append_exit,
-    append_stop_move,
     compute_trade_results,
     get_effective_stop_segments_for_bar,
     load_current_trades,
     write_entry_snapshot_md_only,
 )
-from app.services.execution_service import submit_entry, sync_from_exchange
+from app.services.execution_service import submit_entry, sync_from_exchange, update_stop
 from app.utils.intervals import interval_seconds
 from app.utils.timefmt import ts_human
 
@@ -170,40 +169,22 @@ async def _apply_trade_logging(
         # At most one stop move per bar per trade to avoid wobble from repeated live updates.
         if state.logged_stop_bar_per_trade.get(trade_id) == current_bar_start_sec:
             continue
-        append_stop_move(symbol, interval, trade_id, seg.end_time, seg.price, seg.side)
+        # Executor owns current.json and index (stop_move): dry run logs and persists; live sets Bybit then persists.
+        await update_stop(
+            symbol,
+            interval,
+            trade_id,
+            seg.price,
+            seg.side,
+            seg.end_time,
+            bybit_client,
+        )
         state.last_stop_price_per_trade[trade_id] = seg.price
         state.logged_stop_bar_per_trade[trade_id] = current_bar_start_sec
-        # Keep in-memory restored trades consistent with file stop updates.
+        # Keep in-memory restored trades consistent with executor-written current.json.
         for t in getattr(state, "restored_trades", []):
             if t.get("tradeId") == trade_id:
                 t["currentStopPrice"] = seg.price
-        # Milestone 5: push trailing stop to exchange (whole position)
-        if bybit_client is not None and settings.market == "linear":
-            # ----- TEMPORARY DEBUG STUB: no real Bybit call, log params only -----
-            if settings.executor_dry_run:
-                print(
-                    f" [TEMPORARY DEBUG STUB] moving stop with params: symbol={symbol} trade_id={trade_id} "
-                    f"stopLoss={seg.price} side={seg.side}"
-                )
-            else:
-                # ----- LIVE (runs when EXECUTOR_DRY_RUN=false) -----
-                try:
-                    await bybit_client.set_linear_trading_stop(
-                        symbol=symbol,
-                        stopLoss=seg.price,
-                    )
-                    logger.debug(
-                        "Executor: set_linear_trading_stop trade_id=%s stopLoss=%s",
-                        trade_id,
-                        seg.price,
-                    )
-                except Exception as e:
-                    logger.warning(
-                        "Executor: set_linear_trading_stop failed trade_id=%s err=%s",
-                        trade_id,
-                        e,
-                    )
-            # ----- end TEMPORARY DEBUG STUBS -----
 
     # Build events + segments for exit detection (include restored trades not in strategy output)
     all_events = list(trade_events)

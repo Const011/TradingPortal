@@ -11,7 +11,10 @@ from app.services.trade_log import (
     add_current_trade,
     append_entry_index_line,
     append_exit,
+    append_stop_move,
     load_current_trades,
+    remove_current_trade,
+    update_current_trade_stop,
 )
 from app.services.trading_strategy.types import TradeEvent
 
@@ -66,8 +69,47 @@ async def submit_entry(
             message="POSITION_SIZE not set",
         )
 
+    new_side = ev.side or "long"
+
+    # Reversal: if we have an open position in the opposite direction, close it first (cancel orders, close, then enter).
+    if settings.executor_dry_run:
+        current = load_current_trades(symbol, interval)
+        has_position = len(current) > 0
+        current_side = current[0].get("side", "long") if current else None
+    else:
+        positions = await client.get_linear_positions(symbol=symbol)
+        position_size = _linear_position_size(positions)
+        has_position = position_size > 0
+        current_side = _linear_position_side(positions) if has_position else None
+
+    if has_position and current_side and current_side != new_side:
+        logger.info(
+            "Executor: reversal detected (current=%s new=%s), closing position then entering symbol=%s",
+            current_side,
+            new_side,
+            symbol,
+        )
+        if not settings.executor_dry_run and client:
+            try:
+                open_orders = await client.get_open_orders(category="linear", symbol=symbol)
+                for order in open_orders:
+                    order_id = order.get("orderId")
+                    if order_id:
+                        await client.cancel_order(category="linear", symbol=symbol, orderId=order_id)
+                        logger.info("Executor: cancelled open order orderId=%s (reversal) symbol=%s", order_id, symbol)
+            except Exception as e:
+                logger.warning("Executor: cancel open orders before reversal failed symbol=%s err=%s", symbol, e)
+        close_result = await close_position(symbol, interval, client)
+        if not close_result.get("ok"):
+            return ExecutorEntryResponse(
+                order_received=False,
+                entry_yet=False,
+                message=f"Reversal close failed: {close_result.get('message', 'unknown')}",
+            )
+        logger.info("Executor: reversal close done, placing new entry side=%s", new_side)
+
     category = settings.market
-    side = _bybit_side(ev.side)
+    side = _bybit_side(new_side)
 
     try:
         # ----- TEMPORARY DEBUG STUBS: dry run = no real Bybit calls, treat as success and update log/current -----
@@ -167,6 +209,18 @@ def _linear_position_size(positions: list[dict]) -> float:
     return total
 
 
+def _linear_position_side(positions: list[dict]) -> str | None:
+    """Return 'long' or 'short' for the open position, or None if no size. Bybit returns one row per side."""
+    for pos in positions:
+        try:
+            size = float(pos.get("size", "0") or 0)
+            if size > 0:
+                return "long" if pos.get("side") == "Buy" else "short"
+        except (TypeError, ValueError):
+            pass
+    return None
+
+
 def _fake_positions_from_current(symbol: str, interval: str) -> list[dict]:
     """TEMPORARY DEBUG STUB: build Bybit-like position list from current.json for dry run."""
     current = load_current_trades(symbol, interval)
@@ -257,39 +311,98 @@ async def sync_from_exchange(
                     del _pending_by_key[key]
                     return exited_ids
 
-        # 2) Stop-hit: position size 0 but current.json has trades → append exit, remove from current
+        # 2) Stop-hit: position size 0 but current.json has trades → cancel any open orders for symbol, append exit, remove from current.json
         if position_size <= 0:
             current = load_current_trades(symbol, interval)
-            close_time = int(time.time())
-            for t in current:
-                trade_id = t.get("tradeId", "")
-                if not trade_id:
-                    continue
-                entry_price = float(t.get("entryPrice", 0) or 0)
-                stop_price = float(t.get("currentStopPrice", 0) or t.get("initialStopPrice", 0) or entry_price)
-                side = t.get("side", "long")
-                if side == "long":
-                    points = stop_price - entry_price
-                else:
-                    points = entry_price - stop_price
-                append_exit(
-                    symbol=symbol,
-                    interval=interval,
-                    trade_id=trade_id,
-                    time=close_time,
-                    close_price=stop_price,
-                    close_reason="stop",
-                    points=points,
-                )
-                exited_ids.append(trade_id)
+            if current:
                 logger.info(
-                    "Executor: stop hit trade_id=%s close_price=%s",
-                    trade_id,
-                    stop_price,
+                    "Executor: stop hit detected (position size 0), registering exit(s) and updating current.json symbol=%s",
+                    symbol,
                 )
+                if not settings.executor_dry_run and client:
+                    try:
+                        open_orders = await client.get_open_orders(category="linear", symbol=symbol)
+                        for order in open_orders:
+                            order_id = order.get("orderId")
+                            if order_id:
+                                await client.cancel_order(category="linear", symbol=symbol, orderId=order_id)
+                                logger.info("Executor: cancelled open order orderId=%s (symbol=%s)", order_id, symbol)
+                    except Exception as e:
+                        logger.warning("Executor: cancel open orders after stop hit failed symbol=%s err=%s", symbol, e)
+                close_time = int(time.time())
+                for t in current:
+                    trade_id = t.get("tradeId", "")
+                    if not trade_id:
+                        continue
+                    entry_price = float(t.get("entryPrice", 0) or 0)
+                    stop_price = float(t.get("currentStopPrice", 0) or t.get("initialStopPrice", 0) or entry_price)
+                    side = t.get("side", "long")
+                    if side == "long":
+                        points = stop_price - entry_price
+                    else:
+                        points = entry_price - stop_price
+                    append_exit(
+                        symbol=symbol,
+                        interval=interval,
+                        trade_id=trade_id,
+                        time=close_time,
+                        close_price=stop_price,
+                        close_reason="stop",
+                        points=points,
+                    )
+                    remove_current_trade(symbol, interval, trade_id)
+                    exited_ids.append(trade_id)
+                    logger.info(
+                        "Executor: stop hit trade_id=%s close_price=%s position closed",
+                        trade_id,
+                        stop_price,
+                    )
     except Exception:
         logger.exception("Executor: sync_from_exchange failed symbol=%s", symbol)
     return exited_ids
+
+
+async def update_stop(
+    symbol: str,
+    interval: str,
+    trade_id: str,
+    new_stop_price: float,
+    side: str,
+    end_time: int,
+    client: BybitClient | None = None,
+) -> None:
+    """Update trailing stop: write current.json + index (stop_move). Dry run: log only, no Bybit. Live: set Bybit stop then persist."""
+    if settings.market != "linear":
+        return
+    if settings.executor_dry_run:
+        logger.info(
+            "Executor: [DRY RUN] stop moved trade_id=%s new_stop=%.4f side=%s",
+            trade_id,
+            new_stop_price,
+            side,
+        )
+        update_current_trade_stop(symbol, interval, trade_id, new_stop_price)
+        append_stop_move(symbol, interval, trade_id, end_time, new_stop_price, side)
+        return
+    if client is None:
+        logger.warning("Executor: update_stop skipped (no client)")
+        return
+    try:
+        await client.set_linear_trading_stop(symbol=symbol, stopLoss=new_stop_price)
+        logger.info(
+            "Executor: set_linear_trading_stop trade_id=%s stopLoss=%s",
+            trade_id,
+            new_stop_price,
+        )
+    except Exception as e:
+        logger.warning(
+            "Executor: set_linear_trading_stop failed trade_id=%s err=%s",
+            trade_id,
+            e,
+        )
+        return
+    update_current_trade_stop(symbol, interval, trade_id, new_stop_price)
+    append_stop_move(symbol, interval, trade_id, end_time, new_stop_price, side)
 
 
 async def close_position(
@@ -323,6 +436,7 @@ async def close_position(
                     close_reason="manual",
                     points=points,
                 )
+                remove_current_trade(symbol, interval, trade_id)
                 return {"ok": True, "close_price": stop_price, "points": points, "message": "dry run: simulated close"}
             return {"ok": False, "message": "dry run: no trade in current.json"}
         # ----- end TEMPORARY DEBUG STUBS -----
@@ -370,6 +484,7 @@ async def close_position(
                     close_reason="manual",
                     points=points,
                 )
+                remove_current_trade(symbol, interval, trade_id)
                 logger.info("Executor: closed position trade_id=%s", trade_id)
                 return {"ok": True, "close_price": avg_price, "points": points}
             return {"ok": True, "message": "Position closed, no matching trade in current.json"}

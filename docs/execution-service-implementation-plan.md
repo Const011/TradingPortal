@@ -110,12 +110,13 @@ Both modes share the same `BybitClient` implementation and config (`BYBIT_API_KE
 
 - **Executor module** owns:
   - All live **order placement / cancellation / stop management** (via `BybitClient`).
-  - **`current.json`** — single source of truth for open position state (entry price, size, current stop). Updated by the executor from exchange state (e.g. after fill, on heartbeat).
-  - **`index.jsonl`** — trade log index (entry/stop_move/exit lines). Written by the executor when it confirms fills and stop updates.
+  - **`current.json`** — single source of truth for open position state (entry price, size, current stop). Updated by the executor: on entry (after fill), on **trailing stop move** (via `update_stop()`), and on **stop hit** (trade removed).
+  - **`index.jsonl`** — trade log index (entry/stop_move/exit lines). Written by the executor when it confirms fills, when it applies a stop move (`update_stop`), and when it registers a stop hit (exit).
 - **Strategy module** (trading mode):
   - Sends **entry intent** to the executor (do not treat entry as performed until executor confirms).
-  - Does **not** write `current.json` or `index.jsonl` on entry; only reads `current.json` on each heartbeat to see if position was opened and stop is in place.
+  - Emits **stop segments** (trailing stop levels); the **executor** is invoked to apply them via `update_stop()` (writes `current.json` + `stop_move` in index). Strategy does **not** write `current.json` or `index.jsonl`.
   - Owns **`entry_*.md`** only — logs the orders/signals it issued (for audit and strategy-level notes).
+  - **Stop-hit** is **not** detected by the strategy; it is detected by the executor at the start of each heartbeat (see § 6.1 and § 10.4).
 - Expose **manual test endpoints** (see § 12) for each execution primitive so effects can be verified on Bybit with `curl`.
 - Provide reconciliation views (Spot/Linear) for drift detection.
 
@@ -180,17 +181,14 @@ In **simulation mode**, stop-hit is determined by the strategy/bar replay logic:
   1. Check if the bar range touches the effective stop level.
   2. If hit → treat the trade as closed at that bar (simulation-only).
 
-In **live trading mode**, the Execution Service **must not** re-simulate stops from candles. Instead it:
+In **live trading mode**, stop-hit is detected **only in the executor**, at the **start of each heartbeat** (when syncing from the exchange):
 
-- Places real stop/TP/TS on the exchange (Linear via `position/trading-stop`, Spot via logical/conditional orders if used).
-- Periodically or via WebSocket:
-  - Checks whether the **stop order or position close** has been reported by Bybit:
-    - Spot: position size inferred from balances + orders drops to zero, or specific stop order is filled.
-    - Linear: `position/list` shows size reduced to zero, and/or stop order is reported as filled.
-- If the stop order was executed:
-  - Treat the position as closed, append an `exit` in the trade log, and remove it from `current.json`.
-- If the stop order was **not** executed:
-  - Treat the position as still open; trailing logic and further stop adjustments continue based on the live exchange state.
+- The executor calls `get_linear_positions(symbol)` (or Spot equivalent). If **position size is 0** for the symbol but **`current.json`** still has open trade(s) for that symbol, the executor treats this as **stop hit** (position was closed by the exchange, e.g. by the attached stop).
+- The executor then:
+  1. **Cancels any open orders** for the active symbol (e.g. leftover SL/TP orders) via `get_open_orders` and `cancel_order`.
+  2. For each trade in `current.json` for that symbol: **appends an `exit`** to `index.jsonl` (close_price = last stop, close_reason = `"stop"`) and **removes the trade from `current.json`** via `remove_current_trade(...)`.
+  3. Logs to console (e.g. `Executor: stop hit detected (position size 0), registering exit(s) and updating current.json` and per-trade `Executor: stop hit trade_id=... close_price=... position closed`).
+- The strategy does **not** detect or write stop-hit; it only reads `current.json` after the executor has updated it. In **dry run**, position state is faked from `current.json`, so “position size 0” with open trades in `current.json` does not occur unless the user manually removes the position; stop-hit logging in the executor is therefore seen in **live** mode when the exchange has closed the position.
 
 ### 6.2 Close Position Using Live Size
 
@@ -215,12 +213,12 @@ After the close:
 
 ### 6.3 Trailing / Moving Stop
 
-- **Strategy**: Calculates new stop price per bar and emits stop segments (already implemented).
+- **Strategy**: Calculates new stop price per bar and emits stop segments (already implemented). It does **not** write `current.json` or `index.jsonl`.
 - **Trading mode (Linear)**:
-  - For each new stop segment on the current bar (strategy emits; executor acts):
-    - Executor logs `stop_move` via `append_stop_move(...)` and updates `current.json`’s `currentStopPrice`.
-    - **Trailing stop on exchange**: use **`POST /v5/position/trading-stop`** (see § 12.1.6 and `test.sh`), setting **`stopLoss`** to the new trailing level for the **whole position size** (full position). No partial size; the executor calls `set_linear_trading_stop(symbol, stopLoss=new_stop_price)` so the exchange applies the new stop to the entire position.
-  - Live position size remains the source of truth for “whole position”; if the user has partially closed externally, the next trailing update still applies to whatever size the exchange reports (full remaining position).
+  - The **executor** exposes **`update_stop(symbol, interval, trade_id, new_stop_price, side, end_time, client)`**. The candle stream calls it when a new stop segment is applied for an open trade.
+  - **Dry run:** Executor logs (e.g. `Executor: [DRY RUN] stop moved trade_id=... new_stop=... side=...`), then updates `current.json` via `update_current_trade_stop(...)` and appends `stop_move` via `append_stop_move(...)`.
+  - **Live:** Executor calls **`set_linear_trading_stop(symbol, stopLoss=new_stop_price)`** for the whole position, then updates `current.json` and appends `stop_move`. No partial size; the exchange applies the new stop to the entire position.
+  - All writes to `current.json` and `index.jsonl` for stop moves are done **only** in the executor; the strategy never writes them.
 
 ---
 
@@ -349,19 +347,19 @@ Concrete implementation steps, in order. Complete each milestone’s steps befor
 ### 10.4 Milestone 4: Stop-hit wiring (trading mode)
 
 1. **Detect stop hit (Linear)**  
-   - In the executor (same place as heartbeat): on each run, call `get_linear_positions(symbol)`.  
-   - If position size is 0 for the symbol but `current.json` (owned by executor) still has an open trade → position was closed (e.g. by exchange stop).  
-   - Executor then: append `exit` to `index.jsonl` and remove the trade from `current.json`.
+   - In the executor, at the **start of each heartbeat** (inside `sync_from_exchange`): call `get_linear_positions(symbol)`.  
+   - If **position size is 0** for the symbol but `current.json` still has open trade(s) for that symbol → **stop hit** (position was closed by the exchange).  
+   - Executor then: (1) **Cancel any open orders** for the symbol (`get_open_orders` → `cancel_order` per order) to clear leftover SL/TP orders. (2) For each trade in `current.json`: append `exit` to `index.jsonl` and **remove the trade from `current.json`** via `remove_current_trade(...)`. (3) Log (e.g. `Executor: stop hit detected (position size 0), registering exit(s) and updating current.json` and per-trade `Executor: stop hit trade_id=... close_price=... position closed`).
 
 2. **Detect stop hit (Spot)**  
-   - Query wallet balance + open orders; infer net position. If net position is 0 but `current.json` has an open trade → treat as closed; executor appends exit and removes from `current.json`.
+   - Query wallet balance + open orders; infer net position. If net position is 0 but `current.json` has an open trade → treat as closed; executor cancels open orders for symbol if needed, appends exit, removes from `current.json`, and logs.
 
 3. **Close position helper (executor)**  
    - As in § 6.2: Linear: `get_linear_positions` → if size > 0, `create_order` opposite side, qty = live size. Spot: compute live size → opposite market order.  
    - After successful close: executor calls `append_exit(...)` and `remove_current_trade(...)` (executor owns both `index.jsonl` and `current.json`).
 
-4. **Call close from stop-hit detection**  
-   - When executor detects position gone on exchange, it updates `current.json` (remove trade) and `index.jsonl` (append exit). No strategy write to these files.
+4. **Stop-hit is executor-only**  
+   - Detection and all writes (`index.jsonl` exit, `current.json` removal) are done in the executor. The strategy does not detect or write stop-hit.
 
 ---
 
