@@ -29,6 +29,7 @@ class _PendingEntry:
     side: str
     initial_stop_price: float
     target_price: float | None
+    requested_entry_price: float  # strategy's intended entry price (ev.price), for entry efficiency
     bar_index: int
 
 
@@ -142,6 +143,7 @@ async def submit_entry(
                 side=ev.side or "long",
                 initial_stop_price=ev.initial_stop_price,
                 target_price=ev.target_price,
+                requested_entry_price=ev.price,
                 size=size_float,
                 bar_index=ev.bar_index,
             )
@@ -175,6 +177,7 @@ async def submit_entry(
             side=ev.side or "long",
             initial_stop_price=ev.initial_stop_price,
             target_price=ev.target_price,
+            requested_entry_price=ev.price,
             bar_index=ev.bar_index,
         )
         logger.info(
@@ -299,6 +302,7 @@ async def sync_from_exchange(
                         side=pending.side,
                         initial_stop_price=pending.initial_stop_price,
                         target_price=pending.target_price,
+                        requested_entry_price=pending.requested_entry_price,
                         size=size,
                         bar_index=pending.bar_index,
                     )

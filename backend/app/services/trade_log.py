@@ -326,11 +326,13 @@ def append_entry_index_line(
     side: str,
     initial_stop_price: float,
     target_price: float | None = None,
+    requested_entry_price: float | None = None,
     size: float | None = None,
     bar_index: int = 0,
     context: dict | None = None,
 ) -> None:
-    """Append only the entry line to index.jsonl (executor calls when confirming fill)."""
+    """Append only the entry line to index.jsonl (executor calls when confirming fill).
+    entry_price = executed fill price; requested_entry_price = strategy's intended open price (for entry efficiency)."""
     log_dir = _log_dir(symbol, interval)
     log_dir.mkdir(parents=True, exist_ok=True)
     record: dict[str, Any] = {
@@ -345,6 +347,8 @@ def append_entry_index_line(
         "targetPrice": target_price,
         "snapshotFile": f"entry_{trade_id}.md",
     }
+    if requested_entry_price is not None:
+        record["requestedEntryPrice"] = requested_entry_price
     if context is not None:
         record["context"] = context
     if size is not None:
@@ -669,7 +673,7 @@ def get_trades(
             close_reason = "open"
             points = 0.0
 
-        trades.append({
+        trade_obj: dict[str, Any] = {
             "tradeId": trade_id,
             "entryDateTime": _ts_to_iso(entry_time),
             "side": side,
@@ -691,7 +695,12 @@ def get_trades(
                 "initialStopPrice": entry.get("initialStopPrice"),
                 "context": entry.get("context"),
             }],
-        })
+        }
+        if entry.get("requestedEntryPrice") is not None:
+            trade_obj["requestedEntryPrice"] = entry.get("requestedEntryPrice")
+            if trade_obj["events"]:
+                trade_obj["events"][0]["requestedEntryPrice"] = entry.get("requestedEntryPrice")
+        trades.append(trade_obj)
 
     return trades
 
