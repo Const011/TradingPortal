@@ -381,6 +381,54 @@ format_strength(float v) =>
         suffix := "k"
     str.tostring(scaled, "#.00") + suffix
 
+// Create a bullish OB when price breaks above a pivot (swing or internal high).
+// Returns strength (float) when OB created, na otherwise. Display limits to showBull most recent.
+create_bullish_ob_from_pivot(int pivot_bar_index) =>
+    lookback = bar_index - pivot_bar_index
+    if lookback < 2
+        na
+    else
+        range_end = math.min(lookback - 1, maxLookback)
+        min_1 = useBody ? math.min(close[1], open[1]) : low[1]
+        best_min = min_1
+        minima = low[1]
+        maxima = high[1]
+        loc_bar = bar_index - 1
+        for i = 1 to range_end
+            min_i = useBody ? math.min(close[i], open[i]) : low[i]
+            if min_i < best_min
+                best_min := min_i
+                minima := low[i]
+                maxima := high[i]
+                loc_bar := bar_index - i
+        strength = ob_strength_for_loc(loc_bar, obStrengthLength)
+        bullish_ob.unshift(ob.new(top=maxima, btm=minima, loc=loc_bar, breaker=false, break_loc=na, strength=strength))
+        strength
+
+// Create a bearish OB when price breaks below a pivot (swing or internal low).
+// Returns strength (float) when OB created, na otherwise. Display limits to showBear most recent.
+create_bearish_ob_from_pivot(int pivot_bar_index) =>
+    lookback = bar_index - pivot_bar_index
+    if lookback < 2
+        na
+    else
+        range_end = math.min(lookback - 1, maxLookback)
+        max_1 = useBody ? math.max(close[1], open[1]) : high[1]
+        best_max = max_1
+        maxima = high[1]
+        minima = low[1]
+        loc_bar = bar_index - 1
+        for i = 1 to range_end
+            max_i = useBody ? math.max(close[i], open[i]) : high[i]
+            if max_i > best_max
+                best_max := max_i
+                maxima := high[i]
+                minima := low[i]
+                loc_bar := bar_index - i
+        strength = ob_strength_for_loc(loc_bar, obStrengthLength)
+        bearish_ob.unshift(ob.new(top=maxima, btm=minima, loc=loc_bar, breaker=false, break_loc=na, strength=strength))
+        strength
+
 method notransp(color css) => color.rgb(color.r(css), color.g(css), color.b(css))
 
 method display(ob id, css, break_css)=>
@@ -521,11 +569,14 @@ drawStructure(pivot p_ivot, string tag, color structureColor, lineStyle, labelSt
     structureElements.unshift(visualElement.new(newLine, newLabel))
     cleanupElements(structureElements, maxStructureElements)
 
+// Returns [structSignals, created_bull_strength, created_bear_strength]. Strengths are na if no OB created.
 displayStructure(bool internal = false) =>
     var bullishBar = true
     var bearishBar = true
 
     structSignals = structureSignals.new()
+    float created_bull = na
+    float created_bear = na
 
     if internalFilterConfluenceInput
         bullishBar := high - math.max(close, open) > math.min(close, open - low)
@@ -552,6 +603,7 @@ displayStructure(bool internal = false) =>
 
         p_ivot.crossed  := true
         t_rend.bias     := BULLISH
+        created_bull := create_bullish_ob_from_pivot(p_ivot.barIndex)
 
         displayCondition = internal ? showInternalsInput and (showInternalBullInput == ALL or (showInternalBullInput == BOS and tag != CHOCH) or (showInternalBullInput == CHOCH and tag == CHOCH)) : showStructureInput and (showSwingBullInput == ALL or (showSwingBullInput == BOS and tag != CHOCH) or (showSwingBullInput == CHOCH and tag == CHOCH))
 
@@ -574,13 +626,14 @@ displayStructure(bool internal = false) =>
 
         p_ivot.crossed := true
         t_rend.bias := BEARISH
+        created_bear := create_bearish_ob_from_pivot(p_ivot.barIndex)
 
         displayCondition = internal ? showInternalsInput and (showInternalBearInput == ALL or (showInternalBearInput == BOS and tag != CHOCH) or (showInternalBearInput == CHOCH and tag == CHOCH)) : showStructureInput and (showSwingBearInput == ALL or (showSwingBearInput == BOS and tag != CHOCH) or (showSwingBearInput == CHOCH and tag == CHOCH))
         
         if displayCondition                        
             drawStructure(p_ivot,tag,bearishColor,lineStyle,label.style_label_up,labelSize)
 
-    structSignals
+    [structSignals, created_bull, created_bear]
 
 fairValueGapBox(leftTime,rightTime,topPrice,bottomPrice,boxColor) => 
     box.new(chart.point.new(leftTime,na,topPrice),chart.point.new(rightTime + fairValueGapsExtendInput * (time-time[1]),na,bottomPrice), xloc=xloc.bar_time, border_color = boxColor, bgcolor = boxColor)
@@ -631,9 +684,9 @@ bearish_fvg_signal := false
 equal_highs_signal := false
 equal_lows_signal := false
 
-// Original Order Block Detection
-n = bar_index
-[top, btm] = swings(length)
+// Order blocks are now created from structure breaks (swing + internal) in displayStructure(),
+// so they align with BOS/CHoCH labels. No separate swing(length) OB detection here.
+
 max = useBody ? math.max(close, open) : high
 min = useBody ? math.min(close, open) : low
 
@@ -646,26 +699,6 @@ bullish_breaker_created := false
 bearish_breaker_created := false
 latest_bull_ob_strength := na
 latest_bear_ob_strength := na
-
-// Bullish OB Detection
-if close > top.y and not top.crossed and bullish_ob.size() < showBull
-    top.crossed := true
-
-    minima = low[1]    // Start with previous candle's low
-    maxima = high[1]   // Start with previous candle's high
-    loc_bar_index = bar_index[1]  // Store bar index instead of time
-
-    for i = 1 to (n - top.x)-1
-        minima := math.min(min[i], minima)
-        maxima := minima == min[i] ? max[i] : maxima
-        loc_bar_index := minima == min[i] ? bar_index[i] : loc_bar_index  // Use bar_index[i]
-
-    strength = ob_strength_for_loc(loc_bar_index, obStrengthLength)
-    latest_bull_ob_strength := strength
-    bullish_ob.unshift(ob.new(top=maxima, btm=minima, loc=loc_bar_index, breaker=false, break_loc=na, strength=strength))
-    
-    // Merge overlapping order blocks
-    //bullish_ob := mergeOverlappingOBs(bullish_ob)
 
 if bullish_ob.size() > 0
     for i = bullish_ob.size()-1 to 0
@@ -692,26 +725,6 @@ if bullish_ob.size() > 0
             if open >= element.btm and open <= element.top and close > element.top and close > open 
                 bull_break_conf := 1
                 bullish_boundary_crossed := true
-
-// Bearish OB Detection
-if close < btm.y and not btm.crossed and bearish_ob.size() < showBear
-    btm.crossed := true
-
-    minima = low[1]    // Start with previous candle's low
-    maxima = high[1]   // Start with previous candle's high  
-    loc = bar_index[1]
-
-    for i = 1 to (n - btm.x)-1
-        maxima := math.max(max[i], maxima)
-        minima := maxima == max[i] ? min[i] : minima
-        loc := maxima == max[i] ? bar_index[i] : loc
-
-    strength = ob_strength_for_loc(loc, obStrengthLength)
-    latest_bear_ob_strength := strength
-    bearish_ob.unshift(ob.new(top=maxima, btm=minima, loc=loc, breaker=false, break_loc=na, strength=strength))
-    
-    // Merge overlapping order blocks
-    //bearish_ob := mergeOverlappingOBs(bearish_ob)
 
 if bearish_ob.size() > 0
     for i = bearish_ob.size()-1 to 0
@@ -753,10 +766,20 @@ internalStructSignals = structureSignals.new()
 swingStructSignals = structureSignals.new()
 
 if showInternalsInput
-    internalStructSignals := displayStructure(true)
+    [internalSig, internalBullStr, internalBearStr] = displayStructure(true)
+    internalStructSignals := internalSig
+    if not na(internalBullStr)
+        latest_bull_ob_strength := internalBullStr
+    if not na(internalBearStr)
+        latest_bear_ob_strength := internalBearStr
 
 if showStructureInput
-    swingStructSignals := displayStructure()
+    [swingSig, swingBullStr, swingBearStr] = displayStructure()
+    swingStructSignals := swingSig
+    if not na(swingBullStr)
+        latest_bull_ob_strength := swingBullStr
+    if not na(swingBearStr)
+        latest_bear_ob_strength := swingBearStr
 
 // Assign structure signals
 internal_bullish_bos := internalStructSignals.internal_bullish_bos
