@@ -17,6 +17,10 @@ class Settings(BaseSettings):
     bybit_rest_base_url: str = "https://api.bybit.com"
     bybit_ws_public_spot_url: str = "wss://stream.bybit.com/v5/public/spot"
     bybit_ws_public_linear_url: str = "wss://stream.bybit.com/v5/public/linear"
+    # Private REST (orders, positions, wallet): optional; leave empty for public-only.
+    bybit_api_key: str = ""
+    bybit_api_secret: str = ""
+    bybit_recv_window: int = 5000
     # Trading market: "spot" or "linear" (linear = USDT perpetuals).
     market: Literal["spot", "linear"] = "spot"
     cors_origins: list[str] = Field(default_factory=_default_cors_origins)

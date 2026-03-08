@@ -1,0 +1,5 @@
+# Secrets and env (do not index or expose)
+.env
+.env.*
+backend/.env
+frontend/.env

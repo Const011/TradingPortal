@@ -1,11 +1,25 @@
+import hmac
+import hashlib
 import json
+import time
 from collections.abc import AsyncGenerator
+from urllib.parse import urlencode
 
 import httpx
 import websockets
 
 from app.config import settings
 from app.schemas.market import BarUpdate, Candle, SymbolInfo, TickerSnapshot, TickerTick
+from app.utils.timefmt import ts_human
+
+
+class BybitClientError(Exception):
+    """Raised when Bybit API returns retCode != 0 or HTTP error."""
+
+    def __init__(self, message: str, ret_code: int | None = None, ret_msg: str | None = None):
+        super().__init__(message)
+        self.ret_code = ret_code
+        self.ret_msg = ret_msg
 
 
 class BybitClient:
@@ -14,6 +28,94 @@ class BybitClient:
     def _market_category(self) -> str:
         """Return Bybit category based on app-level market setting."""
         return "spot" if settings.market == "spot" else "linear"
+
+    def _has_private_auth(self) -> bool:
+        return bool(settings.bybit_api_key and settings.bybit_api_secret)
+
+    async def _get_server_time_ms(self) -> int:
+        """GET /v5/market/time (no auth). Returns Bybit server time in milliseconds for request signing."""
+        base = settings.bybit_rest_base_url.rstrip("/")
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(f"{base}/v5/market/time")
+            response.raise_for_status()
+        data = response.json()
+        # Top-level "time" is server time in ms; fallback to result.timeSecond * 1000
+        if "time" in data:
+            return int(data["time"])
+        result = data.get("result", {})
+        sec = result.get("timeSecond", "0")
+        return int(sec) * 1000
+
+    def _sign_request(
+        self, method: str, timestamp_ms: int, query_string: str, body: str
+    ) -> dict[str, str]:
+        """Build auth headers for Bybit v5 private REST. GET: sign timestamp+apiKey+recvWindow+queryString; POST: +body."""
+        recv = str(settings.bybit_recv_window)
+        if method.upper() == "GET":
+            sign_str = f"{timestamp_ms}{settings.bybit_api_key}{recv}{query_string}"
+        else:
+            sign_str = f"{timestamp_ms}{settings.bybit_api_key}{recv}{body}"
+        sig = hmac.new(
+            settings.bybit_api_secret.encode("utf-8"),
+            sign_str.encode("utf-8"),
+            hashlib.sha256,
+        ).hexdigest()
+        return {
+            "X-BAPI-API-KEY": settings.bybit_api_key,
+            "X-BAPI-TIMESTAMP": str(timestamp_ms),
+            "X-BAPI-RECV-WINDOW": recv,
+            "X-BAPI-SIGN": sig,
+        }
+
+    async def _request(
+        self,
+        method: str,
+        path: str,
+        params: dict | None = None,
+        json_body: dict | None = None,
+    ) -> dict:
+        """Send authenticated private REST request. Raises BybitClientError on retCode != 0."""
+        if not self._has_private_auth():
+            raise BybitClientError("Bybit API key/secret not configured")
+        base = settings.bybit_rest_base_url.rstrip("/")
+        url = f"{base}{path}"
+        query_string = ""
+        body_str = ""
+        if params:
+            query_string = urlencode(sorted(params.items()))
+        if json_body is not None:
+            body_str = json.dumps(json_body, separators=(",", ":"))
+        timestamp_ms = int(time.time() * 1000)
+        print(f"local timestamp_ms: {ts_human(timestamp_ms)}")
+        #timestamp_ms = await self._get_server_time_ms()
+        #print(f"server timestamp_ms: {ts_human(timestamp_ms)}")
+        headers = {
+            "Content-Type": "application/json",
+            **self._sign_request(method, timestamp_ms, query_string, body_str),
+        }
+        if method.upper() == "GET":
+            full_url = f"{url}?{query_string}" if query_string else url
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                response = await client.get(full_url, headers=headers)
+        else:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                response = await client.request(
+                    method,
+                    url,
+                    params=params,
+                    content=body_str.encode("utf-8") if body_str else None,
+                    headers=headers,
+                )
+        response.raise_for_status()
+        data = response.json()
+        ret_code = data.get("retCode", -1)
+        if ret_code != 0:
+            raise BybitClientError(
+                data.get("retMsg", "Unknown error"),
+                ret_code=ret_code,
+                ret_msg=data.get("retMsg"),
+            )
+        return data
 
     def _ws_public_url(self) -> str:
         """Return correct public WS URL for current market."""
@@ -178,4 +280,110 @@ class BybitClient:
                     confirm=bool(row.get("confirm", True)),
                     timestamp=int(row.get("timestamp", data.get("ts", 0))),
                 )
+
+    # ---------- Private REST (orders, positions, wallet) ----------
+
+    async def create_order(
+        self,
+        *,
+        category: str,
+        symbol: str,
+        side: str,
+        orderType: str,
+        qty: str | float,
+        price: str | float | None = None,
+        **kwargs: str | float | None,
+    ) -> dict:
+        """POST /v5/order/create. category: spot | linear. side: Buy | Sell. orderType: Market | Limit."""
+        body: dict = {
+            "category": category,
+            "symbol": symbol,
+            "side": side,
+            "orderType": orderType,
+            "qty": str(qty) if not isinstance(qty, str) else qty,
+        }
+        if price is not None:
+            body["price"] = str(price) if not isinstance(price, str) else price
+        for k, v in kwargs.items():
+            if v is not None:
+                body[k] = v
+        data = await self._request("POST", "/v5/order/create", json_body=body)
+        return data.get("result", data)
+
+    async def cancel_order(
+        self,
+        *,
+        category: str,
+        symbol: str,
+        orderId: str | None = None,
+        orderLinkId: str | None = None,
+    ) -> dict:
+        """POST /v5/order/cancel. Provide either orderId or orderLinkId."""
+        body: dict = {"category": category, "symbol": symbol}
+        if orderId is not None:
+            body["orderId"] = orderId
+        if orderLinkId is not None:
+            body["orderLinkId"] = orderLinkId
+        data = await self._request("POST", "/v5/order/cancel", json_body=body)
+        return data.get("result", data)
+
+    async def get_open_orders(self, *, category: str, symbol: str) -> list[dict]:
+        """GET /v5/order/realtime. Returns list of open orders."""
+        data = await self._request(
+            "GET",
+            "/v5/order/realtime",
+            params={"category": category, "symbol": symbol},
+        )
+        return data.get("result", {}).get("list", [])
+
+    async def get_wallet_balance(
+        self,
+        *,
+        accountType: str = "UNIFIED",
+        coin: str | None = None,
+    ) -> dict:
+        """GET /v5/account/wallet-balance."""
+        params: dict = {"accountType": accountType}
+        if coin is not None:
+            params["coin"] = coin
+        data = await self._request("GET", "/v5/account/wallet-balance", params=params)
+        return data.get("result", {})
+
+    async def get_linear_positions(self, *, symbol: str) -> list[dict]:
+        """GET /v5/position/list. category=linear. Returns list of position objects."""
+        data = await self._request(
+            "GET",
+            "/v5/position/list",
+            params={"category": "linear", "symbol": symbol},
+        )
+        return data.get("result", {}).get("list", [])
+
+    async def set_linear_trading_stop(
+        self,
+        *,
+        symbol: str,
+        stopLoss: float | None = None,
+        takeProfit: float | None = None,
+        trailingStop: str | None = None,
+        slTriggerBy: str | None = None,
+        tpTriggerBy: str | None = None,
+        **kwargs: str | float | None,
+    ) -> dict:
+        """POST /v5/position/trading-stop. Set SL/TP/TS on linear position."""
+        body: dict = {"symbol": symbol, "category": "linear"}
+        if stopLoss is not None:
+            body["stopLoss"] = str(stopLoss)
+        if takeProfit is not None:
+            body["takeProfit"] = str(takeProfit)
+        if trailingStop is not None:
+            body["trailingStop"] = trailingStop
+        if slTriggerBy is not None:
+            body["slTriggerBy"] = slTriggerBy
+        if tpTriggerBy is not None:
+            body["tpTriggerBy"] = tpTriggerBy
+        for k, v in kwargs.items():
+            if v is not None:
+                body[k] = v
+        data = await self._request("POST", "/v5/position/trading-stop", json_body=body)
+        return data.get("result", data)
 

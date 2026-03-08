@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.exec import router as exec_router
 from app.api.market import (
     get_candle_stream_hub,
     get_stream_hub,
@@ -57,6 +58,7 @@ async def healthcheck() -> dict[str, str]:
 
 
 app.include_router(market_router)
+app.include_router(exec_router)
 app.dependency_overrides[get_stream_hub] = lambda: stream_hub
 app.dependency_overrides[get_candle_stream_hub] = lambda: candle_stream_hub
 
