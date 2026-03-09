@@ -28,6 +28,7 @@ import {
   fetchTradeLog,
   getCandlesWebSocketUrl,
   getTicksWebSocketUrl,
+  runPreciseSimulationApi,
   type TradeLogTrade,
 } from "@/lib/api/market";
 import { getBookmarkedTickers } from "@/lib/ticker-bookmarks-storage";
@@ -96,6 +97,9 @@ type MarketDataContextValue = {
   latestTick: TickerTick | null;
   loading: boolean;
   error: string | null;
+  preciseSimulationEnabled: boolean;
+  setPreciseSimulationEnabled: (enabled: boolean) => void;
+  runPreciseSimulation: () => Promise<void>;
 };
 
 const MarketDataContext = createContext<MarketDataContextValue | null>(null);
@@ -136,6 +140,7 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [hoveredBarTime, setHoveredBarTime] = useState<number | null>(null);
+  const [preciseSimulationEnabled, setPreciseSimulationEnabled] = useState<boolean>(false);
 
   const socketRef = useRef<WebSocket | null>(null);
   const candleSocketRef = useRef<WebSocket | null>(null);
@@ -333,7 +338,7 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
           setOrderBlocks(graphics?.orderBlocks ?? null);
           setStructure(graphics?.smartMoney?.structure ?? null);
           // Simulation: markers from stream. Trading: markers from trade log only (never from stream).
-          if (!isTrading) {
+          if (!isTrading && !preciseSimulationEnabled) {
             setStrategySignals(graphics?.strategySignals ?? null);
           }
         }
@@ -356,6 +361,7 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
     strategyMarkersEnabled,
     isTrading,
     gatewayConfig?.bars_window,
+    preciseSimulationEnabled,
   ]);
 
   useEffect(() => {
@@ -552,6 +558,31 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
       latestTick,
       loading,
       error,
+      preciseSimulationEnabled,
+      setPreciseSimulationEnabled,
+      runPreciseSimulation: async () => {
+        if (!backendBaseUrl || isTrading || !selectedSymbol) {
+          return;
+        }
+        try {
+          const limit = candles.length || 2000;
+          const signals = await runPreciseSimulationApi(
+            backendBaseUrl,
+            "default",
+            selectedSymbol,
+            chartInterval,
+            limit,
+            volumeProfileWindow
+          );
+          if (signals) {
+            setStrategySignals(signals);
+            setPreciseSimulationEnabled(true);
+          }
+        } catch (e) {
+          // Keep previous state on failure.
+          console.error(e);
+        }
+      },
     }),
     [
       symbols,
@@ -584,6 +615,13 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
       latestTick,
       loading,
       error,
+      preciseSimulationEnabled,
+      backendBaseUrl,
+      isTrading,
+      selectedSymbol,
+      candles.length,
+      chartInterval,
+      volumeProfileWindow,
     ]
   );
 

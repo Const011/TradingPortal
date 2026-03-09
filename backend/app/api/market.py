@@ -3,13 +3,15 @@ import asyncio
 import logging
 
 import httpx
-from fastapi import APIRouter, Depends, Query, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
+from pydantic import BaseModel
 
 from app.config import settings
 from app.schemas.market import Candle, SymbolInfo, TickerSnapshot
 from app.services.bybit_client import BybitClient
 from app.services.candle_stream import CandleStreamHub
 from app.services.market_stream import MarketStreamHub
+from app.services.precise_simulator import run_precise_simulation
 from app.services.trade_log import get_trades, load_current_trades
 
 logger = logging.getLogger(__name__)
@@ -163,6 +165,62 @@ async def list_candles(
             status_code=503,
             detail="Market data temporarily unavailable. Check network or try again later.",
         ) from e
+
+
+class PreciseSimulationRequest(BaseModel):
+    symbol: str
+    interval: str
+    limit: int | None = 2000
+    volume_profile_window: int | None = 2000
+
+
+@router.post("/strategies/{strategy_id}/simulate-precise")
+async def simulate_precise(
+    strategy_id: str,
+    payload: PreciseSimulationRequest = Body(...),
+    bybit_client: BybitClient = Depends(get_bybit_client),
+    candle_stream_hub: CandleStreamHub = Depends(get_candle_stream_hub),
+) -> dict:
+    """[Frontend] Run precise, no-future-leakage simulation for the given symbol/interval.
+
+    This endpoint is intentionally heavier than the heartbeat path and should be
+    called only on demand (e.g. when the user enables 'Precise simulate' in the UI).
+    """
+    symbol = payload.symbol.upper()
+    interval = payload.interval
+    limit = payload.limit or 2000
+    vp_window = payload.volume_profile_window or 2000
+
+    if interval not in CANDLE_INTERVALS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid interval. Allowed: {sorted(CANDLE_INTERVALS)}",
+        )
+
+    # Prefer cached candles from the heartbeat, fall back to direct Bybit fetch.
+    candles = await candle_stream_hub.get_cached_candles(symbol, interval, limit=limit)
+    if not candles:
+        try:
+            candles = await bybit_client.get_klines(
+                symbol=symbol,
+                interval=interval,
+                limit=limit,
+            )
+        except (httpx.ConnectError, httpx.TimeoutException) as e:
+            logger.warning("Bybit API unreachable for precise simulate: %s", e)
+            raise HTTPException(
+                status_code=503,
+                detail="Market data temporarily unavailable. Check network or try again later.",
+            ) from e
+
+    result = run_precise_simulation(
+        symbol=symbol,
+        interval=interval,
+        candles=candles,
+        volume_profile_window=vp_window,
+        bars_window=limit,
+    )
+    return result
 
 
 @router.websocket("/stream/candles/{symbol}")

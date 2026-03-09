@@ -1,5 +1,5 @@
 /** Market API: calls our backend. Backend proxies Bybit. */
-import { Candle, SymbolInfo, TickerSnapshot } from "@/lib/types/market";
+import { Candle, StrategySignalsData, SymbolInfo, TickerSnapshot } from "@/lib/types/market";
 
 /** Backend mode: simulation (stream strategy) or trading (trade log). */
 export type BackendMode = "simulation" | "trading";
@@ -141,5 +141,34 @@ export function getCandlesWebSocketUrl(
     strategy_markers: strategyMarkers,
   });
   return `${normalizedBaseUrl}/api/v1/stream/candles/${symbol}?${params.toString()}`;
+}
+
+/** [Backend] POST /strategies/{strategyId}/simulate-precise. Run precise simulation and return strategySignals. */
+export async function runPreciseSimulationApi(
+  backendBaseUrl: string,
+  strategyId: string,
+  symbol: string,
+  interval: string,
+  limit: number,
+  volumeProfileWindow: number
+): Promise<StrategySignalsData | null> {
+  const res = await fetch(
+    `${backendBaseUrl}/api/v1/strategies/${strategyId}/simulate-precise`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        symbol,
+        interval,
+        limit,
+        volume_profile_window: volumeProfileWindow,
+      }),
+    }
+  );
+  if (!res.ok) {
+    throw new Error("Precise simulation failed");
+  }
+  const data = (await res.json()) as { strategySignals?: StrategySignalsData | null };
+  return (data.strategySignals ?? null) as StrategySignalsData | null;
 }
 

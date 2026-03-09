@@ -14,201 +14,125 @@
     - Reconstructs trades and computes PnL from the same full-window data (see BRD §10 and §12.3).
 - **Issue**
   - For bar \(i\), indicators and strategy are computed from a snapshot that already includes bars \(> i\).
-  - This creates **forward-looking bias**: strategy decisions for earlier bars can depend on information that only exists because later bars are present.
-  - Result: simulation shows **exaggerated performance** versus what would be achievable in live trading.
+  - This creates **forward-looking bias**: strategy decisions and indicator overlays on earlier bars can depend on information that only exists because later bars are present.
+  - Result: simulation shows **exaggerated performance** and misleading visuals versus what would be achievable in live trading.
 
-### 2. Architectural direction
-
-- **Separate display indicators from simulation indicators**
-  - **Display path (CandleStream → frontend)**:
-    - Keep full-window indicator computation for rich visuals (OB zones, structure, volume profile, S/R).
-  - **Simulation path (SimulatorService)**:
-    - Run a dedicated bar-by-bar engine that:
-      - Recomputes indicators on a **truncated window ending at the current bar** (e.g. last 2000 bars).
-      - Feeds only that bar’s indicators into the trading strategy.
-      - Produces canonical per-trade results and metrics.
-- **Unify strategy semantics**
-  - The Trading Strategy module stays **mode-agnostic**, but:
-    - It is invoked in a strictly **bar-sequenced** manner for simulation.
-    - Live/trading heartbeat continues to use whatever data it has “so far” (no future is available anyway).
-- **Single source of truth for simulation**
-  - The **backend SimulatorService** becomes the **only** producer of simulation results (trades, PnL, metrics).
-  - Frontend in simulation mode stops computing PnL directly from streaming markers.
-
-### 3. SimulatorService: design and responsibilities
-
-- **New module**
-  - Create `backend/app/services/simulator/` with core entrypoint:
-    - `run_simulation(symbol, interval, start_ts, end_ts, params) -> SimulationRun`
-  - `SimulationRun` should align with BRD’s domain model:
-    - `strategyVersion`, `datasetRange`, `metrics`, `artifacts` (trade list, markers, stop segments).
-
-- **Data sourcing**
-  - For v1:
-    - Use `BybitClient.get_klines(symbol, interval, limit=...)` or a historical candle store for:
-      - `warmup_bars` before `start_ts` (e.g. 2000 bars) so indicators can stabilize.
-      - Full range up to `end_ts`.
-  - In a later iteration, prefer reading from the canonical candle store (PostgreSQL) if populated.
-
-- **Bar-by-bar simulation loop**
-  - General pattern:
-    - Let `candles_all` be the entire historical slice (`warmup + simulation range`).
-    - Choose `bars_window` (e.g. 2000) for the indicator lookback.
-    - Find `start_index` such that:
-      - `candles_all[start_index].time >= start_ts`.
-      - `start_index` is at least `warmup_bars` after the beginning where possible.
-  - For each bar index `i` from `start_index` to `len(candles_all) - 1`:
-    - Define window:
-      - `window_start = max(0, i - bars_window + 1)`
-      - `window = candles_all[window_start : i + 1]`
-    - **Indicators (no future)**
-      - Structure:
-        - `structure = compute_structure(window, include_candle_colors=True)`
-      - Order blocks (reuse structure pivots):
-        - `ob_result = compute_order_blocks(window, show_bull=0, show_bear=0, swing_pivots=structure.get("swingPivots") or {})`
-      - Volume profile:
-        - `vp = build_volume_profile_from_candles(window, time=window[-1].time // 1000, width=6, window_size=min(len(window), bars_window))`
-      - Support/resistance:
-        - `sr_lines = compute_support_resistance_lines(vp["profile"]) if vp else []`
-    - **Strategy evaluation for this bar**
-      - Invoke the existing OB trend-following strategy:
-        - `trade_events, stop_segments = compute_order_block_trend_following(window, structure.get("swingPivots") or {}, candle_colors=structure.get("candleColors"), sr_lines=sr_lines)`
-      - Filter results for the **last candle in `window`** (bar index `len(window) - 1`, which corresponds to global index `i`):
-        - Only events and stop segments whose `bar_index` (or equivalent index) matches the current bar.
-    - **Trade state update**
-      - Feed filtered `trade_events` and `stop_segments` into a shared trade reconstruction engine (see section 4).
-      - Maintain in-memory state of open trades, stop levels, and completed trades for PnL.
-    - **Per-bar artifacts (optional)**
-      - Record per-bar markers / graphics needed for UI (entry markers, stop lines, etc.) in a compact structure for the eventual SimulationRun artifacts.
-
-- **Outputs**
-  - At the end of the loop, build:
-    - `trades`: list of completed and open trades with:
-      - `entryDateTime`, `side`, `entryPrice`,
-      - `closeDateTime`, `closePrice`, `closeReason`,
-      - `points`, `markers`, `stopSegments`, `events`.
-    - `metrics`:
-      - Total points, average points per trade.
-      - Win rate, max drawdown, Sharpe-like ratio.
-    - `graphics` (optional, for chart overlays in simulation view):
-      - Series of markers and stop lines derived from the same trade state.
-
-### 4. Shared trade reconstruction engine
+### 2. New direction: separate, on-demand precise simulator
 
 - **Goal**
-  - Avoid duplicating “event → trade” logic across:
-    - `strategy_output_to_chart`.
-    - Frontend “Strategy Results Calculation”.
-    - New SimulatorService.
+  - Keep the main candle stream and heartbeat logic lightweight and responsive.
+  - Move the expensive, prefix-only, no-future-leakage algorithm into a **separate simulation engine** that runs **only on demand**.
+- **Mode separation**
+  - **Trading mode (`settings.mode == "trading"`)**
+    - Leave runtime behavior unchanged:
+      - Full-window indicators and a single strategy call per heartbeat.
+      - `_apply_trade_logging` remains the only writer for trade logs and `current.json`.
+  - **Simulation mode (live view)**
+    - Continue using the existing fast snapshot behavior for candles and indicators (and optional approximate strategy markers).
+    - This view is optimized for interactivity, not for perfect no-future correctness.
+  - **Precise Simulation mode (on demand)**
+    - Implemented as a separate backend module and API.
+    - Enforces the invariant:
+      - For each bar index \(i\), both indicators and strategy decisions for that bar are computed only from candles up to and including that bar (`candles[0 : i+1]` or a trailing window ending at `i`); never from bars \(> i\).
 
-- **New utility**
-  - Create something like `backend/app/services/trading_strategy/trade_builder.py` with APIs such as:
-    - `update_trades_for_bar(events: list[TradeEvent], stop_segments: list[StopSegment], candles: list[Candle], bar_index: int, state: TradeSimulationState) -> None`
-    - Where `TradeSimulationState` holds:
-      - Open trades, stop levels, event history.
-      - Completed trades and their realized PnL.
+### 3. Precise Simulator: backend behavior
 
-- **Behavior**
-  - Must match the semantics described in BRD §12.3:
-    - **Entry**
-      - Entry price = close price of the entry bar.
-    - **Stop hit**
-      - Close price = close of the first bar whose range touches the effective stop level.
-    - **Target hit (if used)**
-      - Close price = close of the first bar whose range touches the target price.
-    - Points:
-      - Long: `points = closePrice - entryPrice`.
-      - Short: `points = entryPrice - closePrice`.
-  - This engine should be the single implementation that:
-    - SimulatorService uses to compute trades and PnL.
-    - `strategy_output_to_chart` uses to derive chart markers and per-trade summaries.
-    - Trading-mode trade log adapter can reuse for consistency where applicable.
+- **New module**
+  - Create `backend/app/services/precise_simulator/` with core entrypoint:
+    - `run_precise_simulation(symbol, interval, start_ts, end_ts, params) -> SimulationRun`.
+  - `SimulationRun` should include:
+    - `trades`: full per-trade objects (entry/exit, reason, points).
+    - `stopSegments` and `events` for chart overlays.
+    - `metrics`: net points, average per trade, win rate, max drawdown, etc.
 
-### 5. Backend API wiring
+- **Inputs and data source**
+  - Arguments:
+    - `symbol`, `interval`, and either `start_ts` / `end_ts` or a `bars` count.
+    - Strategy parameters or a reference to the active `StrategyVersion`.
+  - Candle data:
+    - Prefer reading from the canonical candle store (DB) if available.
+    - Fallback: `BybitClient.get_klines` to fetch:
+      - Sufficient warm-up history (`warmup_bars`) before the visible range.
+      - Complete visible range used for precise simulation.
 
-- **Simulation endpoints (BRD-aligned)**
-  - Implement or finish:
-    - `POST /api/v1/strategies/{strategyId}/simulate`
-      - Request:
-        - `symbol`, `interval`, `startTs`, `endTs` or `bars`, and strategy parameters.
-      - Behavior:
-        - Call `run_simulation(...)`.
-        - Optionally persist `SimulationRun` and return `runId`.
-      - Response:
-        - `trades`: per-trade objects compatible with trading-mode trade log format.
-        - `metrics`: summary metrics.
-        - Optional lightweight `graphics` data for overlays.
-    - `GET /api/v1/simulations/{runId}` (if persistence is desired).
+- **Bar-by-bar no-future loop**
+  - Let `candles_all` be the full sequence (warm-up + visible).
+  - Choose `bars_window` for indicator lookback (e.g. 2000).
+  - For each bar index `i` in `range(0, len(candles_all))`:
+    - Define prefix/trailing window ending at `i`:
+      - `window_start = max(0, i - bars_window + 1)`.
+      - `window = candles_all[window_start : i + 1]` (bars 0..i only).
+    - Compute indicators on `window`:
+      - `structure_i = compute_structure(window, include_candle_colors=True)`.
+      - `ob_i = compute_order_blocks(window, swing_pivots=structure_i.get("swingPivots") or {}, show_bull=0, show_bear=0)`.
+      - `vp_i = build_volume_profile_from_candles(window, time=window[-1].time // 1000, width=6, window_size=min(len(window), bars_window))`.
+      - `sr_lines_i = compute_support_resistance_lines(vp_i["profile"]) if vp_i else []`.
+    - Run strategy on `window`:
+      - `trade_events_i, stop_segments_i = compute_order_block_trend_following(window, structure_i.get("swingPivots") or {}, candle_colors=structure_i.get("candleColors"), sr_lines=sr_lines_i)`.
+    - Filter to the current bar:
+      - Local index in `window`: `local_i = len(window) - 1`.
+      - Keep only events where `ev.bar_index == local_i`, rebasing them to global index `i`.
+      - Normalize stop segments so they align with global times and indices.
+    - Accumulate:
+      - `all_trade_events` and `all_stop_segments` across all bars.
+  - At the end:
+    - Convert accumulated events and stops into chart markers:
+      - `strategySignals = strategy_output_to_chart(all_trade_events, all_stop_segments, interval)`.
+    - Build per-trade objects and metrics:
+      - Either by reusing the existing results-table logic on the backend, or via a shared trade-builder utility.
+    - Return a `SimulationRun` object containing:
+      - `trades`, `metrics`, and `graphics` (including `strategySignals`).
 
-- **Consistency with trading**
-  - Ensure simulation trade objects have the same shape as those returned by:
-    - `GET /api/v1/trade-log?symbol=...&interval=...`
-  - This allows the frontend to render both simulation and live trades with the same components.
+### 4. API and frontend wiring for “Precise simulate”
 
-### 6. CandleStreamHub and frontend adjustments
+- **Backend API**
+  - Add `POST /api/v1/strategies/{strategyId}/simulate-precise`:
+    - Request body:
+      - `symbol`, `interval`, and either `startTs` / `endTs` or a `bars` count.
+      - Strategy parameters or the ID of the active strategy version.
+    - Behavior:
+      - Calls `run_precise_simulation(...)`.
+      - Optionally persists the resulting `SimulationRun` and includes a `runId` in the response.
+    - Response:
+      - `trades`: full precise trade list (shape compatible with trade-log API).
+      - `metrics`: precise summary metrics.
+      - `graphics`: at least `strategySignals` for the chart, optionally updated indicator overlays.
 
-- **CandleStreamHub (`candle_stream.py`)**
-  - Keep existing behavior for **visual indicators**:
-    - Compute structure, OB zones, volume profile, and S/R on the full `candles` snapshot.
-    - Optionally compute `strategySignals` for **marker previews**.
-  - Clarify semantics:
-    - When `settings.mode == "simulation"`:
-      - Any `strategySignals` in `graphics` are **visual hints only**, not the source of record for PnL.
-    - When `settings.mode == "trading"`:
-      - Continue to delete `strategySignals` before sending to clients (as now).
+- **Frontend changes**
+  - In simulation mode, in the controls area above the results table:
+    - Place a **“Precise simulate”** toggle button **right after** the “Export for AI” control.
+  - Behavior:
+    - When the toggle is **off** (default), all simulation-related calls continue to use the existing **quick simulation** path (current fast behavior).
+    - When the toggle is switched **on**, all subsequent simulation actions (e.g. “Run simulation”, parameter changes) are routed to the **precise simulation endpoint** instead of the quick one:
+      - Frontend calls the precise simulation API with the current symbol, interval, visible range, and parameters.
+      - Shows a loading indicator while the precise run is executing.
+      - On success:
+        - Replaces the chart’s strategy markers (entries, exits, stop lines) with `graphics.strategySignals` from the precise run.
+        - Rebuilds the results table using the `trades` and `metrics` from the response.
+        - Optionally annotates the UI to indicate that results are from a **Precise simulation**.
+    - Toggling **back off** returns the behavior to the quick simulation path (no calls to the precise simulator).
 
-- **Frontend (simulation mode)**
-  - Stop deriving final PnL directly from the candle stream.
-  - On “Run Simulation” / parameter change:
-    - Call `POST /api/v1/strategies/{strategyId}/simulate`.
-    - Use response `trades` + `metrics` to:
-      - Populate the Strategy Results table.
-      - Draw entry/exit markers and trailing stops.
-  - Candle stream remains responsible for:
-    - Live-like chart behavior and visual indicators.
-    - Optional real-time previews of strategy markers (derived from stream), visually distinguished from persisted simulation runs.
-
-### 7. Testing strategy
+### 5. Testing strategy
 
 - **Unit tests**
-  - Indicators:
-    - For each indicator (structure, OB, volume profile, S/R), add tests asserting:
-      - Determinism when adding one bar at a time (no hidden lookahead).
-  - Trade builder:
-    - Synthetic scenarios for:
-      - Simple entry/stop-hit sequences.
-      - Trailing stops.
-      - Mixed long/short trades.
-    - Assert PnL and close reasons match expectations.
-  - SimulatorService:
-    - Use small synthetic candle sets where the presence of future bars would clearly change decisions if leaked.
-    - Verify that bar-by-bar simulation respects “no future” by construction.
+  - For indicators (`compute_structure`, `compute_order_blocks`, volume profile, S/R):
+    - Verify that running them bar-by-bar on prefixes and aggregating gives consistent results with one-shot computations on the same prefixes.
+  - For strategy:
+    - On synthetic data, confirm that the bar-by-bar precise loop matches running the strategy once per prefix and inspecting only the last bar’s events.
+- **Simulation correctness sanity checks**
+  - Given a small fixed candle set:
+    - Run the existing “fast” simulation flow (for comparison only).
+    - Run the new precise simulator.
+    - Show that truncating the data at bar `k` and re-running yields identical decisions up to `k`, confirming no future leakage.
 
-- **Integration tests**
-  - End-to-end simulation via API:
-    - Run the same simulation twice:
-      - Once with a larger `bars_window`.
-      - Once with a smaller `bars_window` (but still sufficient to cover indicator lookbacks).
-    - Assert that results are identical, confirming no dependency on candles beyond the current bar.
-
-- **Regression**
-  - Compare old front-end-computed simulation results vs. new backend SimulatorService on historical data:
-    - Expect:
-      - Lower or equal performance (no more future leakage).
-      - Semantically similar trade shapes where indicator and strategy rules allow.
-
-### 8. Documentation updates
+### 6. Documentation updates
 
 - **BRD updates**
-  - In **FR-4 Indicator Engine**:
-    - Note that indicators support a **simulation-safe recomputation mode** where they are evaluated only on history up to each bar.
-  - In **FR-6 Simulation Tool**:
-    - Explicitly describe that the SimulatorService:
-      - Replays candles bar-by-bar.
-      - Recomputes indicators for each bar up to that point.
-      - Uses the same Trading Strategy module as live mode.
-  - In **Frontend Strategy Results Calculation** section:
-    - Clarify:
-      - Simulation results (trades + metrics) now come from the backend simulation API.
-      - Frontend no longer infers PnL directly from strategy markers in the candle stream.
-
+  - In **FR-4 Indicator Engine** and **FR-6 Simulation Tool**:
+    - Note that:
+      - The main heartbeat-based flows remain lightweight and may use snapshot-based logic for speed.
+      - A separate **Precise Simulation** path exists which recomputes indicators and strategy **per bar** on prefixes ending at the current bar index (no use of future bars) and runs only when requested.
+  - In **Candle Stream** / **Simulation Tool** sections:
+    - Clarify that:
+      - Trading mode uses full-window indicators and a single strategy call per heartbeat (no future exists).
+      - Simulation mode’s default live view is optimized for speed, while high-accuracy evaluation is provided by the on-demand Precise Simulation engine triggered from the UI.

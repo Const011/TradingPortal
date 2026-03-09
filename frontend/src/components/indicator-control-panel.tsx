@@ -59,6 +59,9 @@ export function IndicatorControlPanel() {
     strategyMarkersWindow,
     setStrategyMarkersWindow,
     symbolAndIntervalLocked,
+    preciseSimulationEnabled,
+    setPreciseSimulationEnabled,
+    runPreciseSimulation,
   } = useMarketData();
 
   const handleDownloadStrategyData = (): void => {
@@ -72,6 +75,15 @@ export function IndicatorControlPanel() {
       structure,
       strategySignals,
     });
+  };
+
+  const handleTogglePreciseSimulation = async (): Promise<void> => {
+    if (preciseSimulationEnabled) {
+      // Toggle off: go back to quick simulation; allow stream to overwrite signals again.
+      setPreciseSimulationEnabled(false);
+      return;
+    }
+    await runPreciseSimulation();
   };
 
   return (
@@ -149,6 +161,15 @@ export function IndicatorControlPanel() {
         style={toggleButtonStyle}
       >
         Export for AI
+      </button>
+      <button
+        type="button"
+        onClick={() => {
+          void handleTogglePreciseSimulation();
+        }}
+        style={preciseSimulationEnabled ? toggleButtonActiveStyle : toggleButtonStyle}
+      >
+        Precise simulate
       </button>
       <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
         <span style={{ fontSize: 12, color: "#5f6368" }}>Markers:</span>
