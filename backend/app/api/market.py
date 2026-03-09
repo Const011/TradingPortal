@@ -3,16 +3,19 @@ import asyncio
 import logging
 
 import httpx
-from fastapi import APIRouter, Body, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, Query, WebSocket, WebSocketDisconnect, HTTPException, Body
 
 from app.config import settings
 from app.schemas.market import Candle, SymbolInfo, TickerSnapshot
 from app.services.bybit_client import BybitClient
 from app.services.candle_stream import CandleStreamHub
+from app.services.indicators.smart_money_structure import compute_structure
+from app.services.indicators.order_blocks import compute_order_blocks
+from app.services.indicators.volume_profile import build_volume_profile_from_candles
+from app.services.indicators.support_resistance import compute_support_resistance_lines
 from app.services.market_stream import MarketStreamHub
-from app.services.precise_simulator import run_precise_simulation
 from app.services.trade_log import get_trades, load_current_trades
+from app.services.precise_simulator import run_precise_simulation
 
 logger = logging.getLogger(__name__)
 
@@ -167,37 +170,47 @@ async def list_candles(
         ) from e
 
 
-class PreciseSimulationRequest(BaseModel):
-    symbol: str
-    interval: str
-    limit: int | None = 2000
-    volume_profile_window: int | None = 2000
-
-
 @router.post("/strategies/{strategy_id}/simulate-precise")
-async def simulate_precise(
+async def simulate_precise_strategy(
     strategy_id: str,
-    payload: PreciseSimulationRequest = Body(...),
+    payload: dict = Body(
+        ...,
+        description="Precise simulation request: { symbol, interval, limit, volume_profile_window }",
+    ),
     bybit_client: BybitClient = Depends(get_bybit_client),
     candle_stream_hub: CandleStreamHub = Depends(get_candle_stream_hub),
 ) -> dict:
-    """[Frontend] Run precise, no-future-leakage simulation for the given symbol/interval.
+    """Run precise, prefix-only simulation for the given symbol/interval.
 
-    This endpoint is intentionally heavier than the heartbeat path and should be
-    called only on demand (e.g. when the user enables 'Precise simulate' in the UI).
+    Returns a payload compatible with the candle stream snapshot:
+    { candles, graphics: { volumeProfile, supportResistance, orderBlocks, smartMoney, strategySignals } }.
     """
-    symbol = payload.symbol.upper()
-    interval = payload.interval
-    limit = payload.limit or 2000
-    vp_window = payload.volume_profile_window or 2000
+    if settings.mode == "trading":
+        raise HTTPException(
+            status_code=400,
+            detail="Precise simulation is only available in simulation mode",
+        )
 
+    symbol = str(payload.get("symbol", "")).upper()
+    interval = str(payload.get("interval", "60"))
+    try:
+        limit = int(payload.get("limit", 2000))
+    except (TypeError, ValueError):
+        limit = 2000
+    try:
+        volume_profile_window = int(payload.get("volume_profile_window", 2000))
+    except (TypeError, ValueError):
+        volume_profile_window = 2000
+
+    if not symbol:
+        raise HTTPException(status_code=400, detail="symbol is required")
     if interval not in CANDLE_INTERVALS:
         raise HTTPException(
             status_code=400,
             detail=f"Invalid interval. Allowed: {sorted(CANDLE_INTERVALS)}",
         )
 
-    # Prefer cached candles from the heartbeat, fall back to direct Bybit fetch.
+    # Prefer cached candles from the heartbeat; fall back to direct Bybit fetch.
     candles = await candle_stream_hub.get_cached_candles(symbol, interval, limit=limit)
     if not candles:
         try:
@@ -207,20 +220,57 @@ async def simulate_precise(
                 limit=limit,
             )
         except (httpx.ConnectError, httpx.TimeoutException) as e:
-            logger.warning("Bybit API unreachable for precise simulate: %s", e)
+            logger.warning("Bybit API unreachable for precise simulation: %s", e)
             raise HTTPException(
                 status_code=503,
                 detail="Market data temporarily unavailable. Check network or try again later.",
             ) from e
 
-    result = run_precise_simulation(
+    # Run precise simulation to obtain strategySignals with no future leakage.
+    sim_result = run_precise_simulation(
         symbol=symbol,
         interval=interval,
         candles=candles,
-        volume_profile_window=vp_window,
+        volume_profile_window=volume_profile_window,
         bars_window=limit,
     )
-    return result
+
+    # Compute indicator graphics in the same way as the candle stream snapshot.
+    structure_result = compute_structure(
+        candles,
+        include_candle_colors=True,
+    )
+    ob_result = compute_order_blocks(
+        candles,
+        show_bull=0,
+        show_bear=0,
+        swing_pivots=structure_result.get("swingPivots") or {},
+    )
+    graphics: dict = {
+        "orderBlocks": ob_result,
+        "smartMoney": {"structure": structure_result},
+    }
+    vp = build_volume_profile_from_candles(
+        candles,
+        time=candles[-1].time // 1000,
+        width=6,
+        window_size=volume_profile_window,
+    )
+    if vp:
+        graphics["volumeProfile"] = vp
+        sr_lines = compute_support_resistance_lines(vp["profile"])
+        graphics["supportResistance"] = {"lines": sr_lines}
+
+    strategy_signals = sim_result.get("strategySignals")
+    if strategy_signals:
+        graphics["strategySignals"] = strategy_signals
+
+    return {
+        "symbol": symbol,
+        "interval": interval,
+        "candles": [c.model_dump() for c in candles],
+        "graphics": graphics,
+    }
 
 
 @router.websocket("/stream/candles/{symbol}")

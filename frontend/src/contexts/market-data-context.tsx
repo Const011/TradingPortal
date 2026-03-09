@@ -100,6 +100,7 @@ type MarketDataContextValue = {
   preciseSimulationEnabled: boolean;
   setPreciseSimulationEnabled: (enabled: boolean) => void;
   runPreciseSimulation: () => Promise<void>;
+  preciseSimulationRunning: boolean;
 };
 
 const MarketDataContext = createContext<MarketDataContextValue | null>(null);
@@ -141,6 +142,7 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
   const [error, setError] = useState<string | null>(null);
   const [hoveredBarTime, setHoveredBarTime] = useState<number | null>(null);
   const [preciseSimulationEnabled, setPreciseSimulationEnabled] = useState<boolean>(false);
+  const [preciseSimulationRunning, setPreciseSimulationRunning] = useState<boolean>(false);
 
   const socketRef = useRef<WebSocket | null>(null);
   const candleSocketRef = useRef<WebSocket | null>(null);
@@ -294,9 +296,15 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
     if (!backendBaseUrl || !selectedSymbol) {
       return;
     }
+    // Always close any existing candle stream before changing subscription mode.
     if (candleSocketRef.current) {
       candleSocketRef.current.close();
       candleSocketRef.current = null;
+    }
+    // In precise simulation mode we rely on the REST-based precise snapshot and
+    // do not keep a live candle stream open, to avoid overwriting simulation data.
+    if (preciseSimulationEnabled) {
+      return;
     }
     setCandles([]);
     setVolumeProfile(null);
@@ -561,12 +569,13 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
       preciseSimulationEnabled,
       setPreciseSimulationEnabled,
       runPreciseSimulation: async () => {
-        if (!backendBaseUrl || isTrading || !selectedSymbol) {
+        if (!backendBaseUrl || isTrading || !selectedSymbol || preciseSimulationRunning) {
           return;
         }
         try {
+          setPreciseSimulationRunning(true);
           const limit = candles.length || 2000;
-          const signals = await runPreciseSimulationApi(
+          const resp = await runPreciseSimulationApi(
             backendBaseUrl,
             "default",
             selectedSymbol,
@@ -574,15 +583,22 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
             limit,
             volumeProfileWindow
           );
-          if (signals) {
-            setStrategySignals(signals);
-            setPreciseSimulationEnabled(true);
-          }
+          setCandles(resp.candles);
+          const graphics = resp.graphics;
+          setVolumeProfile(graphics?.volumeProfile ?? null);
+          setSupportResistance(graphics?.supportResistance ?? null);
+          setOrderBlocks(graphics?.orderBlocks ?? null);
+          setStructure(graphics?.smartMoney?.structure ?? null);
+          setStrategySignals(graphics?.strategySignals ?? null);
+          setPreciseSimulationEnabled(true);
         } catch (e) {
           // Keep previous state on failure.
           console.error(e);
+        } finally {
+          setPreciseSimulationRunning(false);
         }
       },
+      preciseSimulationRunning,
     }),
     [
       symbols,
@@ -622,6 +638,7 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
       candles.length,
       chartInterval,
       volumeProfileWindow,
+      preciseSimulationRunning,
     ]
   );
 

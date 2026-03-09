@@ -58,7 +58,6 @@ def strategy_output_to_chart(
     stop_lines: list[dict] = []
     if stop_segments:
         interval_sec = interval_seconds(interval, default=0)
-        interval_sec = interval_seconds(interval, default=0)
         by_side: dict[str, list[StopSegment]] = {}
         for seg in stop_segments:
             by_side.setdefault(seg.side, []).append(seg)

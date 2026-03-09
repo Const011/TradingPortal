@@ -24,7 +24,7 @@ logging.basicConfig(
 if settings.mode == "trading":
     dry_run_note = " [EXECUTOR_DRY_RUN=true: no real orders/stops]" if settings.executor_dry_run else ""
     print(
-        f"Gateway: port={settings.backend_port} mode=trading "
+        f"Gateway: port={settings.backend_port} mode=trading market={settings.market} "
         f"symbol={settings.trading_symbol} interval={settings.trading_interval} "
         f"position_size={settings.position_size or '(not set)'} leverage={settings.leverage}{dry_run_note}"
     )

@@ -158,13 +158,10 @@ async def _apply_trade_logging(
 
     for trade_id, seg in best_seg_per_trade.items():
         prev = state.last_stop_price_per_trade.get(trade_id)
-        # Only log when the new stop is an improvement (never move stop against the trade).
-        if prev is not None:
-            if seg.side == "short" and seg.price >= prev:
-                continue
-            if seg.side == "long" and seg.price <= prev:
-                continue
-        if seg.price == prev:
+        # Always accept the newly computed stop level from the strategy and
+        # overwrite whatever is in current.json, as long as the price itself
+        # actually changed. We allow both tighter and looser moves.
+        if prev is not None and seg.price == prev:
             continue
         # At most one stop move per bar per trade to avoid wobble from repeated live updates.
         if state.logged_stop_bar_per_trade.get(trade_id) == current_bar_start_sec:
@@ -313,7 +310,13 @@ async def _make_snapshot_payload(
                 )
                 graphics["strategySignals"] = chart_data
                 await _apply_trade_logging(
-                    symbol, interval, trade_events, stop_segments, candles, graphics, state,
+                    symbol,
+                    interval,
+                    trade_events,
+                    stop_segments,
+                    candles,
+                    graphics,
+                    state,
                     is_live_update=is_live_update,
                     bybit_client=bybit_client,
                 )

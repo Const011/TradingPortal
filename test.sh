@@ -28,9 +28,9 @@ curl -s -w "\n" "${BASE}/api/v1/exec/orders?symbol=BTCUSDT&category=linear"
 echo ""
 echo "--- POST /api/v1/exec/positions/set-leverage (10x - run before limit order) ---"
 # Bybit: https://bybit-exchange.github.io/docs/v5/position/leverage
-curl -s -w "\n" -X POST "${BASE}/api/v1/exec/positions/set-leverage" \
-  -H "Content-Type: application/json" \
-  -d '{"symbol":"BTCUSDT","buyLeverage":10}'
+# curl -s -w "\n" -X POST "${BASE}/api/v1/exec/positions/set-leverage" \
+#   -H "Content-Type: application/json" \
+#   -d '{"symbol":"BTCUSDT","buyLeverage":10}'
 
 echo ""
 echo "--- POST /api/v1/exec/order (limit buy linear, price 63000; optional: stopLoss/takeProfit on order = auto-applied when filled) ---"

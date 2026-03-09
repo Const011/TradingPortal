@@ -173,7 +173,7 @@ Both modes share the same `BybitClient` implementation and config (`BYBIT_API_KE
 
 ## 6. Stop Handling (Hit + Move)
 
-### 6.1 Stop-Hit (Live trading vs simulation)
+### 6.1 Stop-Hit (Live trading vs simulation/dry-run)
 
 In **simulation mode**, stop-hit is determined by the strategy/bar replay logic:
 
@@ -188,7 +188,18 @@ In **live trading mode**, stop-hit is detected **only in the executor**, at the 
   1. **Cancels any open orders** for the active symbol (e.g. leftover SL/TP orders) via `get_open_orders` and `cancel_order`.
   2. For each trade in `current.json` for that symbol: **appends an `exit`** to `index.jsonl` (close_price = last stop, close_reason = `"stop"`) and **removes the trade from `current.json`** via `remove_current_trade(...)`.
   3. Logs to console (e.g. `Executor: stop hit detected (position size 0), registering exit(s) and updating current.json` and per-trade `Executor: stop hit trade_id=... close_price=... position closed`).
-- The strategy does **not** detect or write stop-hit; it only reads `current.json` after the executor has updated it. In **dry run**, position state is faked from `current.json`, so “position size 0” with open trades in `current.json` does not occur unless the user manually removes the position; stop-hit logging in the executor is therefore seen in **live** mode when the exchange has closed the position.
+- The strategy does **not** detect or write stop-hit; it only reads `current.json` after the executor has updated it.
+
+In **executor dry-run mode** (`EXECUTOR_DRY_RUN=true`), we still use the **same executor-owned stop-hit path**, but we simulate the “position size” from local state instead of querying the exchange:
+
+- The executor fetches the **latest candle** for the trading symbol/interval and computes its `high`/`low`.
+- It then builds a **fake Bybit-like positions list** from `current.json` and removes any trade whose effective stop would have been touched by the bar range:
+  - **Long:** bar low ≤ stop price.
+  - **Short:** bar high ≥ stop price.
+- This produces a synthetic “position size” of 0 when the bar hits the stop, while `current.json` still contains the open trade(s).
+- The normal stop-hit branch above then runs unchanged: cancel open orders (live only), append `exit` to `index.jsonl` with `close_reason="stop"`, remove the trade(s) from `current.json`, and log per-trade `Executor: stop hit trade_id=... close_price=... position closed`.
+
+This means **dry-run trading mode exercises the full executor stop-hit pipeline** (including trade-log writes and `current.json` updates) without requiring a real position on the exchange.
 
 ### 6.2 Close Position Using Live Size
 
@@ -213,11 +224,14 @@ After the close:
 
 ### 6.3 Trailing / Moving Stop
 
-- **Strategy**: Calculates new stop price per bar and emits stop segments (already implemented). It does **not** write `current.json` or `index.jsonl`.
-- **Trading mode (Linear)**:
-  - The **executor** exposes **`update_stop(symbol, interval, trade_id, new_stop_price, side, end_time, client)`**. The candle stream calls it when a new stop segment is applied for an open trade.
-  - **Dry run:** Executor logs (e.g. `Executor: [DRY RUN] stop moved trade_id=... new_stop=... side=...`), then updates `current.json` via `update_current_trade_stop(...)` and appends `stop_move` via `append_stop_move(...)`.
-  - **Live:** Executor calls **`set_linear_trading_stop(symbol, stopLoss=new_stop_price)`** for the whole position, then updates `current.json` and appends `stop_move`. No partial size; the exchange applies the new stop to the entire position.
+- **Strategy**: Calculates a new stop price per bar (see strategy docs) and emits stop segments. It does **not** write `current.json` or `index.jsonl`.
+- **Trading mode (all markets; linear vs spot differs only in exchange calls)**:
+  - The **executor** exposes **`update_stop(symbol, interval, trade_id, new_stop_price, side, end_time, client)`**. The candle stream calls it when the strategy selects the effective stop segment for the current bar for an open trade.
+  - The executor **always overwrites** the trade’s `currentStopPrice` in `current.json` with `new_stop_price` whenever that price changes, regardless of whether it is tighter or looser than the previous stop. Any “never move stop against the trade” policy must be enforced inside the strategy itself.
+  - **Dry run:** Executor logs (e.g. `Executor: [DRY RUN] stop moved trade_id=... new_stop=... side=...`), then updates `current.json` via `update_current_trade_stop(...)` and appends `stop_move` via `append_stop_move(...)`. No Bybit call is made.
+  - **Live + Linear market:** In addition to updating `current.json` and appending `stop_move`, executor calls **`set_linear_trading_stop(symbol, stopLoss=new_stop_price)`** for the whole position. No partial size; the exchange applies the new stop to the entire position.
+  - **Live + Spot market:** Stops are tracked **locally only**; there is no native trailing-stop call. The executor still updates `current.json` and appends `stop_move` exactly as in dry run, but skips any Bybit stop-management call.
+  - At most one `stop_move` is written per bar per trade; repeated strategy segments that resolve to the same `new_stop_price` for that trade and bar are ignored.
   - All writes to `current.json` and `index.jsonl` for stop moves are done **only** in the executor; the strategy never writes them.
 
 ---

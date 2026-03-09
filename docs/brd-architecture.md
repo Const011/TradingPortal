@@ -183,6 +183,13 @@ For v1 we integrate Bybit **v5 Spot REST** trading endpoints via an extended `By
 - Produce projected metrics: net return, max drawdown, win rate, Sharpe-like ratio, trade count.
 - Compare candidate vs baseline and generate decision-ready report.
 - Feed simulation summary back to AI review loop for iterative improvement.
+- Support **two simulation paths** in the UI:
+  - **Quick simulation (stream-based):** strategy is evaluated on the full cached window in the candle stream; suitable for fast, iterative visual checks and relative comparisons, but may have mild forward-looking bias in indicator inputs when the full history is preloaded.
+  - **Precise simulation (prefix-only, no-future-leakage):** a dedicated backend API `POST /api/v1/strategies/{strategyId}/simulate-precise`:
+    - Fetches candles (from cache or Bybit) for the requested `symbol`, `interval`, and `limit`.
+    - Uses the `PreciseSimulator` service (`run_precise_simulation`) to recompute indicators and strategy **for each bar i on prefixes `candles[0 : i+1]` (or a trailing window ending at i)** so that no decision or marker on bar i can depend on bars with index > i.
+    - Returns a full snapshot-style payload `{ candles, graphics }` compatible with the candle stream (`volumeProfile`, `supportResistance`, `orderBlocks`, `smartMoney.structure`, `strategySignals`), including entry markers and trailing stop segments/lines.
+    - Is only exposed in **simulation mode**; trading gateways do not allow precise simulation.
 
 ### FR-7: Frontend Portal (Next.js) — Visualization Only
 
@@ -286,7 +293,7 @@ Each gateway uses files keyed by symbol and timeframe so multiple gateways can r
 
 **Trading-mode restore + observability:** On trading gateway startup, the candle stream restores open positions from `current.json` and logs a `[TRADE_RESTORE]` record including the resolved file path, existence check, and the loaded trade(s). On every heartbeat in trading mode, the backend logs the current open position summary (tradeId, side, entryTime, entryPrice, currentStopPrice) so state continuity across restarts can be verified from logs.
 
-**Trade log semantics (trading mode only):** The trade log records **only actual trade signals generated at the current bar** (the bar being updated by live ticks). It does **not** simulate or log historical strategy calculations. On gateway start, the strategy may run over historical candles for display purposes, but those calculations are never written to the log. Only when a live bar update (upsert) arrives and the strategy emits an entry, stop move, or exit **on that bar** is it logged. Additionally, **at most one entry or stop move per bar**: once an entry or stop move has been logged for the current bar, no further signals are logged for that bar until the next bar.
+**Trade log semantics (trading mode only):** The trade log records **only actual trade signals generated at the current bar** (the bar being updated by live ticks). It does **not** simulate or log historical strategy calculations. On gateway start, the strategy may run over historical candles for display purposes, but those calculations are never written to the log. Only when a live bar update (upsert) arrives and the strategy emits an entry, stop move, or exit **on that bar** is it logged. Stop moves are written whenever the executor receives a new effective stop level from the strategy for that bar and trade and the stop price actually changes; the executor simply overwrites `currentStopPrice` in `current.json` with the new level and appends a `stop_move` line in `index.jsonl` (any “never move stop against the trade” rule is enforced at the strategy layer). Additionally, **at most one entry or stop move per bar per trade** is written to the log to avoid wobble from repeated live updates.
 
 **Executor ownership of current.json and index (trading mode):** The **Execution Service (executor)** is the single writer of `current.json` and of entry/stop_move/exit lines in `index.jsonl`. The strategy never writes these. On **entry**: strategy sends intent to the executor; executor places the order and, after fill (or in dry run, immediately), writes `current.json` and appends the entry to `index.jsonl`. On **trailing stop move**: strategy emits stop segments; the executor’s `update_stop()` is called (from the candle stream); the executor logs the move and updates `current.json` (and appends `stop_move` to `index.jsonl`). On **stop hit**: the executor detects “no open position at start of heartbeat” (exchange position size 0 while `current.json` still has open trades), then cancels any open orders for the symbol, appends exit to `index.jsonl`, removes the trade(s) from `current.json`, and logs. All of this is done in the executor; the strategy only reads `current.json` to restore state.
 
@@ -496,6 +503,10 @@ When strategy signals are displayed, the frontend computes **trade outcomes in p
 
 - **Simulation mode:** Simulates each trade against the candle data from the stream.
 - **Trading mode:** Uses precomputed results from the trade log API (`GET /api/v1/trade-log`).
+ - **Precise simulation mode:** When the user clicks "Precise simulate", the frontend:
+   - Calls `POST /api/v1/strategies/{strategyId}/simulate-precise` via a dedicated helper.
+   - Replaces the in-memory `candles` and `graphics` with the precise snapshot (including `strategySignals` built from prefix-only evaluation) and temporarily disables the live candle stream to avoid overwriting these values.
+   - Computes results from the precise `strategySignals` against the returned candles for a strictly no-future-leakage backtest view.
 
 In both cases, the logic is:
 

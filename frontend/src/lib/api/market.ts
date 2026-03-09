@@ -1,5 +1,14 @@
 /** Market API: calls our backend. Backend proxies Bybit. */
-import { Candle, StrategySignalsData, SymbolInfo, TickerSnapshot } from "@/lib/types/market";
+import {
+  Candle,
+  StrategySignalsData,
+  SymbolInfo,
+  TickerSnapshot,
+  VolumeProfileData,
+  SupportResistanceData,
+  OrderBlocksData,
+  SmartMoneyStructureData,
+} from "@/lib/types/market";
 
 /** Backend mode: simulation (stream strategy) or trading (trade log). */
 export type BackendMode = "simulation" | "trading";
@@ -143,7 +152,20 @@ export function getCandlesWebSocketUrl(
   return `${normalizedBaseUrl}/api/v1/stream/candles/${symbol}?${params.toString()}`;
 }
 
-/** [Backend] POST /strategies/{strategyId}/simulate-precise. Run precise simulation and return strategySignals. */
+export type PreciseSimulationResponse = {
+  symbol: string;
+  interval: string;
+  candles: Candle[];
+  graphics?: {
+    volumeProfile?: VolumeProfileData;
+    supportResistance?: SupportResistanceData;
+    orderBlocks?: OrderBlocksData;
+    smartMoney?: { structure?: SmartMoneyStructureData };
+    strategySignals?: StrategySignalsData | null;
+  };
+};
+
+/** [Backend] POST /strategies/{strategyId}/simulate-precise. Run precise simulation and return full snapshot-like payload. */
 export async function runPreciseSimulationApi(
   backendBaseUrl: string,
   strategyId: string,
@@ -151,7 +173,7 @@ export async function runPreciseSimulationApi(
   interval: string,
   limit: number,
   volumeProfileWindow: number
-): Promise<StrategySignalsData | null> {
+): Promise<PreciseSimulationResponse> {
   const res = await fetch(
     `${backendBaseUrl}/api/v1/strategies/${strategyId}/simulate-precise`,
     {
@@ -168,7 +190,7 @@ export async function runPreciseSimulationApi(
   if (!res.ok) {
     throw new Error("Precise simulation failed");
   }
-  const data = (await res.json()) as { strategySignals?: StrategySignalsData | null };
-  return (data.strategySignals ?? null) as StrategySignalsData | null;
+  const data = (await res.json()) as PreciseSimulationResponse;
+  return data;
 }
 

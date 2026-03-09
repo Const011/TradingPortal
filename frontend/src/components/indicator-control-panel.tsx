@@ -62,9 +62,13 @@ export function IndicatorControlPanel() {
     preciseSimulationEnabled,
     setPreciseSimulationEnabled,
     runPreciseSimulation,
+    preciseSimulationRunning,
   } = useMarketData();
 
   const handleDownloadStrategyData = (): void => {
+    if (symbolAndIntervalLocked) {
+      return;
+    }
     downloadStrategyData({
       symbol: selectedSymbol,
       interval: chartInterval,
@@ -158,6 +162,7 @@ export function IndicatorControlPanel() {
         type="button"
         onClick={handleDownloadStrategyData}
         title="Download bar data, indicators, orders and trailing stops for AI review"
+        disabled={symbolAndIntervalLocked}
         style={toggleButtonStyle}
       >
         Export for AI
@@ -167,9 +172,10 @@ export function IndicatorControlPanel() {
         onClick={() => {
           void handleTogglePreciseSimulation();
         }}
+        disabled={symbolAndIntervalLocked}
         style={preciseSimulationEnabled ? toggleButtonActiveStyle : toggleButtonStyle}
       >
-        Precise simulate
+        {preciseSimulationRunning ? "Running..." : "Precise simulate"}
       </button>
       <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
         <span style={{ fontSize: 12, color: "#5f6368" }}>Markers:</span>

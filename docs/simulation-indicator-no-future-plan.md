@@ -17,122 +17,133 @@
   - This creates **forward-looking bias**: strategy decisions and indicator overlays on earlier bars can depend on information that only exists because later bars are present.
   - Result: simulation shows **exaggerated performance** and misleading visuals versus what would be achievable in live trading.
 
-### 2. New direction: separate, on-demand precise simulator
+### 2. Direction: fix inside `candle_stream` without a new service
 
 - **Goal**
-  - Keep the main candle stream and heartbeat logic lightweight and responsive.
-  - Move the expensive, prefix-only, no-future-leakage algorithm into a **separate simulation engine** that runs **only on demand**.
+  - Fix simulation correctness **in-place** in `candle_stream._make_snapshot_payload` without introducing a separate SimulatorService.
 - **Mode separation**
   - **Trading mode (`settings.mode == "trading"`)**
-    - Leave runtime behavior unchanged:
-      - Full-window indicators and a single strategy call per heartbeat.
+    - Leave behavior unchanged:
+      - Full-window indicators and single strategy call.
       - `_apply_trade_logging` remains the only writer for trade logs and `current.json`.
-  - **Simulation mode (live view)**
-    - Continue using the existing fast snapshot behavior for candles and indicators (and optional approximate strategy markers).
-    - This view is optimized for interactivity, not for perfect no-future correctness.
-  - **Precise Simulation mode (on demand)**
-    - Implemented as a separate backend module and API.
-    - Enforces the invariant:
-      - For each bar index \(i\), both indicators and strategy decisions for that bar are computed only from candles up to and including that bar (`candles[0 : i+1]` or a trailing window ending at `i`); never from bars \(> i\).
+  - **Simulation mode (`settings.mode == "simulation"`)**
+    - Enforce a strict invariant:
+      - For each bar index \(i\), **both** indicators and strategy decisions for that bar are computed only from candles up to and including that bar:
+        - Allowed history for bar \(i\): `candles[0 : i+1]` (or a trailing window ending at `i`).
+        - **Forbidden**: any use of bars with index \(> i\).
 
-### 3. Precise Simulator: backend behavior
+### 3. Simulation-mode behavior in `_make_snapshot_payload`
 
-- **New module**
-  - Create `backend/app/services/precise_simulator/` with core entrypoint:
-    - `run_precise_simulation(symbol, interval, start_ts, end_ts, params) -> SimulationRun`.
-  - `SimulationRun` should include:
-    - `trades`: full per-trade objects (entry/exit, reason, points).
-    - `stopSegments` and `events` for chart overlays.
-    - `metrics`: net points, average per trade, win rate, max drawdown, etc.
+- **Inputs**
+  - `candles`: full snapshot window from Bybit (e.g. last 300–2000 bars).
+  - `volume_profile_window`: maximum bars to include in volume profile computation.
+  - `strategy_markers`: `"off" | "simulation" | "trade"`.
+  - `symbol`, `interval`, `state`: as currently defined.
 
-- **Inputs and data source**
-  - Arguments:
-    - `symbol`, `interval`, and either `start_ts` / `end_ts` or a `bars` count.
-    - Strategy parameters or a reference to the active `StrategyVersion`.
-  - Candle data:
-    - Prefer reading from the canonical candle store (DB) if available.
-    - Fallback: `BybitClient.get_klines` to fetch:
-      - Sufficient warm-up history (`warmup_bars`) before the visible range.
-      - Complete visible range used for precise simulation.
+- **Trading mode branch (unchanged)**
+  - When `settings.mode == "trading"`:
+    - Keep the existing implementation:
+      - Compute `structure_result`, `ob_result`, `vp`, `sr_lines` on full `candles`.
+      - Call `compute_order_block_trend_following(candles, ...)` once.
+      - Convert to chart data via `strategy_output_to_chart`.
+      - Call `_apply_trade_logging(...)`.
+      - Remove `strategySignals` from `graphics` before returning.
 
-- **Bar-by-bar no-future loop**
-  - Let `candles_all` be the full sequence (warm-up + visible).
-  - Choose `bars_window` for indicator lookback (e.g. 2000).
-  - For each bar index `i` in `range(0, len(candles_all))`:
-    - Define prefix/trailing window ending at `i`:
-      - `window_start = max(0, i - bars_window + 1)`.
-      - `window = candles_all[window_start : i + 1]` (bars 0..i only).
-    - Compute indicators on `window`:
-      - `structure_i = compute_structure(window, include_candle_colors=True)`.
-      - `ob_i = compute_order_blocks(window, swing_pivots=structure_i.get("swingPivots") or {}, show_bull=0, show_bear=0)`.
-      - `vp_i = build_volume_profile_from_candles(window, time=window[-1].time // 1000, width=6, window_size=min(len(window), bars_window))`.
-      - `sr_lines_i = compute_support_resistance_lines(vp_i["profile"]) if vp_i else []`.
-    - Run strategy on `window`:
-      - `trade_events_i, stop_segments_i = compute_order_block_trend_following(window, structure_i.get("swingPivots") or {}, candle_colors=structure_i.get("candleColors"), sr_lines=sr_lines_i)`.
-    - Filter to the current bar:
-      - Local index in `window`: `local_i = len(window) - 1`.
-      - Keep only events where `ev.bar_index == local_i`, rebasing them to global index `i`.
-      - Normalize stop segments so they align with global times and indices.
-    - Accumulate:
-      - `all_trade_events` and `all_stop_segments` across all bars.
-  - At the end:
-    - Convert accumulated events and stops into chart markers:
-      - `strategySignals = strategy_output_to_chart(all_trade_events, all_stop_segments, interval)`.
-    - Build per-trade objects and metrics:
-      - Either by reusing the existing results-table logic on the backend, or via a shared trade-builder utility.
-    - Return a `SimulationRun` object containing:
-      - `trades`, `metrics`, and `graphics` (including `strategySignals`).
+- **Simulation mode branch (new bar-by-bar logic)**
+  - When `settings.mode == "simulation"`:
+    - **Do not** compute any indicators or strategy directly on the full `candles` window.
+    - Instead:
+      1. **Prepare accumulators**
+         - `all_trade_events: list[TradeEvent] = []`
+         - `all_stop_segments: list[StopSegment] = []`
+         - Indicator graphics accumulators, for example:
+           - `ob_graphics_accum = {...}` (matching the shape expected for `graphics["orderBlocks"]`).
+           - `structure_graphics_accum = {...}` (structure swings and colors).
+           - `vp_graphics_accum = {...}` (volume profile bins).
+           - `sr_lines_accum: list[...] = []` (support/resistance lines).
+      2. **Decide warm-up and optional trailing window**
+         - Get `warmup_bars` from the strategy config (`strategy-order-block-trend-following`), or use its default (1000).
+         - Optionally define `bars_window` (e.g. 2000) to cap indicator lookback for performance.
+      3. **Loop over bars**
+         - For each global bar index `i` in `range(0, len(candles))`:
+           - Define a history window ending at `i`:
+             - `window_start = max(0, i - bars_window + 1)` (or `0` to use all history).
+             - `window = candles[window_start : i + 1]`.
+             - This window includes **bars 0..i only**; no future bars.
+           - **Compute indicators for this window**
+             - `structure_i = compute_structure(window, include_candle_colors=True)`.
+             - `ob_i = compute_order_blocks(window, swing_pivots=structure_i.get("swingPivots") or {}, show_bull=0, show_bear=0)`.
+             - `vp_i = build_volume_profile_from_candles(window, time=window[-1].time // 1000, width=6, window_size=min(len(window), volume_profile_window))`.
+             - `sr_lines_i = compute_support_resistance_lines(vp_i["profile"]) if vp_i else []`.
+           - **Update indicator graphics accumulators**
+             - Merge `structure_i` into `structure_graphics_accum` (swings and candle colors as of bar `i`).
+             - Merge `ob_i` into `ob_graphics_accum` (active OB zones as of bar `i`).
+             - Merge `vp_i` (if not `None`) into `vp_graphics_accum` for the final volume profile.
+             - Append `sr_lines_i` to `sr_lines_accum` or maintain only the latest effective lines, depending on how the frontend expects the data.
+           - **Run strategy for this window when enabled**
+             - Only if `strategy_markers in ("simulation", "trade")`:
+               - `trade_events_i, stop_segments_i = compute_order_block_trend_following(window, structure_i.get("swingPivots") or {}, candle_colors=structure_i.get("candleColors"), sr_lines=sr_lines_i)`.
+               - Determine the local index of the current bar within `window`:
+                 - `local_i = len(window) - 1`.
+               - **Filter to the current bar only**:
+                 - `events_for_bar = [ev for ev in trade_events_i if ev.bar_index == local_i]`.
+                 - `stops_for_bar = [...]` (filter `stop_segments_i` to segments that start/stop at `local_i` or cover `local_i`, depending on actual `StopSegment` schema).
+               - Append:
+                 - `all_trade_events.extend(events_for_bar)`.
+                 - `all_stop_segments.extend(stops_for_bar)`.
+      4. **Build final graphics object**
+         - After the loop:
+           - `graphics = {`
+           - `  "orderBlocks": ob_graphics_accum,`
+           - `  "smartMoney": {"structure": structure_graphics_accum},`
+           - `}`
+           - If `vp_graphics_accum` is not empty:
+             - `graphics["volumeProfile"] = vp_graphics_accum`.
+             - `graphics["supportResistance"] = {"lines": sr_lines_accum}` (or a deduplicated/filtered version).
+           - If `strategy_markers in ("simulation", "trade")`:
+             - `chart_data = strategy_output_to_chart(all_trade_events, all_stop_segments, interval)`.
+             - `graphics["strategySignals"] = chart_data`.
+      5. **Skip trade logging in simulation mode**
+         - Do **not** call `_apply_trade_logging` when `settings.mode == "simulation"`; that function is only meaningful in trading mode.
 
-### 4. API and frontend wiring for “Precise simulate”
+### 4. Edge cases and performance
 
-- **Backend API**
-  - Add `POST /api/v1/strategies/{strategyId}/simulate-precise`:
-    - Request body:
-      - `symbol`, `interval`, and either `startTs` / `endTs` or a `bars` count.
-      - Strategy parameters or the ID of the active strategy version.
-    - Behavior:
-      - Calls `run_precise_simulation(...)`.
-      - Optionally persists the resulting `SimulationRun` and includes a `runId` in the response.
-    - Response:
-      - `trades`: full precise trade list (shape compatible with trade-log API).
-      - `metrics`: precise summary metrics.
-      - `graphics`: at least `strategySignals` for the chart, optionally updated indicator overlays.
-
-- **Frontend changes**
-  - In simulation mode, in the controls area above the results table:
-    - Place a **“Precise simulate”** toggle button **right after** the “Export for AI” control.
-  - Behavior:
-    - When the toggle is **off** (default), all simulation-related calls continue to use the existing **quick simulation** path (current fast behavior).
-    - When the toggle is switched **on**, all subsequent simulation actions (e.g. “Run simulation”, parameter changes) are routed to the **precise simulation endpoint** instead of the quick one:
-      - Frontend calls the precise simulation API with the current symbol, interval, visible range, and parameters.
-      - Shows a loading indicator while the precise run is executing.
-      - On success:
-        - Replaces the chart’s strategy markers (entries, exits, stop lines) with `graphics.strategySignals` from the precise run.
-        - Rebuilds the results table using the `trades` and `metrics` from the response.
-        - Optionally annotates the UI to indicate that results are from a **Precise simulation**.
-    - Toggling **back off** returns the behavior to the quick simulation path (no calls to the precise simulator).
+- **Warm-up behavior**
+  - Strategy already has `warmup_bars` and will not open trades before that bar index.
+  - The loop still computes indicators for all bars, but:
+    - You can optionally start the **strategy** evaluation after `warmup_bars`:
+      - For `i < warmup_bars`, skip the call to `compute_order_block_trend_following` to save CPU.
+- **Short history**
+  - If `len(candles) <= warmup_bars`:
+    - Indicators are still computed prefix-wise.
+    - Strategy may emit no trades (as designed).
+- **Performance considerations**
+  - Complexity in simulation mode becomes roughly \(O(N^2)\) in the number of bars within `snapshot_limit` if you always use `window = candles[0 : i+1]`.
+  - To mitigate this:
+    - Use a fixed `bars_window` and `window = candles[max(0, i - bars_window + 1) : i + 1]` so work per bar is bounded.
+    - Ensure you correctly translate local indices (`local_i`) to global context when needed.
 
 ### 5. Testing strategy
 
 - **Unit tests**
   - For indicators (`compute_structure`, `compute_order_blocks`, volume profile, S/R):
-    - Verify that running them bar-by-bar on prefixes and aggregating gives consistent results with one-shot computations on the same prefixes.
+    - Verify that computing them bar-by-bar with `window = candles[0 : i+1]` and then aggregating gives consistent results with a one-shot computation when restricted to the same prefix.
   - For strategy:
-    - On synthetic data, confirm that the bar-by-bar precise loop matches running the strategy once per prefix and inspecting only the last bar’s events.
+    - On synthetic data, confirm that:
+      - Running the bar-by-bar loop and collecting `events_for_bar` matches running the strategy once on each prefix and inspecting only the last bar.
 - **Simulation correctness sanity checks**
   - Given a small fixed candle set:
-    - Run the existing “fast” simulation flow (for comparison only).
-    - Run the new precise simulator.
-    - Show that truncating the data at bar `k` and re-running yields identical decisions up to `k`, confirming no future leakage.
+    - Run the old full-window version (for comparison only).
+    - Run the new prefix-only version.
+    - Show that when you truncate the data at bar `k` and re-run, the decisions up to `k` remain identical (no dependency on future bars).
 
 ### 6. Documentation updates
 
 - **BRD updates**
   - In **FR-4 Indicator Engine** and **FR-6 Simulation Tool**:
-    - Note that:
-      - The main heartbeat-based flows remain lightweight and may use snapshot-based logic for speed.
-      - A separate **Precise Simulation** path exists which recomputes indicators and strategy **per bar** on prefixes ending at the current bar index (no use of future bars) and runs only when requested.
+    - Note that in simulation mode, indicators and strategy are recomputed **per bar** on prefixes ending at the current bar index (no use of future bars for any visuals or decisions).
   - In **Candle Stream** / **Simulation Tool** sections:
     - Clarify that:
       - Trading mode uses full-window indicators and a single strategy call per heartbeat (no future exists).
-      - Simulation mode’s default live view is optimized for speed, while high-accuracy evaluation is provided by the on-demand Precise Simulation engine triggered from the UI.
+      - Simulation mode uses a bar-by-bar prefix-only recomputation inside `candle_stream._make_snapshot_payload`.
+

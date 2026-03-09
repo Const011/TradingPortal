@@ -23,9 +23,9 @@ export TRADING_INTERVAL="${TRADING_INTERVAL:-60}"
 export POSITION_SIZE="${POSITION_SIZE:-0.001}"
 export BARS_WINDOW="${BARS_WINDOW:-2000}"
 export FETCH_INTERVAL_SEC="${FETCH_INTERVAL_SEC:-60}"
-export MARKET="${MARKET:-spot}"
+export MARKET="${MARKET:-linear}"
 export LEVERAGE="${LEVERAGE:-10}"
-export EXECUTOR_DRY_RUN="${EXECUTOR_DRY_RUN:-true}"
+export EXECUTOR_DRY_RUN="${EXECUTOR_DRY_RUN:-false}"
 
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
