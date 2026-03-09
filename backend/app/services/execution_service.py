@@ -224,12 +224,39 @@ def _linear_position_side(positions: list[dict]) -> str | None:
     return None
 
 
-def _fake_positions_from_current(symbol: str, interval: str) -> list[dict]:
-    """TEMPORARY DEBUG STUB: build Bybit-like position list from current.json for dry run."""
+def _fake_positions_from_current(
+    symbol: str,
+    interval: str,
+    current_low: float | None = None,
+    current_high: float | None = None,
+) -> list[dict]:
+    """TEMPORARY DEBUG STUB: build Bybit-like position list from current.json for dry run.
+
+    When current_low/current_high are provided, this simulates stop-hit by
+    omitting positions whose effective stop would have been touched on the
+    current bar (long: bar low <= stop; short: bar high >= stop). This causes
+    sync_from_exchange to see position_size == 0 while current.json still has
+    open trades, which in turn triggers the normal stop-hit exit path.
+    """
     current = load_current_trades(symbol, interval)
     out: list[dict] = []
     for t in current:
         side = t.get("side", "long")
+        stop_price = float(
+            t.get("currentStopPrice")
+            or t.get("initialStopPrice")
+            or t.get("entryPrice")
+            or 0.0
+        )
+        # If we have current bar prices, simulate that the exchange closed
+        # the position when price touched the stop.
+        if current_low is not None and current_high is not None:
+            if side == "long" and current_low <= stop_price:
+                # Stop hit for long: no live position returned for this trade.
+                continue
+            if side == "short" and current_high >= stop_price:
+                # Stop hit for short: no live position returned for this trade.
+                continue
         bybit_side = "Buy" if side == "long" else "Sell"
         size = t.get("size", settings.position_size or "0")
         if size is None:
@@ -256,7 +283,23 @@ async def sync_from_exchange(
     try:
         # ----- TEMPORARY DEBUG STUB: read position from current.json instead of Bybit -----
         if settings.executor_dry_run:
-            positions = _fake_positions_from_current(symbol, interval)
+            current_low: float | None = None
+            current_high: float | None = None
+            try:
+                # Fetch the latest bar to simulate stop-hit based on bar range
+                candles = await client.get_klines(symbol=symbol, interval=interval, limit=1)
+                if candles:
+                    last_candle = candles[-1]
+                    current_low = float(getattr(last_candle, "low", 0.0) or 0.0)
+                    current_high = float(getattr(last_candle, "high", 0.0) or 0.0)
+            except Exception as e:
+                logger.warning(
+                    "Executor: failed to fetch candles for dry-run stop simulation symbol=%s interval=%s err=%s",
+                    symbol,
+                    interval,
+                    e,
+                )
+            positions = _fake_positions_from_current(symbol, interval, current_low, current_high)
         else:
             positions = await client.get_linear_positions(symbol=symbol)
         # ----- end TEMPORARY DEBUG STUBS -----
