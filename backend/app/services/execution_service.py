@@ -194,11 +194,23 @@ async def submit_entry(
 
         # ----- LIVE (runs when EXECUTOR_DRY_RUN=false) -----
         if category == "linear":
+            logger.info(
+                "Executor: calling set_linear_leverage symbol=%s leverage=%s",
+                symbol,
+                settings.leverage,
+            )
             await client.set_linear_leverage(
                 symbol=symbol,
                 buyLeverage=settings.leverage,
                 sellLeverage=settings.leverage,
             )
+        logger.info(
+            "Executor: calling create_order category=%s symbol=%s side=%s qty=%s",
+            category,
+            symbol,
+            side,
+            qty,
+        )
         result = await client.create_order(
             category=category,
             symbol=symbol,
@@ -338,19 +350,9 @@ async def sync_from_exchange(
     2) If position size 0 but current.json has open trade(s): stop hit → append exit, remove from current.json.
     Returns list of trade_ids that were closed by stop-hit (so caller can add to logged_exit_ids)."""
     exited_ids: list[str] = []
-    # Live execution currently supports linear only; in dry run we still want
-    # to simulate stop hits for any market using current.json + candles.
-    if not settings.executor_dry_run:
-        logger.info(
-            "Executor: sync_from_exchange skipped for non-linear market in live mode symbol=%s market=%s",
-            symbol,
-            settings.market,
-        )
-        return exited_ids
     key = (symbol.upper(), interval)
 
     try:
-        # ----- TEMPORARY DEBUG STUB: read position from current.json instead of Bybit -----
         if settings.executor_dry_run:
             current_low: float | None = None
             current_high: float | None = None
@@ -370,17 +372,21 @@ async def sync_from_exchange(
                 )
             positions = _fake_positions_from_current(symbol, interval, current_low, current_high)
         else:
-            positions = await client.get_linear_positions(symbol=symbol)
+            # Live mode: derive position size from exchange state based on market.
+            logger.info("Executor: sync_from_exchange fetching live position state symbol=%s market=%s", symbol, settings.market)
+            position_size, _ = await _get_live_position_state(client, symbol)
+            positions: list[dict] = []
         # ----- end TEMPORARY DEBUG STUBS -----
-        position_size = _linear_position_size(positions)
 
         # 1) Pending entry: try to confirm fill (skip in dry run; we simulate immediate fill in submit_entry)
         pending = _pending_by_key.get(key)
-        if pending and not settings.executor_dry_run:
+        if pending and not settings.executor_dry_run and settings.market == "linear":
+            # For now, only linear uses exchange positions to confirm entry fill.
             category = settings.market
             open_orders = await client.get_open_orders(category=category, symbol=symbol)
             order_ids = {o.get("orderId") for o in open_orders}
             if pending.order_id not in order_ids and position_size > 0:
+                positions = await client.get_linear_positions(symbol=symbol)
                 side_key = "Buy" if pending.side == "long" else "Sell"
                 for pos in positions:
                     if pos.get("side") != side_key:
@@ -489,7 +495,18 @@ async def update_stop(
     end_time: int,
     client: BybitClient | None = None,
 ) -> None:
-    """Update trailing stop: write current.json + index (stop_move). Dry run: log only, no Bybit. Live: set Bybit stop then persist."""
+    """Update trailing stop: write current.json + index (stop_move).
+    Dry run: log only, no Bybit. Live: set exchange stop when supported, then persist."""
+    logger.info(
+        "Executor: update_stop called symbol=%s interval=%s trade_id=%s side=%s new_stop=%.4f market=%s dry_run=%s",
+        symbol,
+        interval,
+        trade_id,
+        side,
+        new_stop_price,
+        settings.market,
+        settings.executor_dry_run,
+    )
     if settings.executor_dry_run:
         logger.info(
             "Executor: [DRY RUN] stop moved trade_id=%s new_stop=%.4f side=%s",
@@ -503,20 +520,34 @@ async def update_stop(
     if client is None:
         logger.warning("Executor: update_stop skipped (no client)")
         return
-    try:
-        await client.set_linear_trading_stop(symbol=symbol, stopLoss=new_stop_price)
+    # Live mode: only linear has native trading-stop; spot updates are local-only.
+    if settings.market == "linear":
+        try:
+            logger.info(
+                "Executor: calling set_linear_trading_stop symbol=%s trade_id=%s new_stop=%.4f",
+                symbol,
+                trade_id,
+                new_stop_price,
+            )
+            await client.set_linear_trading_stop(symbol=symbol, stopLoss=new_stop_price)
+            logger.info(
+                "Executor: set_linear_trading_stop trade_id=%s stopLoss=%s",
+                trade_id,
+                new_stop_price,
+            )
+        except Exception as e:
+            logger.warning(
+                "Executor: set_linear_trading_stop failed trade_id=%s err=%s",
+                trade_id,
+                e,
+            )
+            # Even if the exchange call fails, we still update local state so UI/logs reflect intent.
+    else:
         logger.info(
-            "Executor: set_linear_trading_stop trade_id=%s stopLoss=%s",
+            "Executor: update_stop spot-only (no native trailing stop) trade_id=%s new_stop=%.4f",
             trade_id,
             new_stop_price,
         )
-    except Exception as e:
-        logger.warning(
-            "Executor: set_linear_trading_stop failed trade_id=%s err=%s",
-            trade_id,
-            e,
-        )
-        return
     update_current_trade_stop(symbol, interval, trade_id, new_stop_price)
     append_stop_move(symbol, interval, trade_id, end_time, new_stop_price, side)
 
@@ -526,10 +557,9 @@ async def close_position(
     interval: str,
     client: BybitClient,
 ) -> dict[str, str | float | None]:
-    """Close linear position: get live size, place opposite market order, append exit and remove from current.json.
-    Returns result dict with ok, message, and optionally close_price/points."""
-    if settings.market != "linear":
-        return {"ok": False, "message": "Only linear supported"}
+    """Close live position for current market: get live size, place opposite market order,
+    append exit and remove from current.json. Returns result dict with ok, message,
+    and optionally close_price/points."""
     try:
         # ----- TEMPORARY DEBUG STUB: read from current.json, no real Bybit close -----
         if settings.executor_dry_run:
@@ -564,6 +594,13 @@ async def close_position(
 
         close_side = "Sell" if position_side == "long" else "Buy"
         category = settings.market
+        logger.info(
+            "Executor: calling close create_order category=%s symbol=%s side=%s qty=%s",
+            category,
+            symbol,
+            close_side,
+            position_size,
+        )
         await client.create_order(
             category=category,
             symbol=symbol,

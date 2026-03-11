@@ -10,8 +10,8 @@ from app.schemas.market import Candle
 logger = logging.getLogger(__name__)
 
 # Temporary debug: log bullish signal steps for bars around 2026-03-02 17:00
-_DEBUG_TS_START = int(datetime(2026, 3, 10, 16, 0).timestamp() * 1000)
-_DEBUG_TS_END = int(datetime(2026, 3, 10, 17, 0).timestamp() * 1000)
+_DEBUG_TS_START = int(datetime(2025, 3, 10, 16, 0).timestamp() * 1000)
+_DEBUG_TS_END = int(datetime(2025, 3, 10, 17, 0).timestamp() * 1000)
 
 from app.utils.timefmt import ts_human
 

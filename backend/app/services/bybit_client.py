@@ -86,10 +86,8 @@ class BybitClient:
             query_string = urlencode(sorted(params.items()))
         if json_body is not None:
             body_str = json.dumps(json_body, separators=(",", ":"))
-        timestamp_ms = int(time.time() * 1000)
-        print(f"local timestamp_ms: {ts_human(timestamp_ms)}")
-        #timestamp_ms = await self._get_server_time_ms()
-        #print(f"server timestamp_ms: {ts_human(timestamp_ms)}")
+        # Use Bybit server time for all private requests to avoid recv_window timestamp errors.
+        timestamp_ms = await self._get_server_time_ms()
         headers = {
             "Content-Type": "application/json",
             **self._sign_request(method, timestamp_ms, query_string, body_str),
