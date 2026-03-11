@@ -6,6 +6,7 @@ import {
   CandlestickSeries,
   ColorType,
   HistogramSeries,
+  LineSeries,
   createChart,
   createSeriesMarkers,
   IChartApi,
@@ -85,6 +86,8 @@ export function PriceChart() {
     tradeLogTrades,
     symbolAndIntervalLocked,
     gatewayConfig,
+    cumulativeVolumeDelta,
+    cumulativeVolumeDeltaEnabled,
   } = useMarketData();
 
   const orderBlocksForDisplay = useMemo(() => {
@@ -202,6 +205,10 @@ export function PriceChart() {
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const volumeSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
+  const cvdHistogramRef = useRef<ISeriesApi<"Histogram"> | null>(null);
+  const cvdBuySeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const cvdSellSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const cvdStrengthSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
   const volumeProfilePrimitiveRef = useRef<VolumeProfile | null>(null);
   const supportResistancePriceLinesRef = useRef<IPriceLine[]>([]);
   const orderBlocksPrimitiveRef = useRef<OrderBlocks | null>(null);
@@ -319,9 +326,33 @@ export function PriceChart() {
       },
     });
 
+    // Cumulative volume delta indicator series.
+    // We initially attach them to the main pane; a later effect moves them to
+    // a dedicated indicator pane (pane index 1) only when enabled, and back to
+    // pane 0 when disabled so the extra pane disappears.
+    const cvdHistogram = chart.addSeries(HistogramSeries, {
+      priceFormat: { type: "volume" },
+    });
+    const cvdBuySeries = chart.addSeries(LineSeries, {
+      color: "#16a34a",
+      lineWidth: 1,
+    });
+    const cvdSellSeries = chart.addSeries(LineSeries, {
+      color: "#dc2626",
+      lineWidth: 1,
+    });
+    const cvdStrengthSeries = chart.addSeries(LineSeries, {
+      color: "#6b7280",
+      lineWidth: 1,
+    });
+
     chartRef.current = chart;
     seriesRef.current = candlestickSeries;
     volumeSeriesRef.current = volumeSeries;
+    cvdHistogramRef.current = cvdHistogram;
+    cvdBuySeriesRef.current = cvdBuySeries;
+    cvdSellSeriesRef.current = cvdSellSeries;
+    cvdStrengthSeriesRef.current = cvdStrengthSeries;
 
     chart.subscribeCrosshairMove((param) => {
       if (param.time != null) {
@@ -363,6 +394,10 @@ export function PriceChart() {
       seriesRef.current = null;
       volumeSeriesRef.current = null;
       volumeProfilePrimitiveRef.current = null;
+      cvdHistogramRef.current = null;
+      cvdBuySeriesRef.current = null;
+      cvdSellSeriesRef.current = null;
+      cvdStrengthSeriesRef.current = null;
     };
   }, [setHoveredBarTime]);
 
@@ -448,6 +483,88 @@ export function PriceChart() {
     series.attachPrimitive(newPrimitive);
     volumeProfilePrimitiveRef.current = newPrimitive;
   }, [volumeProfileEnabled, volumeProfile]);
+
+  useEffect(() => {
+    const histSeries = cvdHistogramRef.current;
+    const buySeries = cvdBuySeriesRef.current;
+    const sellSeries = cvdSellSeriesRef.current;
+    const strengthSeries = cvdStrengthSeriesRef.current;
+    if (!histSeries || !buySeries || !sellSeries || !strengthSeries) return;
+
+    if (!cumulativeVolumeDeltaEnabled || !cumulativeVolumeDelta) {
+      // Hide all CVD series, clear data, and move them back to pane 0 so the
+      // extra pane (index 1) disappears when there are no visible series.
+      histSeries.setData([]);
+      buySeries.setData([]);
+      sellSeries.setData([]);
+      strengthSeries.setData([]);
+      histSeries.applyOptions({ visible: false });
+      buySeries.applyOptions({ visible: false });
+      sellSeries.applyOptions({ visible: false });
+      strengthSeries.applyOptions({ visible: false });
+      histSeries.moveToPane(0);
+      buySeries.moveToPane(0);
+      sellSeries.moveToPane(0);
+      strengthSeries.moveToPane(0);
+      return;
+    }
+
+    const histData: HistogramData<Time>[] = cumulativeVolumeDelta.points.map((p) => {
+      const isUp = p.delta >= 0;
+      return {
+        time: toChartTime(p.time),
+        value: Math.abs(p.delta),
+        color: isUp ? "#16a34a" : "#dc2626",
+      };
+    });
+    const buyData = cumulativeVolumeDelta.points.map((p) => ({
+      time: toChartTime(p.time),
+      value: p.buy,
+    }));
+    const sellData = cumulativeVolumeDelta.points.map((p) => ({
+      time: toChartTime(p.time),
+      value: p.sell,
+    }));
+    const strengthData = cumulativeVolumeDelta.points.map((p) => ({
+      time: toChartTime(p.time),
+      value: p.strength,
+    }));
+
+    // Move all CVD series to pane 1 and make them visible when enabled.
+    histSeries.moveToPane(1);
+    buySeries.moveToPane(1);
+    sellSeries.moveToPane(1);
+    strengthSeries.moveToPane(1);
+
+    // Ensure the CVD pane always uses a linear price scale, regardless of the
+    // main chart's log/linear toggle.
+    histSeries.priceScale().applyOptions({
+      mode: PriceScaleMode.Normal,
+      autoScale: true,
+    });
+    buySeries.priceScale().applyOptions({
+      mode: PriceScaleMode.Normal,
+      autoScale: true,
+    });
+    sellSeries.priceScale().applyOptions({
+      mode: PriceScaleMode.Normal,
+      autoScale: true,
+    });
+    strengthSeries.priceScale().applyOptions({
+      mode: PriceScaleMode.Normal,
+      autoScale: true,
+    });
+
+    histSeries.applyOptions({ visible: true });
+    buySeries.applyOptions({ visible: true });
+    sellSeries.applyOptions({ visible: true });
+    strengthSeries.applyOptions({ visible: true });
+
+    histSeries.setData(histData);
+    buySeries.setData(buyData);
+    sellSeries.setData(sellData);
+    strengthSeries.setData(strengthData);
+  }, [cumulativeVolumeDeltaEnabled, cumulativeVolumeDelta]);
 
   useEffect(() => {
     const series = seriesRef.current;

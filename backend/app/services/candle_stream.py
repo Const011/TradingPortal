@@ -11,6 +11,7 @@ from app.services.indicators.volume_profile import build_volume_profile_from_can
 from app.services.indicators.support_resistance import compute_support_resistance_lines
 from app.services.indicators.order_blocks import compute_order_blocks
 from app.services.indicators.smart_money_structure import compute_structure
+from app.services.indicators.cumulative_volume_delta import compute_cumulative_volume_delta
 from app.services.trading_strategy.order_block_trend_following import compute_order_block_trend_following
 from app.services.trading_strategy.chart_format import strategy_output_to_chart
 from app.services.trading_strategy.types import TradeEvent, StopSegment
@@ -298,6 +299,10 @@ async def _make_snapshot_payload(
             graphics["volumeProfile"] = vp
             sr_lines = compute_support_resistance_lines(vp["profile"])
             graphics["supportResistance"] = {"lines": sr_lines}
+            # Cumulative volume delta-style indicator (for separate pane).
+            cvd = compute_cumulative_volume_delta(candles)
+            if cvd.get("points"):
+                graphics["cumulativeVolumeDelta"] = cvd
             if strategy_markers in ("simulation", "trade"):
                 trade_events, stop_segments = compute_order_block_trend_following(
                     candles,

@@ -10,8 +10,8 @@ from app.schemas.market import Candle
 logger = logging.getLogger(__name__)
 
 # Temporary debug: log bullish signal steps for bars around 2026-03-02 17:00
-_DEBUG_TS_START = int(datetime(2026, 3, 9, 19, 0).timestamp() * 1000)
-_DEBUG_TS_END = int(datetime(2026, 3, 9, 23, 0).timestamp() * 1000)
+_DEBUG_TS_START = int(datetime(2026, 3, 10, 16, 0).timestamp() * 1000)
+_DEBUG_TS_END = int(datetime(2026, 3, 10, 17, 0).timestamp() * 1000)
 
 from app.utils.timefmt import ts_human
 
@@ -19,6 +19,10 @@ from app.services.indicators.order_blocks import (
     OrderBlock,
     _iter_order_blocks_from_pivots,
     _compute_order_blocks_from_pivots,
+)
+from app.services.indicators.cumulative_volume_delta import (
+    compute_cumulative_volume_delta,
+    DEFAULT_CVD_LENGTH,
 )
 from app.services.trading_strategy.types import TradeEvent, StopSegment
 from app.services.indicators.order_blocks import DEFAULT_KEEP_BREAKERS
@@ -29,8 +33,8 @@ logger = logging.getLogger(__name__)
 # #22c55e = swing bullish + internal bullish; #dc2626 = swing bearish + internal bearish
 #BULLISH_COLORS = {"#22c55e"} # both in bullish
 #BEARISH_COLORS = {"#dc2626"} # both in bearish
-BULLISH_COLORS = {"#15803d","#22c55e", "#b91c1c",}  # when swing trend bullish
-BEARISH_COLORS = {"#b91c1c","#dc2626", "#15803d",}  # when swing trend bearish
+BULLISH_COLORS = {"#15803d","#22c55e", "#b91c1c", "#dc2626"}  # when swing trend bullish
+BEARISH_COLORS = {"#b91c1c","#dc2626", "#15803d",  "#22c55e"}  # when swing trend bearish
 
 
 # Default parameters
@@ -54,6 +58,7 @@ DEFAULT_WARMUP_BARS = 1000
 
 DEFAULT_MIN_OB_STRENGTH = 0.75
 
+DEFAULT_CVD_SEQUENCE_BARS = 1
 
 @dataclass
 class _ActivePosition:
@@ -536,6 +541,8 @@ def compute_order_block_trend_following(
     warmup_bars: int = DEFAULT_WARMUP_BARS,
     min_ob_strength: float = DEFAULT_MIN_OB_STRENGTH,
     keep_breakers: bool = DEFAULT_KEEP_BREAKERS,
+    cvd_length: int = DEFAULT_CVD_LENGTH,
+    cvd_sequence_bars: int = DEFAULT_CVD_SEQUENCE_BARS,
 ) -> tuple[list[TradeEvent], list[StopSegment]]:
     """
     Run Order Block Trend-Following strategy.
@@ -567,6 +574,14 @@ def compute_order_block_trend_following(
     strength_threshold = (
         min_ob_strength * avg_strength if avg_strength > 0.0 and min_ob_strength > 0.0 else 0.0
     )
+
+    # Precompute CVD deltas for CVD-based entry blocking. The indicator returns
+    # one point per candle with a `delta` field; we align by bar index.
+    cvd_result = compute_cumulative_volume_delta(candles, length=cvd_length)
+    cvd_points = cvd_result.get("points") or []
+    cvd_delta: list[float] = [
+        float(p.get("delta", 0.0)) for p in cvd_points  # type: ignore[assignment]
+    ]
 
     # Use the same pivot-based OB engine as the indicator, driven by Smart Money
     # structure pivots passed in from `compute_structure`. This ensures the
@@ -766,6 +781,69 @@ def compute_order_block_trend_following(
             def _open_from_candidate(candidate: _EntryCandidate) -> None:
                 nonlocal position
                 entry_price = c.close
+                # CVD-based anti-chop filter: require last `cvd_sequence_bars` deltas
+                # to be consistently in the direction of the candidate.
+                if cvd_sequence_bars > 0 and cvd_delta and 0 <= i < len(cvd_delta):
+                    start_cvd = max(0, i - cvd_sequence_bars + 1)
+                    seq = cvd_delta[start_cvd : i + 1]
+                    seq_len = len(seq)
+                    seq_min = min(seq) if seq else 0.0
+                    seq_max = max(seq) if seq else 0.0
+                    current_delta = seq[-1] if seq else 0.0
+                    if candidate.side == "long":
+                        if not all(d >= 0 for d in seq):
+                            if _debug:
+                                logger.info(
+                                    "[OB_STRAT_LONG] bar=%d time=%s | BLOCKED by CVD filter "
+                                    "(len=%d min=%.2f max=%.2f current=%.2f seq=%s)",
+                                    i,
+                                    ts_human(c.time),
+                                    seq_len,
+                                    seq_min,
+                                    seq_max,
+                                    current_delta,
+                                    [round(d, 2) for d in seq],
+                                )
+                            return
+                        elif _debug:
+                            logger.info(
+                                "[OB_STRAT_LONG] bar=%d time=%s | CVD filter PASSED "
+                                "(len=%d min=%.2f max=%.2f current=%.2f seq=%s)",
+                                i,
+                                ts_human(c.time),
+                                seq_len,
+                                seq_min,
+                                seq_max,
+                                current_delta,
+                                [round(d, 2) for d in seq],
+                            )
+                    else:
+                        if not all(d <= 0 for d in seq):
+                            if _debug:
+                                logger.info(
+                                    "[OB_STRAT_SHORT] bar=%d time=%s | BLOCKED by CVD filter "
+                                    "(len=%d min=%.2f max=%.2f current=%.2f seq=%s)",
+                                    i,
+                                    ts_human(c.time),
+                                    seq_len,
+                                    seq_min,
+                                    seq_max,
+                                    current_delta,
+                                    [round(d, 2) for d in seq],
+                                )
+                            return
+                        elif _debug:
+                            logger.info(
+                                "[OB_STRAT_SHORT] bar=%d time=%s | CVD filter PASSED "
+                                "(len=%d min=%.2f max=%.2f current=%.2f seq=%s)",
+                                i,
+                                ts_human(c.time),
+                                seq_len,
+                                seq_min,
+                                seq_max,
+                                current_delta,
+                                [round(d, 2) for d in seq],
+                            )
                 if candidate.side == "long":
                     if _debug:
                         logger.info(

@@ -63,6 +63,8 @@ export function IndicatorControlPanel() {
     setPreciseSimulationEnabled,
     runPreciseSimulation,
     preciseSimulationRunning,
+    cumulativeVolumeDeltaEnabled,
+    setCumulativeVolumeDeltaEnabled,
   } = useMarketData();
 
   const handleDownloadStrategyData = (): void => {
@@ -150,6 +152,13 @@ export function IndicatorControlPanel() {
         style={structureEnabled ? toggleButtonActiveStyle : toggleButtonStyle}
       >
         Structure
+      </button>
+      <button
+        type="button"
+        onClick={() => setCumulativeVolumeDeltaEnabled(!cumulativeVolumeDeltaEnabled)}
+        style={cumulativeVolumeDeltaEnabled ? toggleButtonActiveStyle : toggleButtonStyle}
+      >
+        CVD
       </button>
       <button
         type="button"

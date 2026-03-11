@@ -44,6 +44,7 @@ import {
   type OrderBlocksData,
   type SmartMoneyStructureData,
   type StrategySignalsData,
+  type CumulativeVolumeDeltaData,
 } from "@/lib/types/market";
 
 type MarketDataContextValue = {
@@ -101,6 +102,9 @@ type MarketDataContextValue = {
   setPreciseSimulationEnabled: (enabled: boolean) => void;
   runPreciseSimulation: () => Promise<void>;
   preciseSimulationRunning: boolean;
+  cumulativeVolumeDeltaEnabled: boolean;
+  setCumulativeVolumeDeltaEnabled: (enabled: boolean) => void;
+  cumulativeVolumeDelta: CumulativeVolumeDeltaData | null;
 };
 
 const MarketDataContext = createContext<MarketDataContextValue | null>(null);
@@ -143,6 +147,8 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
   const [hoveredBarTime, setHoveredBarTime] = useState<number | null>(null);
   const [preciseSimulationEnabled, setPreciseSimulationEnabled] = useState<boolean>(false);
   const [preciseSimulationRunning, setPreciseSimulationRunning] = useState<boolean>(false);
+  const [cumulativeVolumeDeltaEnabled, setCumulativeVolumeDeltaEnabled] = useState<boolean>(false);
+  const [cumulativeVolumeDelta, setCumulativeVolumeDelta] = useState<CumulativeVolumeDeltaData | null>(null);
 
   const socketRef = useRef<WebSocket | null>(null);
   const candleSocketRef = useRef<WebSocket | null>(null);
@@ -166,6 +172,7 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
     setObShowBull(prefs.obShowBull);
     setObShowBear(prefs.obShowBear);
     setSwingLabelsShow(prefs.swingLabelsShow);
+    setCumulativeVolumeDeltaEnabled(prefs.cumulativeVolumeDeltaEnabled);
   }, []);
 
   // When user selects a new ticker, re-enable auto scale so the chart rescales like pressing "Auto".
@@ -203,6 +210,7 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
       obShowBull,
       obShowBear,
       swingLabelsShow,
+      cumulativeVolumeDeltaEnabled,
     });
   }, [selectedSymbol, chartInterval, autoScaleEnabled, logScaleEnabled, volumeProfileEnabled, volumeProfileWindow, supportResistanceEnabled, orderBlocksEnabled, structureEnabled, candleColoringEnabled, strategyMarkersEnabled, strategyMarkersWindow, obShowBull, obShowBear, swingLabelsShow]);
 
@@ -345,6 +353,7 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
           setSupportResistance(graphics?.supportResistance ?? null);
           setOrderBlocks(graphics?.orderBlocks ?? null);
           setStructure(graphics?.smartMoney?.structure ?? null);
+          setCumulativeVolumeDelta(graphics?.cumulativeVolumeDelta ?? null);
           // Simulation: markers from stream. Trading: markers from trade log only (never from stream).
           if (!isTrading && !preciseSimulationEnabled) {
             setStrategySignals(graphics?.strategySignals ?? null);
@@ -589,6 +598,7 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
           setSupportResistance(graphics?.supportResistance ?? null);
           setOrderBlocks(graphics?.orderBlocks ?? null);
           setStructure(graphics?.smartMoney?.structure ?? null);
+          setCumulativeVolumeDelta(graphics?.cumulativeVolumeDelta ?? null);
           setStrategySignals(graphics?.strategySignals ?? null);
           setPreciseSimulationEnabled(true);
         } catch (e) {
@@ -599,6 +609,9 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
         }
       },
       preciseSimulationRunning,
+      cumulativeVolumeDeltaEnabled,
+      setCumulativeVolumeDeltaEnabled,
+      cumulativeVolumeDelta,
     }),
     [
       symbols,
@@ -639,6 +652,8 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
       chartInterval,
       volumeProfileWindow,
       preciseSimulationRunning,
+      cumulativeVolumeDeltaEnabled,
+      cumulativeVolumeDelta,
     ]
   );
 

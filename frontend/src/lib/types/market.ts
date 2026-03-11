@@ -181,6 +181,21 @@ export type StrategySignalsData = {
   stopSegments?: StrategyStopSegmentData[];
 };
 
+/** Cumulative volume delta indicator point. */
+export type CumulativeVolumeDeltaPoint = {
+  time: number;
+  buy: number;
+  sell: number;
+  delta: number;
+  strength: number;
+};
+
+/** Cumulative volume delta indicator series (single per symbol/interval). */
+export type CumulativeVolumeDeltaData = {
+  length: number;
+  points: CumulativeVolumeDeltaPoint[];
+};
+
 /** Graphics object in stream payload (volume profile + S/R + OB primitives). */
 export type GraphicsData = {
   volumeProfile?: VolumeProfileData;
@@ -188,6 +203,7 @@ export type GraphicsData = {
   orderBlocks?: OrderBlocksData;
   smartMoney?: { structure?: SmartMoneyStructureData };
   strategySignals?: StrategySignalsData;
+  cumulativeVolumeDelta?: CumulativeVolumeDeltaData;
 };
 
 /** Real-time kline update (current bar OHLCV; confirm=false while bar is open). */

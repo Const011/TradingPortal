@@ -29,12 +29,15 @@ Both cases are treated as breakout/continuation above a significant level.
 
 ## 3. Entry Conditions
 
-Entry when **both** of the following are true for the last N bars (N = `consecutive_closes`, default 2), **excluding** the initial warm-up window of `warmup_bars` (default 1000 bars). No trades are opened before bar index `warmup_bars`:
+Entry when **all** of the following are true for the last N bars (N = `consecutive_closes`, default 2), **excluding** the initial warm-up window of `warmup_bars` (default 1000 bars). No trades are opened before bar index `warmup_bars`:
 
 1. **OB event (strong OBs only):** On any of the last N bars, there is an order block boundary cross or breaker event for an order block **whose strength is above a relative threshold** (see Section 7).
 2. **Volume spike:** On any of the last N bars, there is a bar in the direction of trade (bullish for long, bearish for short) with volume ≥ `volume_spike_mult` × average volume of previous 10 bars (default 1.5).
+3. **CVD impulse (anti-chop filter):** The **Cumulative Volume Delta (CVD)** over the last `cvd_sequence_bars` candles (default 1 in current tuning) must show a **consistent directional run**:
+   - **Long:** For each of the last `cvd_sequence_bars` bars, point CVD `delta` is **non-negative** (≥ 0).
+   - **Short:** Symmetric: for each of the last `cvd_sequence_bars` bars, CVD `delta` is **non-positive** (≤ 0).
 
-We watch these conditions over the last N bars; if both are true → entry.
+We watch these conditions over the last N bars; if all are true → entry.
 
 **Reversal:** If a position is already open and the **opposite** direction’s entry conditions are met on the current bar, the strategy **closes the open position and opens in the reverse direction** on the same bar (close price). Only one position is held at a time; a new long (short) signal while flat opens long (short); a new short (long) signal while long (short) reverses to short (long).
 
@@ -48,6 +51,11 @@ Even when a signal is triggered and confirmed, **block** the order if:
    - **Long:** Block if the current candle color is **not bullish** (the strategy’s `is_bull` flag is False).
    - **Short:** Block if the current candle color is **not bearish** (the strategy’s `is_bear` flag is False).
    This matches the implementation where entries and reversals are only allowed when the candle color is classified as bullish (for longs) or bearish (for shorts); all other colors are blocked for that direction.
+2. **Insufficient CVD sequence (chop guard):**
+   - **Long:** Even when OB + volume spike conditions are met, **skip** the entry if the last `cvd_sequence_bars` CVD `delta` bars do **not** satisfy the long CVD impulse rule above (i.e. there are not enough same-direction CVD bars, or CVD is weakening too much).
+   - **Short:** Symmetric; skip if the last `cvd_sequence_bars` CVD `delta` bars do not satisfy the short CVD impulse rule.
+
+This rule protects the strategy from entering during **sawtooth / choppy** behaviour where OB triggers and volume spikes appear but the underlying CVD flow is alternating direction or weakening, indicating lack of sustained participation.
 
 ---
 
@@ -86,24 +94,28 @@ For **short**: breakeven when close below `entry − 0.1×|entry_bar_close − e
 
 ## 7. Parameters
 
-| Parameter                 | Default | Description                                                |
-|---------------------------|---------|------------------------------------------------------------|
-| `entry_zone_mult`         | 1.0     | Entry zone extends OB boundary by N×OB height (bullish: up from bottom; bearish: down from top) |
-| `volume_spike_mult`       | 1.5     | Bar volume ≥ N × avg volume for confirmation              |
-| `volume_confirmation_lookback` | 10 | Bars for volume average (previous N bars)                  |
-| `consecutive_closes`      | 2       | Window size for entry: last N bars checked for OB event + volume spike conditions |
-| `trail_consecutive_closes`  | 2       | Consecutive closes above/below level for trail confirmation|
-| `min_sr_strength`         | 4.0     | Min S/R line width to count as “strong” support            |
-| `trail_sr_min_strength`   | 0.0     | Min S/R line width for trailing levels; 0 = include all    |
-| `trail_param`             | 0.7     | Trailing stop: level − N × (level − prev_stop) for S/R/OB levels |
-| `trail_param_prev_bar`    | 0.9     | Same formula when level is previous bar’s low (long) or high (short); more relaxed to help exit when price is locked in a range |
-| `max_ob_entry_signals`    | 2       | Max **actual trade entries** per OB; counts only confirmed trades, not boundary crosses |
-| `atr_length`              | 14      | ATR period for stop cap                                    |
-| `atr_stop_mult`           | 2.0     | Cap initial stop at entry ± N × ATR; 0 = disabled           |
-| `breakeven_body_frac`     | 0.1     | Trail toward entry + N×(close−open); 0 = disabled            |
-| `warmup_bars`             | 1000    | Number of initial bars used for indicator warm-up; no entries are taken before this bar index |
-| `min_ob_strength`         | 0.75    | **Relative OB strength filter (strategy only)**. When > 0, the strategy uses only order blocks whose strength is greater than `min_ob_strength × average_strength` across **all** identified order blocks. The indicator itself keeps all blocks; filtering is applied only at the strategy layer. |
-| `keep_breakers`           | False   | **Whether to keep OBs after price closes beyond them.** When **False** (default, both indicator and strategy): an order block is **removed** from the list once price **closes** beyond its level (bullish OB when close > OB top, bearish OB when close < OB bottom). Only those OBs disappear; others stay. When **True**: OBs that have been crossed stay in the list so breaker bottoms (long) and breaker tops (short) can be used as trailing levels. The strategy uses **False** by default (crossed breakers disabled), so trailing levels are S/R, active OBs, entry, breakeven target, and previous bar low/high only. |
+| Parameter                      | Default | Description                                                                                                                          |
+|--------------------------------|---------|--------------------------------------------------------------------------------------------------------------------------------------|
+| `entry_zone_mult`              | 1.0     | Entry zone extends OB boundary by N×OB height (bullish: up from bottom; bearish: down from top)                                     |
+| `volume_spike_mult`            | 1.5     | Bar volume ≥ N × avg volume for confirmation                                                                                        |
+| `volume_confirmation_lookback` | 10      | Bars for volume average (previous N bars)                                                                                           |
+| `consecutive_closes`           | 2       | Window size for entry: last N bars checked for OB event + volume spike conditions                                                   |
+| `trail_consecutive_closes`     | 2       | Consecutive closes above/below level for trail confirmation                                                                         |
+| `min_sr_strength`              | 4.0     | Min S/R line width to count as “strong” support                                                                                     |
+| `trail_sr_min_strength`        | 0.0     | Min S/R line width for trailing levels; 0 = include all                                                                             |
+| `trail_param`                  | 0.7     | Trailing stop: level − N × (level − prev_stop) for S/R/OB levels                                                                    |
+| `trail_param_prev_bar`         | 0.9     | Same formula when level is previous bar’s low (long) or high (short); more relaxed to help exit when price is locked in a range    |
+| `max_ob_entry_signals`         | 2       | Max **actual trade entries** per OB; counts only confirmed trades, not boundary crosses                                            |
+| `atr_length`                   | 14      | ATR period for stop cap                                                                                                             |
+| `atr_stop_mult`                | 2.0     | Cap initial stop at entry ± N × ATR; 0 = disabled                                                                                   |
+| `breakeven_body_frac`          | 0.1     | Trail toward entry + N×(close−open); 0 = disabled                                                                                   |
+| `warmup_bars`                  | 1000    | Number of initial bars used for indicator warm-up; no entries are taken before this bar index                                      |
+| `min_ob_strength`              | 0.75    | **Relative OB strength filter (strategy only)**. When > 0, the strategy uses only order blocks whose strength is greater than `min_ob_strength × average_strength` across **all** identified order blocks. The indicator itself keeps all blocks; filtering is applied only at the strategy layer. |
+| `keep_breakers`                | False   | **Whether to keep OBs after price closes beyond them.** When **False** (default, both indicator and strategy): an order block is **removed** from the list once price **closes** beyond its level (bullish OB when close > OB top, bearish OB when close < OB bottom). Only those OBs disappear; others stay. When **True**: OBs that have been crossed stay in the list so breaker bottoms (long) and breaker tops (short) can be used as trailing levels. The strategy uses **False** by default (crossed breakers disabled), so trailing levels are S/R, active OBs, entry, breakeven target, and previous bar low/high only. |
+| `cvd_length`                   | 7      | Length (bars) of the EMA used to smooth buying and selling volume in the CVD indicator (must match backend CVD length to align visuals and logic). |
+| `cvd_sequence_bars`            | 1       | Number of **preceding CVD bars** in the same direction required before allowing an entry; acts as a sequence-length filter against choppy CVD.    |
+
+COLORS disabled (all colors allow entry)
 
 ---
 

@@ -167,6 +167,10 @@ For v1 we integrate Bybit **v5 Spot REST** trading endpoints via an extended `By
 
 - Compute configured indicators on candle close (e.g., SMA, EMA, RSI, MACD, ATR, VWAP).
 - **Volume profile** is computed in the market data pipeline (CandleStreamHub) and streamed with candle snapshot/upsert events; same data is available for strategy and simulation.
+- **Cumulative volume delta (CVD)** style indicator is computed alongside candles to quantify buying vs selling pressure:
+  - Per bar, derives buying and selling volume from wick/body proportions, then applies EMA smoothing over a configurable length.
+  - Computes EMA(buying_volume), EMA(selling_volume), a strength wave (max of the two), and a cumulative volume delta series (buy - sell).
+  - Exposed to the frontend as a separate indicator payload in `graphics.cumulativeVolumeDelta` and rendered in its own pane sharing the main chart’s time axis.
 - Store values keyed by symbol, timeframe, timestamp, indicator name, and parameter hash.
 - Expose indicator series for frontend overlays and for simulation engine.
 

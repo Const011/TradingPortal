@@ -13,6 +13,7 @@ from app.services.indicators.smart_money_structure import compute_structure
 from app.services.indicators.order_blocks import compute_order_blocks
 from app.services.indicators.volume_profile import build_volume_profile_from_candles
 from app.services.indicators.support_resistance import compute_support_resistance_lines
+from app.services.indicators.cumulative_volume_delta import compute_cumulative_volume_delta
 from app.services.market_stream import MarketStreamHub
 from app.services.trade_log import get_trades, load_current_trades
 from app.services.precise_simulator import run_precise_simulation
@@ -260,6 +261,11 @@ async def simulate_precise_strategy(
         graphics["volumeProfile"] = vp
         sr_lines = compute_support_resistance_lines(vp["profile"])
         graphics["supportResistance"] = {"lines": sr_lines}
+
+    # Cumulative volume delta indicator for precise simulation snapshot.
+    cvd = compute_cumulative_volume_delta(candles)
+    if cvd.get("points"):
+        graphics["cumulativeVolumeDelta"] = cvd
 
     strategy_signals = sim_result.get("strategySignals")
     if strategy_signals:

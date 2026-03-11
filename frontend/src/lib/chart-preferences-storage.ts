@@ -29,6 +29,7 @@ export type StoredChartPreferences = {
   obShowBull: number;
   obShowBear: number;
   swingLabelsShow: number;
+  cumulativeVolumeDeltaEnabled: boolean;
 };
 
 const DEFAULTS: StoredChartPreferences = {
@@ -47,6 +48,7 @@ const DEFAULTS: StoredChartPreferences = {
   obShowBull: 5,
   obShowBear: 5,
   swingLabelsShow: 15,
+  cumulativeVolumeDeltaEnabled: false,
 };
 
 function parseStored(raw: string | null): Partial<StoredChartPreferences> {
@@ -129,6 +131,9 @@ function parseStored(raw: string | null): Partial<StoredChartPreferences> {
     ) {
       out.swingLabelsShow = parsed.swingLabelsShow;
     }
+    if (typeof parsed.cumulativeVolumeDeltaEnabled === "boolean") {
+      out.cumulativeVolumeDeltaEnabled = parsed.cumulativeVolumeDeltaEnabled;
+    }
     return out;
   } catch {
     return {};
@@ -188,6 +193,10 @@ export function getStoredChartPreferences(): StoredChartPreferences {
       partial.swingLabelsShow !== undefined
         ? partial.swingLabelsShow
         : DEFAULTS.swingLabelsShow,
+    cumulativeVolumeDeltaEnabled:
+      partial.cumulativeVolumeDeltaEnabled !== undefined
+        ? partial.cumulativeVolumeDeltaEnabled
+        : DEFAULTS.cumulativeVolumeDeltaEnabled,
   };
 }
 
@@ -220,6 +229,8 @@ export function setStoredChartPreferences(
     obShowBull: prefs.obShowBull ?? current.obShowBull,
     obShowBear: prefs.obShowBear ?? current.obShowBear,
     swingLabelsShow: prefs.swingLabelsShow ?? current.swingLabelsShow,
+    cumulativeVolumeDeltaEnabled:
+      prefs.cumulativeVolumeDeltaEnabled ?? current.cumulativeVolumeDeltaEnabled,
   };
   window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
 }
