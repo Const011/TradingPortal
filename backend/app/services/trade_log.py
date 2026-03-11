@@ -786,7 +786,9 @@ def compute_trade_results(
                 tp_hit = target_price is not None and bar.low <= target_price
 
             if stop_hit:
-                close_price = bar.close
+                # When stop is hit, treat the *stop level* itself as the execution
+                # price for simulation results, not the bar close.
+                close_price = stop_price
                 close_bar_index = i
                 close_reason = "stop"
                 break

@@ -33,6 +33,12 @@ logger = logging.getLogger(__name__)
 # #22c55e = swing bullish + internal bullish; #dc2626 = swing bearish + internal bearish
 #BULLISH_COLORS = {"#22c55e"} # both in bullish
 #BEARISH_COLORS = {"#dc2626"} # both in bearish
+
+# excluding internal in the opposite direction
+#BULLISH_COLORS = {"#15803d","#22c55e", "#b91c1c" }  # when swing trend bullish
+#BEARISH_COLORS = {"#b91c1c","#dc2626", "#15803d" }  # when swing trend bearish
+
+# all colors - ignore rule
 BULLISH_COLORS = {"#15803d","#22c55e", "#b91c1c", "#dc2626"}  # when swing trend bullish
 BEARISH_COLORS = {"#b91c1c","#dc2626", "#15803d",  "#22c55e"}  # when swing trend bearish
 

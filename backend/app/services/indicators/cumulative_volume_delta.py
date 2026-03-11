@@ -6,7 +6,7 @@ from app.schemas.market import Candle
 
 
 # Default EMA length for CVD smoothing; must stay in sync with strategy docs.
-DEFAULT_CVD_LENGTH = 7
+DEFAULT_CVD_LENGTH = 14
 
 
 def _ema(values: List[float], length: int) -> List[float]:

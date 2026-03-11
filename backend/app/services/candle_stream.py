@@ -230,29 +230,32 @@ async def _apply_trade_logging(
             )
         )
 
-    results = compute_trade_results(all_events, candles, all_segments)
-    for r in results:
-        tid = r["tradeId"]
-        if tid in state.logged_exit_ids:
-            continue
-        if r["closeReason"] == "end_of_data":
-            continue
-        close_time = r["closeTime"]
-        if not (current_bar_start_sec <= close_time < current_bar_end_sec):
-            continue
-        append_exit(
-            symbol,
-            interval,
-            tid,
-            close_time,
-            r["closePrice"],
-            r["closeReason"],
-            r["points"],
-        )
-        state.logged_exit_ids.add(tid)
-        # Keep in-memory restored trades consistent with file exits.
-        if getattr(state, "restored_trades", None):
-            state.restored_trades = [t for t in state.restored_trades if t.get("tradeId") != tid]
+    # Strategy-side exit simulation: only used in executor dry-run. In live trading,
+    # executor owns stop-hit detection and writes exits based on exchange state.
+    if settings.executor_dry_run:
+        results = compute_trade_results(all_events, candles, all_segments)
+        for r in results:
+            tid = r["tradeId"]
+            if tid in state.logged_exit_ids:
+                continue
+            if r["closeReason"] == "end_of_data":
+                continue
+            close_time = r["closeTime"]
+            if not (current_bar_start_sec <= close_time < current_bar_end_sec):
+                continue
+            append_exit(
+                symbol,
+                interval,
+                tid,
+                close_time,
+                r["closePrice"],
+                r["closeReason"],
+                r["points"],
+            )
+            state.logged_exit_ids.add(tid)
+            # Keep in-memory restored trades consistent with file exits.
+            if getattr(state, "restored_trades", None):
+                state.restored_trades = [t for t in state.restored_trades if t.get("tradeId") != tid]
 
 
 async def _make_snapshot_payload(

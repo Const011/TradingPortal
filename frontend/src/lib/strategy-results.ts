@@ -121,9 +121,11 @@ export function computeStrategyResults(
         tpHit = targetPrice != null && bar.low <= targetPrice;
       }
 
-      // Stop is checked first (intra-bar precedence)
+      // Stop is checked first (intra-bar precedence).
+      // When stop is hit, use the *stop level* itself as the execution price
+      // for results, not the bar close.
       if (stopHit) {
-        closePrice = bar.close;
+        closePrice = stopPrice;
         closeBarIndex = i;
         closeReason = "stop";
         break;
