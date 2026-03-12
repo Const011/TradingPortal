@@ -95,7 +95,7 @@ async def submit_entry(
 ) -> ExecutorEntryResponse:
     """Place entry order (market + 0.01% slippage + stopLoss in one request). Linear: set leverage first.
     Registers order as pending; does not write current.json or index.jsonl. Returns order_received, entry_yet=False."""
-    trade_id = str(ev.time)
+    trade_id = ev.trade_id
     key = (symbol.upper(), interval)
     if key in _pending_by_key:
         return ExecutorEntryResponse(

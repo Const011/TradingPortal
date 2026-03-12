@@ -115,7 +115,7 @@ async def _apply_trade_logging(
         for ev in trade_events:
             if ev.bar_index != current_bar_index:
                 continue
-            trade_id = str(ev.time)
+            trade_id = ev.trade_id
             if trade_id not in state.logged_entry_ids:
                 response = await submit_entry(ev, symbol, interval, bybit_client)
                 if response.order_received:
@@ -138,7 +138,7 @@ async def _apply_trade_logging(
     events_by_side: dict[str, list[tuple[int, str]]] = {"long": [], "short": []}
     for ev in trade_events:
         if ev.side in events_by_side:
-            events_by_side[ev.side].append((ev.time, str(ev.time)))
+            events_by_side[ev.side].append((ev.time, ev.trade_id))
     for t in getattr(state, "restored_trades", []):
         sid = t.get("side", "")
         if sid in events_by_side:
@@ -187,7 +187,7 @@ async def _apply_trade_logging(
     # Build events + segments for exit detection (include restored trades not in strategy output)
     all_events = list(trade_events)
     all_segments = list(stop_segments)
-    strategy_trade_ids = {str(ev.time) for ev in trade_events}
+    strategy_trade_ids = {ev.trade_id for ev in trade_events}
     last_candle_time_sec = candles[-1].time // 1000 if candles else 0
 
     for t in getattr(state, "restored_trades", []):
@@ -212,6 +212,7 @@ async def _apply_trade_logging(
         all_events.append(
             TradeEvent(
                 time=entry_time,
+                trade_id=tid,
                 bar_index=bar_index,
                 type="RESTORED",
                 side=side,
@@ -225,6 +226,7 @@ async def _apply_trade_logging(
             StopSegment(
                 start_time=entry_time,
                 end_time=last_candle_time_sec,
+                trade_id=tid,
                 price=current_stop,
                 side=side,
             )

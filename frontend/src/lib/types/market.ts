@@ -158,6 +158,7 @@ export type StrategyStopLineData = {
 /** Full trade event for AI export (from strategy). */
 export type StrategyTradeEventData = {
   time: number;
+  tradeId: string;
   barIndex: number;
   type: string;
   side: string | null;
@@ -171,6 +172,7 @@ export type StrategyTradeEventData = {
 export type StrategyStopSegmentData = {
   startTime: number;
   endTime: number;
+  tradeId: string;
   price: number;
   side: string;
 };

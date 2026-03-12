@@ -92,6 +92,7 @@ def run_precise_simulation(
                 all_events.append(
                     TradeEvent(
                         time=ev.time,
+                        trade_id=ev.trade_id,
                         bar_index=i,  # rebase to global index
                         type=ev.type,
                         side=ev.side,

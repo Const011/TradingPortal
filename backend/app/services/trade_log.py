@@ -286,6 +286,7 @@ def _build_entry_snapshot_markdown(
 def _event_to_dict(ev: TradeEvent) -> dict[str, Any]:
     return {
         "time": ev.time,
+        "tradeId": ev.trade_id,
         "barIndex": ev.bar_index,
         "type": ev.type,
         "side": ev.side,
@@ -564,6 +565,7 @@ def get_trades(
             chart_stop_segments.append({
                 "startTime": prev_time,
                 "endTime": t,
+                "tradeId": trade_id,
                 "price": prev_price,
                 "side": side,
             })
@@ -577,6 +579,7 @@ def get_trades(
             {
                 "startTime": prev_time,
                 "endTime": last_time,
+                "tradeId": trade_id,
                 "price": prev_price,
                 "side": side,
             }
@@ -687,6 +690,7 @@ def get_trades(
             "stopLines": stop_lines,
             "events": [{
                 "time": entry.get("time"),
+                "tradeId": trade_id,
                 "barIndex": entry.get("barIndex"),
                 "type": entry.get("type"),
                 "side": entry.get("side"),
@@ -720,12 +724,16 @@ def _to_seconds(t: int) -> int:
 
 def _get_stop_price_for_bar(
     bar_time_sec: int,
+    trade_id: str,
     side: str,
     initial_stop: float,
     segments: list[dict],
 ) -> float:
     """Get effective stop price for a bar from stop segments."""
-    relevant = [s for s in segments if s.get("side") == side]
+    relevant = [
+        s for s in segments
+        if s.get("tradeId") == trade_id and s.get("side") == side
+    ]
     if not relevant:
         return initial_stop
     covering = next((s for s in relevant if bar_time_sec >= s["startTime"] and bar_time_sec <= s["endTime"]), None)
@@ -750,7 +758,13 @@ def compute_trade_results(
     Returns list of {tradeId, closePrice, closeBarIndex, closeReason, points} for each closed trade."""
     results: list[dict[str, Any]] = []
     segs = [
-        {"startTime": s.start_time, "endTime": s.end_time, "price": s.price, "side": s.side}
+        {
+            "startTime": s.start_time,
+            "endTime": s.end_time,
+            "tradeId": s.trade_id,
+            "price": s.price,
+            "side": s.side,
+        }
         for s in stop_segments
     ]
 
@@ -774,7 +788,13 @@ def compute_trade_results(
         for i in range(entry_bar_index + 1, len(candles)):
             bar = candles[i]
             bar_time_sec = _to_seconds(bar.time)
-            stop_price = _get_stop_price_for_bar(bar_time_sec, ev.side, initial_stop, segs)
+            stop_price = _get_stop_price_for_bar(
+                bar_time_sec,
+                ev.trade_id,
+                ev.side,
+                initial_stop,
+                segs,
+            )
 
             stop_hit = False
             tp_hit = False
@@ -793,7 +813,7 @@ def compute_trade_results(
                 close_reason = "stop"
                 break
             if tp_hit:
-                close_price = bar.close
+                close_price = target_price
                 close_bar_index = i
                 close_reason = "take_profit"
                 break
@@ -806,7 +826,7 @@ def compute_trade_results(
         points = (close_price - entry_price) if ev.side == "long" else (entry_price - close_price)
 
         results.append({
-            "tradeId": str(ev.time),
+            "tradeId": ev.trade_id,
             "closePrice": close_price,
             "closeBarIndex": close_bar_index,
             "closeTime": _to_seconds(candles[close_bar_index].time),

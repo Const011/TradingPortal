@@ -49,10 +49,11 @@ function toSeconds(t: number): number {
 function getStopPriceForBar(
   barTimeSec: number,
   side: string,
+  tradeId: string,
   initialStop: number,
   segments: StrategyStopSegmentData[]
 ): number {
-  const relevant = segments.filter((s) => s.side === side);
+  const relevant = segments.filter((s) => s.tradeId === tradeId && s.side === side);
   if (relevant.length === 0) return initialStop;
   // Find segment where barTimeSec is in [startTime, endTime]
   const covering = relevant.find(
@@ -95,6 +96,7 @@ export function computeStrategyResults(
 
     const targetPrice = ev.targetPrice ?? null;
     const initialStop = ev.initialStopPrice;
+    const tradeId = ev.tradeId;
 
     let closePrice = entryPrice;
     let closeBarIndex = entryBarIndex;
@@ -106,6 +108,7 @@ export function computeStrategyResults(
       const stopPrice = getStopPriceForBar(
         barTimeSec,
         ev.side,
+        tradeId,
         initialStop,
         stopSegments
       );

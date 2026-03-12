@@ -8,6 +8,7 @@ class TradeEvent:
     """A trade signal emitted by a strategy."""
 
     time: int  # Unix seconds (candle close time)
+    trade_id: str  # Stable identifier for this trade across events/segments
     bar_index: int  # Index in candles list
     type: str  # e.g. OB_TREND_BUY, OB_TREND_SELL
     side: str | None  # "long" | "short" | None
@@ -23,5 +24,6 @@ class StopSegment:
 
     start_time: int  # Unix seconds
     end_time: int  # Unix seconds
+    trade_id: str
     price: float
     side: str  # "long" | "short"

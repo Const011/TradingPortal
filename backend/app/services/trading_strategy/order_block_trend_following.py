@@ -74,6 +74,7 @@ class _ActivePosition:
     """In-position state for trailing stop."""
 
     side: str
+    trade_id: str
     entry_price: float
     entry_bar: int
     stop_price: float
@@ -94,6 +95,18 @@ class _EntryCandidate:
     ob_key: tuple[float, float, int]
     target_price: float | None = None
     target_source: str | None = None
+
+
+def _last_segment_for_trade(
+    stop_segments: list[StopSegment],
+    trade_id: str,
+) -> StopSegment | None:
+    if not stop_segments:
+        return None
+    last = stop_segments[-1]
+    if last.trade_id != trade_id:
+        return None
+    return last
 
 
 def _is_bullish_trend(candle_colors: dict[int, str] | None, time_ms: int) -> bool:
@@ -781,21 +794,23 @@ def compute_order_block_trend_following(
                         position.entry_price,
                     )
                 if stop_hit:
-                    if stop_segments and stop_segments[-1].side == "long":
-                        last = stop_segments[-1]
+                    last = _last_segment_for_trade(stop_segments, position.trade_id)
+                    if last is not None:
                         stop_segments[-1] = StopSegment(
                             start_time=last.start_time,
                             end_time=time_s,
+                            trade_id=last.trade_id,
                             price=last.price,
                             side="long",
                         )
                     position = None
                 elif tp_hit:
-                    if stop_segments and stop_segments[-1].side == "long":
-                        last = stop_segments[-1]
+                    last = _last_segment_for_trade(stop_segments, position.trade_id)
+                    if last is not None:
                         stop_segments[-1] = StopSegment(
                             start_time=last.start_time,
                             end_time=time_s,
+                            trade_id=last.trade_id,
                             price=last.price,
                             side="long",
                         )
@@ -825,21 +840,23 @@ def compute_order_block_trend_following(
                         position.entry_price,
                     )
                 if stop_hit:
-                    if stop_segments and stop_segments[-1].side == "short":
-                        last = stop_segments[-1]
+                    last = _last_segment_for_trade(stop_segments, position.trade_id)
+                    if last is not None:
                         stop_segments[-1] = StopSegment(
                             start_time=last.start_time,
                             end_time=time_s,
+                            trade_id=last.trade_id,
                             price=last.price,
                             side="short",
                         )
                     position = None
                 elif tp_hit:
-                    if stop_segments and stop_segments[-1].side == "short":
-                        last = stop_segments[-1]
+                    last = _last_segment_for_trade(stop_segments, position.trade_id)
+                    if last is not None:
                         stop_segments[-1] = StopSegment(
                             start_time=last.start_time,
                             end_time=time_s,
+                            trade_id=last.trade_id,
                             price=last.price,
                             side="short",
                         )
@@ -1005,6 +1022,7 @@ def compute_order_block_trend_following(
             def _open_from_candidate(candidate: _EntryCandidate) -> None:
                 nonlocal position
                 entry_price = c.close
+                trade_id = str(time_s)
                 # CVD-based anti-chop filter: require last `cvd_sequence_bars` deltas
                 # to be consistently in the direction of the candidate.
                 if cvd_sequence_bars > 0 and cvd_delta and 0 <= i < len(cvd_delta):
@@ -1122,6 +1140,7 @@ def compute_order_block_trend_following(
                     events.append(
                         TradeEvent(
                             time=time_s,
+                            trade_id=trade_id,
                             bar_index=i,
                             type="OB_TREND_BUY",
                             side="long",
@@ -1139,6 +1158,7 @@ def compute_order_block_trend_following(
                     )
                     position = _ActivePosition(
                         side="long",
+                        trade_id=trade_id,
                         entry_price=entry_price,
                         entry_bar=i,
                         stop_price=candidate.stop,
@@ -1147,7 +1167,13 @@ def compute_order_block_trend_following(
                         trigger_ob_bottom=candidate.ob_bottom,
                     )
                     stop_segments.append(
-                        StopSegment(start_time=time_s, end_time=time_s, price=candidate.stop, side="long")
+                        StopSegment(
+                            start_time=time_s,
+                            end_time=time_s,
+                            trade_id=trade_id,
+                            price=candidate.stop,
+                            side="long",
+                        )
                     )
                     if _debug:
                         entry_candle = candles[position.entry_bar]
@@ -1175,6 +1201,7 @@ def compute_order_block_trend_following(
                     events.append(
                         TradeEvent(
                             time=time_s,
+                            trade_id=trade_id,
                             bar_index=i,
                             type="OB_TREND_SELL",
                             side="short",
@@ -1192,6 +1219,7 @@ def compute_order_block_trend_following(
                     )
                     position = _ActivePosition(
                         side="short",
+                        trade_id=trade_id,
                         entry_price=entry_price,
                         entry_bar=i,
                         stop_price=candidate.stop,
@@ -1200,7 +1228,13 @@ def compute_order_block_trend_following(
                         trigger_ob_bottom=candidate.ob_bottom,
                     )
                     stop_segments.append(
-                        StopSegment(start_time=time_s, end_time=time_s, price=candidate.stop, side="short")
+                        StopSegment(
+                            start_time=time_s,
+                            end_time=time_s,
+                            trade_id=trade_id,
+                            price=candidate.stop,
+                            side="short",
+                        )
                     )
                     if _debug:
                         entry_candle = candles[position.entry_bar]
@@ -1314,11 +1348,12 @@ def compute_order_block_trend_following(
                                 entry_body,
                             )
                         position.stop_price = new_stop
-                        if stop_segments and stop_segments[-1].side == "long":
-                            last = stop_segments[-1]
+                        last = _last_segment_for_trade(stop_segments, position.trade_id)
+                        if last is not None:
                             stop_segments[-1] = StopSegment(
                                 start_time=last.start_time,
                                 end_time=time_s,
+                                trade_id=last.trade_id,
                                 price=last.price,
                                 side="long",
                             )
@@ -1326,6 +1361,7 @@ def compute_order_block_trend_following(
                             StopSegment(
                                 start_time=time_s,
                                 end_time=time_s,
+                                trade_id=position.trade_id,
                                 price=new_stop,
                                 side="long",
                             )
@@ -1384,11 +1420,12 @@ def compute_order_block_trend_following(
                                 vol_lookback,
                             )
                         position.stop_price = new_stop
-                        if stop_segments and stop_segments[-1].side == "long":
-                            last = stop_segments[-1]
+                        last = _last_segment_for_trade(stop_segments, position.trade_id)
+                        if last is not None:
                             stop_segments[-1] = StopSegment(
                                 start_time=last.start_time,
                                 end_time=time_s,
+                                trade_id=last.trade_id,
                                 price=last.price,
                                 side="long",
                             )
@@ -1396,23 +1433,26 @@ def compute_order_block_trend_following(
                             StopSegment(
                                 start_time=time_s,
                                 end_time=time_s,
+                                trade_id=position.trade_id,
                                 price=new_stop,
                                 side="long",
                             )
                         )
-                elif stop_segments and stop_segments[-1].side == "long":
-                    last = stop_segments[-1]
-                    stop_segments[-1] = StopSegment(
-                        start_time=last.start_time,
-                        end_time=time_s,
-                        price=position.stop_price,
-                        side="long",
-                    )
-                    if _debug:
-                        logger.info(
-                            "[OB_STOP_LONG] bar=%d time=%s | rule=no_move (extend segment) stop=%.1f",
-                            i, ts_human(c.time), position.stop_price,
+                else:
+                    last = _last_segment_for_trade(stop_segments, position.trade_id)
+                    if last is not None:
+                        stop_segments[-1] = StopSegment(
+                            start_time=last.start_time,
+                            end_time=time_s,
+                            trade_id=last.trade_id,
+                            price=position.stop_price,
+                            side="long",
                         )
+                        if _debug:
+                            logger.info(
+                                "[OB_STOP_LONG] bar=%d time=%s | rule=no_move (extend segment) stop=%.1f",
+                                i, ts_human(c.time), position.stop_price,
+                            )
             else:
                 # Breakeven: trail toward entry - 0.1×entry_bar_body when close below that level
                 breakeven_target_short = position.entry_price
@@ -1440,11 +1480,12 @@ def compute_order_block_trend_following(
                                 entry_body,
                             )
                         position.stop_price = new_stop
-                        if stop_segments and stop_segments[-1].side == "short":
-                            last = stop_segments[-1]
+                        last = _last_segment_for_trade(stop_segments, position.trade_id)
+                        if last is not None:
                             stop_segments[-1] = StopSegment(
                                 start_time=last.start_time,
                                 end_time=time_s,
+                                trade_id=last.trade_id,
                                 price=last.price,
                                 side="short",
                             )
@@ -1452,6 +1493,7 @@ def compute_order_block_trend_following(
                             StopSegment(
                                 start_time=time_s,
                                 end_time=time_s,
+                                trade_id=position.trade_id,
                                 price=new_stop,
                                 side="short",
                             )
@@ -1509,11 +1551,12 @@ def compute_order_block_trend_following(
                                 vol_lookback,
                             )
                         position.stop_price = new_stop
-                        if stop_segments and stop_segments[-1].side == "short":
-                            last = stop_segments[-1]
+                        last = _last_segment_for_trade(stop_segments, position.trade_id)
+                        if last is not None:
                             stop_segments[-1] = StopSegment(
                                 start_time=last.start_time,
                                 end_time=time_s,
+                                trade_id=last.trade_id,
                                 price=last.price,
                                 side="short",
                             )
@@ -1521,23 +1564,26 @@ def compute_order_block_trend_following(
                             StopSegment(
                                 start_time=time_s,
                                 end_time=time_s,
+                                trade_id=position.trade_id,
                                 price=new_stop,
                                 side="short",
                             )
                         )
-                elif stop_segments and stop_segments[-1].side == "short":
-                    last = stop_segments[-1]
-                    stop_segments[-1] = StopSegment(
-                        start_time=last.start_time,
-                        end_time=time_s,
-                        price=position.stop_price,
-                        side="short",
-                    )
-                    if _debug:
-                        logger.info(
-                            "[OB_STOP_SHORT] bar=%d time=%s | rule=no_move (extend segment) stop=%.1f",
-                            i, ts_human(c.time), position.stop_price,
+                else:
+                    last = _last_segment_for_trade(stop_segments, position.trade_id)
+                    if last is not None:
+                        stop_segments[-1] = StopSegment(
+                            start_time=last.start_time,
+                            end_time=time_s,
+                            trade_id=last.trade_id,
+                            price=position.stop_price,
+                            side="short",
                         )
+                        if _debug:
+                            logger.info(
+                                "[OB_STOP_SHORT] bar=%d time=%s | rule=no_move (extend segment) stop=%.1f",
+                                i, ts_human(c.time), position.stop_price,
+                            )
 
         prev_candle = c
 
