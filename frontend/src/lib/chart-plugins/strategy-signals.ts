@@ -60,7 +60,12 @@ class StopLinesPaneView implements IPrimitivePaneView {
       return { x: x ?? null, y: y ?? null };
     };
 
-    for (const seg of data.stopLines ?? []) {
+    const allLines = [
+      ...(data.stopLines ?? []),
+      ...(data.targetLines ?? []),
+    ];
+
+    for (const seg of allLines) {
       const from = toCoord(seg.from.time, seg.from.price);
       const to = toCoord(seg.to.time, seg.to.price);
       if (from.x != null && from.y != null && to.x != null && to.y != null) {

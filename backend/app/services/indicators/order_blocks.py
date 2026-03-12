@@ -9,9 +9,9 @@ from typing import Any
 
 from app.schemas.market import Candle
 
-DEFAULT_SWING_LENGTH = 20
-DEFAULT_SHOW_BULL = 5
-DEFAULT_SHOW_BEAR = 5
+DEFAULT_SWING_LENGTH = 50
+DEFAULT_SHOW_BULL = 50
+DEFAULT_SHOW_BEAR = 50
 MAX_LOOKBACK = 1000
 
 # Order block strength parameters:
@@ -27,7 +27,7 @@ BULL_BREAKER_FILL = "rgba(139, 92, 246, 0.05)"
 BEAR_BREAKER_FILL = "rgba(234, 179, 8, 0.05)"
 
 
-DEFAULT_KEEP_BREAKERS = False
+DEFAULT_KEEP_BREAKERS = True
 
 @dataclass
 class OrderBlock:
@@ -39,6 +39,10 @@ class OrderBlock:
     break_loc: int | None
     fill_color: str
     strength_index: float = 0.0
+    # Bar index when this OB was fully negated (price crossed back through
+    # the zone in the opposite direction *after* becoming a breaker).
+    # None means "still valid" from the engine's perspective.
+    negated_bar: int | None = None
 
 
 def _compute_ob_strength(
@@ -211,23 +215,31 @@ def _iter_order_blocks_from_pivots(
                     ),
                 )
 
-        # Mark bullish OBs as breakers when price crosses below (for display)
+        # Mark bullish OBs as breakers when price crosses below.
+        # If price later crosses back above the OB top after breaker status,
+        # mark the OB as negated instead of dropping it from history.
         for ob in list(bullish_ob):
             if not ob.breaker and ob.loc < i:
                 if min(close, c.open) < ob.bottom:
                     ob.breaker = True
                     ob.break_loc = i
-            elif not keep_breakers and close > ob.top:
-                bullish_ob.remove(ob)
+            elif ob.breaker and ob.negated_bar is None and max(close, c.open) > ob.top:
+                ob.negated_bar = i
+                if not keep_breakers:
+                    bullish_ob.remove(ob)
 
-        # Mark bearish OBs as breakers when price crosses above (for display)
+        # Mark bearish OBs as breakers when price crosses above.
+        # If price later crosses back below the OB bottom after breaker
+        # status, mark the OB as negated instead of dropping it.
         for ob in list(bearish_ob):
             if not ob.breaker and ob.loc < i:
                 if max(close, c.open) > ob.top:
                     ob.breaker = True
                     ob.break_loc = i
-            elif not keep_breakers and close < ob.bottom:
-                bearish_ob.remove(ob)
+            elif ob.breaker and ob.negated_bar is None and min(close, c.open) < ob.bottom:
+                ob.negated_bar = i
+                if not keep_breakers:
+                    bearish_ob.remove(ob)
 
         yield (i, c, list(bullish_ob), list(bearish_ob))
 
@@ -320,6 +332,9 @@ def compute_order_blocks(
         initiation_time = loc_candle.time // 1000  # Candle whose size defines OB top/bottom
         structure_break_time = formation_candle.time // 1000  # Bar that broke the swing
         breaker_time = candles[ob.break_loc].time // 1000 if ob.breaker and ob.break_loc is not None else None
+        negated_time = (
+            candles[ob.negated_bar].time // 1000 if ob.negated_bar is not None else None
+        )
         return {
             "top": ob.top,
             "bottom": ob.bottom,
@@ -331,6 +346,7 @@ def compute_order_blocks(
             "breaker": ob.breaker,
             "fillColor": fill,
             "strengthIndex": ob.strength_index,
+            "negatedTime": negated_time,
         }
 
     return {

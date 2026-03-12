@@ -106,11 +106,26 @@ export function PriceChart() {
   /** Order blocks with times converted to local for chart display. */
   const orderBlocksForChart = useMemo(() => {
     if (!orderBlocksForDisplay) return null;
-    const convertOb = (ob: { startTime: number; endTime: number; breakerTime?: number | null; breakTime?: number | null; top: number; bottom: number; breaker: boolean; fillColor: string }) => ({
+    const convertOb = (ob: {
+      startTime: number;
+      endTime: number;
+      breakerTime?: number | null;
+      breakTime?: number | null;
+      negatedTime?: number | null;
+      top: number;
+      bottom: number;
+      breaker: boolean;
+      fillColor: string;
+    }) => ({
       ...ob,
       startTime: toChartTimeLocal(ob.startTime),
       endTime: toChartTimeLocal(ob.endTime),
-      breakerTime: (ob.breakerTime ?? ob.breakTime) != null ? toChartTimeLocal((ob.breakerTime ?? ob.breakTime)!) : null,
+      breakerTime:
+        (ob.breakerTime ?? ob.breakTime) != null
+          ? toChartTimeLocal((ob.breakerTime ?? ob.breakTime)!)
+          : null,
+      negatedTime:
+        ob.negatedTime != null ? toChartTimeLocal(ob.negatedTime) : null,
     });
     return {
       ...orderBlocksForDisplay,
@@ -195,6 +210,11 @@ export function PriceChart() {
         time: toChartTimeLocal(m.time),
       })),
       stopLines: (strategySignalsForDisplay.stopLines ?? []).map((line) => ({
+        ...line,
+        from: { ...line.from, time: toChartTimeLocal(line.from.time) },
+        to: { ...line.to, time: toChartTimeLocal(line.to.time) },
+      })),
+      targetLines: (strategySignalsForDisplay.targetLines ?? []).map((line) => ({
         ...line,
         from: { ...line.from, time: toChartTimeLocal(line.from.time) },
         to: { ...line.to, time: toChartTimeLocal(line.to.time) },

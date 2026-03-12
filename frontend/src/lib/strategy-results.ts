@@ -1,6 +1,6 @@
 /**
  * Strategy results calculation: simulates each trade against candle data
- * to compute outcome in points (entry bar close, stop/TP bar close).
+ * to compute outcome in points using explicit stop/target execution prices.
  */
 
 import type { Candle } from "@/lib/types/market";
@@ -20,7 +20,7 @@ export type StrategyTradeResult = {
   side: "long" | "short";
   /** Entry price (close of entry bar) */
   entryPrice: number;
-  /** Close price (close of bar that touched stop/TP, or last bar) */
+  /** Close price (stop/target execution level, or last bar close) */
   closePrice: number;
   /** Close bar index */
   closeBarIndex: number;
@@ -130,8 +130,8 @@ export function computeStrategyResults(
         closeReason = "stop";
         break;
       }
-      if (tpHit) {
-        closePrice = bar.close;
+      if (tpHit && targetPrice != null) {
+        closePrice = targetPrice;
         closeBarIndex = i;
         closeReason = "take_profit";
         break;

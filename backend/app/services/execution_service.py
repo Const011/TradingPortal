@@ -224,6 +224,9 @@ async def submit_entry(
             side,
             qty,
         )
+        extra: dict[str, str] = {}
+        if ev.target_price is not None:
+            extra["takeProfit"] = str(ev.target_price)
         result = await client.create_order(
             category=category,
             symbol=symbol,
@@ -233,6 +236,7 @@ async def submit_entry(
             slippageToleranceType="Percent",
             slippageTolerance="0.01",
             stopLoss=str(ev.initial_stop_price),
+            **extra,
         )
         order_id = (result or {}).get("orderId", "")
         order_link_id = (result or {}).get("orderLinkId")
@@ -447,7 +451,8 @@ async def sync_from_exchange(
                     del _pending_by_key[key]
                     return exited_ids
 
-        # 2) Stop-hit: position size 0 but current.json has trades → cancel any open orders for symbol, append exit, remove from current.json
+        # 2) Stop/take-profit hit: position size 0 but current.json has trades
+        # → cancel any open orders for symbol, append exit, remove from current.json
         current = load_current_trades(symbol, interval)
         logger.info(
             "Executor: stop-hit check position_size=%s current_trades=%s",
@@ -455,7 +460,6 @@ async def sync_from_exchange(
             current,
         )
         if position_size <= 0 and len(current) > 0:
-            
             logger.info(
                 "Executor: stop hit detected (position size 0), registering exit(s) and updating current.json symbol=%s",
                 symbol,
@@ -470,34 +474,60 @@ async def sync_from_exchange(
                             await client.cancel_order(category=category, symbol=symbol, orderId=order_id)
                             logger.info("Executor: cancelled open order orderId=%s (symbol=%s)", order_id, symbol)
                 except Exception as e:
-                    logger.warning("Executor: cancel open orders after stop hit failed symbol=%s err=%s", symbol, e)
+                    logger.warning(
+                        "Executor: cancel open orders after stop hit failed symbol=%s err=%s",
+                        symbol,
+                        e,
+                    )
             close_time = int(time.time())
             for t in current:
                 trade_id = t.get("tradeId", "")
                 if not trade_id:
                     continue
                 entry_price = float(t.get("entryPrice", 0) or 0)
-                stop_price = float(t.get("currentStopPrice", 0) or t.get("initialStopPrice", 0) or entry_price)
+                stop_price = float(
+                    t.get("currentStopPrice", 0)
+                    or t.get("initialStopPrice", 0)
+                    or entry_price
+                )
+                target_price_raw = t.get("targetPrice")
+                target_price = (
+                    float(target_price_raw)
+                    if target_price_raw not in (None, "")
+                    else None
+                )
                 side = t.get("side", "long")
-                if side == "long":
-                    points = stop_price - entry_price
+                # If a target price was configured, treat this as a
+                # take-profit exit and use the target for close/points.
+                if target_price is not None:
+                    close_price = target_price
+                    close_reason = "take_profit"
+                    if side == "long":
+                        points = close_price - entry_price
+                    else:
+                        points = entry_price - close_price
                 else:
-                    points = entry_price - stop_price
+                    close_price = stop_price
+                    close_reason = "stop"
+                    if side == "long":
+                        points = close_price - entry_price
+                    else:
+                        points = entry_price - close_price
                 append_exit(
                     symbol=symbol,
                     interval=interval,
                     trade_id=trade_id,
                     time=close_time,
-                    close_price=stop_price,
-                    close_reason="stop",
+                    close_price=close_price,
+                    close_reason=close_reason,
                     points=points,
                 )
                 remove_current_trade(symbol, interval, trade_id)
                 exited_ids.append(trade_id)
                 logger.info(
-                    "Executor: stop hit trade_id=%s close_price=%s position closed",
+                    "Executor: stop/tp hit trade_id=%s close_price=%s position closed",
                     trade_id,
-                    stop_price,
+                    close_price,
                 )
     except Exception:
         logger.exception("Executor: sync_from_exchange failed symbol=%s", symbol)

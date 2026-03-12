@@ -72,6 +72,7 @@ export function StrategyResultsTable({ summary }: StrategyResultsTableProps) {
             <th style={thStyle}>Type</th>
             <th style={{ ...thStyle, textAlign: "right" }}>Entry Price</th>
             <th style={thStyle}>Close</th>
+            <th style={{ ...thStyle, textAlign: "right" }}>Close Price</th>
             <th style={thStyle}>Close Reason</th>
             <th style={{ ...thStyle, textAlign: "right" }}>Points</th>
           </tr>
@@ -94,6 +95,15 @@ export function StrategyResultsTable({ summary }: StrategyResultsTableProps) {
                 {t.entryPrice.toFixed(2)}
               </td>
               <td style={tdStyle}>{formatDateTime(t.closeDateTime)}</td>
+              <td
+                style={{
+                  ...tdStyle,
+                  textAlign: "right",
+                  fontVariantNumeric: "tabular-nums",
+                }}
+              >
+                {t.closePrice.toFixed(2)}
+              </td>
               <td style={tdStyle}>{formatCloseReason(t.closeReason)}</td>
               <td
                 style={{

@@ -56,6 +56,9 @@ def strategy_output_to_chart(
     # - Connect successive nodes (time, price) with straight segments.
     # - Extend the last node horizontally to the segment's final end_time.
     stop_lines: list[dict] = []
+    # For mapping targets to position lifetimes, keep (start,end) for each
+    # stop cluster per side in chronological order.
+    cluster_ranges_by_side: dict[str, list[tuple[int, int]]] = {}
     if stop_segments:
         interval_sec = interval_seconds(interval, default=0)
         by_side: dict[str, list[StopSegment]] = {}
@@ -107,6 +110,12 @@ def strategy_output_to_chart(
                 last_seg = cluster[-1]
                 last_end_time = last_seg.end_time
 
+                # Record lifetime range for this side/cluster so targets can be
+                # drawn until the position closes (similar to stop lines).
+                cluster_ranges_by_side.setdefault(side, []).append(
+                    (first_time, last_end_time)
+                )
+
                 # Initial horizontal segment for the first bar in this cluster.
                 initial_start_time = (
                     first_time - interval_sec if interval_sec > 0 else first_time
@@ -156,9 +165,53 @@ def strategy_output_to_chart(
                         }
                     )
 
+    # Take-profit target lines: draw the target level from entry time until the
+    # end of the corresponding position's lifetime (using stop clusters as a proxy).
+    target_lines: list[dict] = []
+    interval_sec = interval_seconds(interval, default=0)
+    # Keep cluster indices per side so we pair entries with clusters in order.
+    cluster_index_by_side: dict[str, int] = {side: 0 for side in cluster_ranges_by_side}
+    for ev in events:
+        if ev.target_price is None:
+            continue
+        side = ev.side or ""
+        price = ev.target_price
+        start_time = ev.time
+
+        end_time: int | None = None
+        clusters = cluster_ranges_by_side.get(side)
+        if clusters:
+            idx = cluster_index_by_side.get(side, 0)
+            if 0 <= idx < len(clusters):
+                cluster_start, cluster_end = clusters[idx]
+                # Advance cluster index if this event occurs after current cluster.
+                while idx < len(clusters) and start_time > clusters[idx][1]:
+                    idx += 1
+                if idx < len(clusters):
+                    cluster_start, cluster_end = clusters[idx]
+                    cluster_index_by_side[side] = idx + 1
+                    # Use the cluster that covers or follows this entry as lifetime.
+                    end_time = cluster_end
+
+        # Fallback: one-bar segment when we have no stop cluster information.
+        if end_time is None:
+            end_time = start_time + interval_sec if interval_sec > 0 else start_time
+
+        target_lines.append(
+            {
+                "type": "lineSegment",
+                "from": {"time": start_time, "price": price},
+                "to": {"time": end_time, "price": price},
+                "color": "#22c55e" if ev.side == "long" else "#ef4444",
+                "width": 1,
+                "style": "solid",
+            }
+        )
+
     return {
         "markers": markers,
         "stopLines": stop_lines,
+        "targetLines": target_lines,
         "events": events_export,
         "stopSegments": stop_segments_export,
     }

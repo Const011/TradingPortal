@@ -36,6 +36,16 @@ Entry when **all** of the following are true for the last N bars (N = `consecuti
 3. **CVD impulse (anti-chop filter):** The **Cumulative Volume Delta (CVD)** over the last `cvd_sequence_bars` candles (default 1 in current tuning) must show a **consistent directional run**:
    - **Long:** For each of the last `cvd_sequence_bars` bars, point CVD `delta` is **non-negative** (≥ 0).
    - **Short:** Symmetric: for each of the last `cvd_sequence_bars` bars, CVD `delta` is **non-positive** (≤ 0).
+4. **Risk/reward vs. opposite OB (target-based filter):**
+   - **Long:** The take-profit target is set at the **nearest bearish order block boundary above the entry** (closest `ob.bottom` > entry price) whose **strength is not less than `min_ob_strength × triggering_bullish_ob_strength`**. In other words, the opposite-direction target OB must be at least a configurable fraction of the strength of the bullish OB that triggered the trade, so weak opposite OBs are ignored. The initial stop is computed as in Section 5. The trade is only opened if the reward:risk ratio meets or exceeds `rr_min`:
+     \[
+       \frac{\text{target\_price} - \text{entry}}{\text{entry} - \text{stop}} \ge \text{rr\_min}
+     \]
+   - **Short:** Symmetric: target is the **nearest bullish order block boundary below the entry** (closest `ob.top` < entry price) whose **strength is not less than `min_ob_strength × triggering_bearish_ob_strength`**; trade is only opened if:
+     \[
+       \frac{\text{entry} - \text{target\_price}}{\text{stop} - \text{entry}} \ge \text{rr\_min}
+     \]
+   - If no opposite-direction OB boundary exists (no clear structural target), the strategy leaves `target_price` unset and **does not apply** this risk/reward filter.
 
 We watch these conditions over the last N bars; if all are true → entry.
 
@@ -113,7 +123,8 @@ For **short**: breakeven when close below `entry − 0.1×|entry_bar_close − e
 | `min_ob_strength`              | 0.75    | **Relative OB strength filter (strategy only)**. When > 0, the strategy uses only order blocks whose strength is greater than `min_ob_strength × average_strength` across **all** identified order blocks. The indicator itself keeps all blocks; filtering is applied only at the strategy layer. |
 | `keep_breakers`                | False   | **Whether to keep OBs after price closes beyond them.** When **False** (default, both indicator and strategy): an order block is **removed** from the list once price **closes** beyond its level (bullish OB when close > OB top, bearish OB when close < OB bottom). Only those OBs disappear; others stay. When **True**: OBs that have been crossed stay in the list so breaker bottoms (long) and breaker tops (short) can be used as trailing levels. The strategy uses **False** by default (crossed breakers disabled), so trailing levels are S/R, active OBs, entry, breakeven target, and previous bar low/high only. |
 | `cvd_length`                   | 7      | Length (bars) of the EMA used to smooth buying and selling volume in the CVD indicator (must match backend CVD length to align visuals and logic). |
-| `cvd_sequence_bars`            | 1       | Number of **preceding CVD bars** in the same direction required before allowing an entry; acts as a sequence-length filter against choppy CVD.    |
+| `cvd_sequence_bars`            | 1      | Number of **preceding CVD bars** in the same direction required before allowing an entry; acts as a sequence-length filter against choppy CVD.    |
+| `rr_min`                       | 2.5    | Minimum acceptable **reward:risk** ratio when using OB-based take-profit targets. Trades with risk/reward < `rr_min` are blocked.                |
 
 COLORS disabled (all colors allow entry)
 

@@ -111,6 +111,8 @@ export type OrderBlockData = {
   breakerTime?: number | null;
   /** @deprecated Use breakerTime */
   breakTime?: number | null;
+  /** Time (sec) when this order block was fully negated, if ever. */
+  negatedTime?: number | null;
   breaker: boolean;
   fillColor: string;
   /** Relative volume-based strength index (N-bar impulse vs previous M bars). */
@@ -177,6 +179,7 @@ export type StrategyStopSegmentData = {
 export type StrategySignalsData = {
   markers?: StrategyMarkerData[];
   stopLines?: StrategyStopLineData[];
+  targetLines?: StrategyStopLineData[];
   events?: StrategyTradeEventData[];
   stopSegments?: StrategyStopSegmentData[];
 };

@@ -97,17 +97,39 @@ class OrderBlocksPaneView implements IPrimitivePaneView {
         const top = ob.top;
         const bottom = ob.bottom;
         const breakerT = ob.breakerTime ?? ob.breakTime;
+        const negatedT = ob.negatedTime ?? null;
         const strength =
           typeof ob.strengthIndex === "number" && Number.isFinite(ob.strengthIndex)
             ? ob.strengthIndex
             : undefined;
         const strengthText =
           strength && strength > 0 ? strength.toFixed(2) : undefined;
+
+        // If the block has been negated, clamp its visual end at negatedT.
+        const lastTime = negatedT != null ? negatedT : tEnd;
+
         if (ob.breaker && breakerT != null) {
-          addBox(tStart, top, breakerT, bottom, ob.fillColor, strengthText);
-          addBox(breakerT, top, tEnd, bottom, ob.fillColor, strengthText);
+          // Breaker case: we may have two time segments (pre-break and post-break).
+          // - If negated: show strength only on the negation segment (breakerT -> negatedT).
+          // - If not negated: show strength only on the final segment (breakerT -> lastTime).
+
+          // 1) Before breaker: never show strength text here.
+          addBox(tStart, top, breakerT, bottom, ob.fillColor, undefined);
+
+          // 2) From breaker until negation (or end if never negated).
+          if (lastTime > breakerT) {
+            addBox(
+              breakerT,
+              top,
+              lastTime,
+              bottom,
+              ob.fillColor,
+              strengthText
+            );
+          }
         } else {
-          addBox(tStart, top, tEnd, bottom, ob.fillColor, strengthText);
+          // No breaker: draw from start until negation/end, show strength once at the end.
+          addBox(tStart, top, lastTime, bottom, ob.fillColor, strengthText);
         }
       }
     }
