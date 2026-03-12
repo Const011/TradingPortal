@@ -115,7 +115,12 @@ async def list_symbols(bybit_client: BybitClient = Depends(get_bybit_client)) ->
     Fetches from Bybit; used by the frontend for symbol selector and ticker list."""
     try:
         symbols = await bybit_client.list_spot_symbols()
-        return [item for item in symbols if item.status == "Trading"]
+        # Bybit returns a status field (e.g. Trading, Break, Suspended, Delisted).
+        # Previously we only exposed status=="Trading", which can hide symbols
+        # that are temporarily paused but still relevant (like XRPUSDT for this setup).
+        # To avoid silently dropping configured tickers, surface all non-delisted
+        # instruments and let the frontend/config decide which ones to show.
+        return [item for item in symbols if item.status.lower() != "delisted"]
     except (httpx.ConnectError, httpx.TimeoutException) as e:
         logger.warning("Bybit API unreachable: %s", e)
         raise HTTPException(
@@ -228,12 +233,21 @@ async def simulate_precise_strategy(
             ) from e
 
     # Run precise simulation to obtain strategySignals with no future leakage.
+    # Try to use the exchange tick size when available so stop placement
+    # respects Bybit's minimum price increment.
+    try:
+        tick_size = await bybit_client.get_tick_size(symbol=symbol)
+    except Exception as e:
+        logger.warning("simulate_precise_strategy: failed to fetch tick size symbol=%s err=%s", symbol, e)
+        tick_size = None
+
     sim_result = run_precise_simulation(
         symbol=symbol,
         interval=interval,
         candles=candles,
         volume_profile_window=volume_profile_window,
         bars_window=limit,
+        tick_size=tick_size,
     )
 
     # Compute indicator graphics in the same way as the candle stream snapshot.

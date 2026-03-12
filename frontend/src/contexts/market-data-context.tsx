@@ -31,6 +31,7 @@ import {
   runPreciseSimulationApi,
   type TradeLogTrade,
 } from "@/lib/api/market";
+import { PREFERRED_TICKERS } from "@/config/tickers";
 import { getBookmarkedTickers } from "@/lib/ticker-bookmarks-storage";
 import { useGateway } from "@/contexts/gateway-context";
 import {
@@ -244,20 +245,45 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
         } else {
           const fetchedSymbols = await fetchSymbols(backendBaseUrl);
           if (!mounted) return;
-          setSymbols(fetchedSymbols);
-          if (fetchedSymbols.length > 0) {
-            setSelectedSymbol((current) => current || fetchedSymbols[0].symbol);
+          // Restrict visible symbols to preferred tickers if configured. When a
+          // preferred symbol is not present in the exchange instruments list,
+          // synthesize a basic SymbolInfo so that we still request its ticker.
+          const preferredSet = new Set(
+            PREFERRED_TICKERS.map((s) => s.toUpperCase())
+          );
+          let filteredSymbols: SymbolInfo[];
+          if (preferredSet.size > 0) {
+            const bySymbol = new Map(
+              fetchedSymbols.map((s) => [s.symbol.toUpperCase(), s] as const)
+            );
+            filteredSymbols = Array.from(preferredSet).map((sym) => {
+              const existing = bySymbol.get(sym);
+              return (
+                existing ?? {
+                  symbol: sym,
+                  baseCoin: "",
+                  quoteCoin: "",
+                  status: "Unknown",
+                }
+              );
+            });
+          } else {
+            filteredSymbols = fetchedSymbols;
           }
-          if (fetchedSymbols.length > 0) {
+
+          setSymbols(filteredSymbols);
+          if (filteredSymbols.length > 0) {
+            setSelectedSymbol((current) => current || filteredSymbols[0].symbol);
+          }
+          if (filteredSymbols.length > 0) {
             const market = gatewayConfig?.market ?? "spot";
-            const symbolSet = new Set(fetchedSymbols.map((s) => s.symbol));
+            const symbolSet = new Set(filteredSymbols.map((s) => s.symbol));
             const bookmarkedFirst = getBookmarkedTickers(market).filter((sym) =>
               symbolSet.has(sym)
             );
-            const rest = fetchedSymbols
+            const rest = filteredSymbols
               .filter((s) => !bookmarkedFirst.includes(s.symbol))
-              .map((s) => s.symbol)
-              .slice(0, Math.max(0, 100 - bookmarkedFirst.length));
+              .map((s) => s.symbol);
 
             try {
               const bySymbol: Record<string, TickerSnapshot> = {};
@@ -270,7 +296,6 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
                 for (const snapshot of snapshotsBookmarked) {
                   bySymbol[snapshot.symbol] = snapshot;
                 }
-                setTickers((prev) => ({ ...prev, ...bySymbol }));
               }
               if (rest.length > 0) {
                 const snapshotsRest = await fetchTickers(backendBaseUrl, rest);
@@ -278,8 +303,8 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
                 for (const snapshot of snapshotsRest) {
                   bySymbol[snapshot.symbol] = snapshot;
                 }
-                setTickers((prev) => ({ ...prev, ...bySymbol }));
               }
+              setTickers((prev) => ({ ...prev, ...bySymbol }));
             } catch {
               if (mounted) setError("Failed to fetch tickers");
             }
@@ -426,7 +451,7 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
     let cancelled = false;
     async function loadTickers(): Promise<void> {
       try {
-        const requested = symbols.slice(0, 100).map((item) => item.symbol);
+        const requested = symbols.map((item) => item.symbol);
         const snapshots = await fetchTickers(backendBaseUrl, requested);
         if (cancelled) {
           return;

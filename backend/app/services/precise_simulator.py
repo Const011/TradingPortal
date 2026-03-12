@@ -36,6 +36,7 @@ def run_precise_simulation(
     candles: List[Candle],
     volume_profile_window: int = 2000,
     bars_window: int | None = None,
+    tick_size: float | None = None,
 ) -> Dict[str, Any]:
     """Run precise, no-future simulation over the given candles.
 
@@ -83,6 +84,7 @@ def run_precise_simulation(
             prefix_structure.get("swingPivots") or {},
             candle_colors=prefix_structure.get("candleColors"),
             sr_lines=sr_prefix,
+            tick_size=tick_size,
         )
         # Local bar index within the window corresponds to global index i.
         local_idx = len(window) - 1

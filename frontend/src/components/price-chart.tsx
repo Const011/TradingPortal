@@ -273,6 +273,36 @@ export function PriceChart() {
     });
   }, [candles]);
 
+  // Adjust chart price precision dynamically based on the instrument's price
+  // level so that small-value coins (e.g. DOGE, XRP) are not effectively
+  // rounded to two decimals on the price scale.
+  useEffect(() => {
+    const series = seriesRef.current;
+    const chart = chartRef.current;
+    if (!series || !chart || candles.length === 0) return;
+
+    const last = candles[candles.length - 1];
+    const refPrice = Math.abs(last.close || last.open || last.high || last.low || 0);
+    if (!Number.isFinite(refPrice) || refPrice <= 0) return;
+
+    let precision: number;
+    if (refPrice >= 1000) {
+      precision = 2;
+    } else if (refPrice >= 1) {
+      precision = 4;
+    } else {
+      precision = 6;
+    }
+    const minMove = 1 / Math.pow(10, precision);
+    series.applyOptions({
+      priceFormat: {
+        type: "price",
+        precision,
+        minMove,
+      },
+    });
+  }, [candles]);
+
   const strategyResults = useMemo(() => {
     if (gatewayConfig?.mode === "trade" && tradeLogTrades && tradeLogTrades.length > 0) {
       return tradeLogToStrategyResultsSummary(tradeLogTrades);

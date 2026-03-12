@@ -1,6 +1,19 @@
 "use client";
 
 import type { StrategyResultsSummary } from "@/lib/strategy-results";
+import { useMarketData } from "@/contexts/market-data-context";
+
+function getPricePrecision(value: number): number {
+  const abs = Math.abs(value);
+  if (abs >= 1000) return 2;
+  if (abs >= 1) return 4;
+  return 6;
+}
+
+function formatPrice(value: number): string {
+  const precision = getPricePrecision(value);
+  return value.toFixed(precision);
+}
 
 function formatDateTime(iso: string): string {
   const d = new Date(iso);
@@ -59,9 +72,15 @@ type StrategyResultsTableProps = {
 };
 
 export function StrategyResultsTable({ summary }: StrategyResultsTableProps) {
+  const { selectedSymbol } = useMarketData();
   if (!summary || summary.trades.length === 0) {
     return null;
   }
+
+  // Use the entry price of the first trade to define the "instrument" precision,
+  // and keep points/total/avg formatted with exactly the same number of digits.
+  const baseEntry = summary.trades[0]?.entryPrice ?? 0;
+  const pointsPrecision = getPricePrecision(baseEntry);
 
   return (
     <div style={{ marginTop: 16, overflowX: "auto" }}>
@@ -92,7 +111,7 @@ export function StrategyResultsTable({ summary }: StrategyResultsTableProps) {
                 </span>
               </td>
               <td style={{ ...tdStyle, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
-                {t.entryPrice.toFixed(2)}
+                {formatPrice(t.entryPrice)}
               </td>
               <td style={tdStyle}>{formatDateTime(t.closeDateTime)}</td>
               <td
@@ -102,7 +121,7 @@ export function StrategyResultsTable({ summary }: StrategyResultsTableProps) {
                   fontVariantNumeric: "tabular-nums",
                 }}
               >
-                {t.closePrice.toFixed(2)}
+                {formatPrice(t.closePrice)}
               </td>
               <td style={tdStyle}>{formatCloseReason(t.closeReason)}</td>
               <td
@@ -111,20 +130,18 @@ export function StrategyResultsTable({ summary }: StrategyResultsTableProps) {
                   textAlign: "right",
                   color: t.points >= 0 ? "#16a34a" : "#dc2626",
                   fontWeight: 500,
+                  fontVariantNumeric: "tabular-nums",
                 }}
               >
-                {t.points >= 0 ? "+" : ""}
-                {t.points.toFixed(2)}
+                {t.points.toFixed(pointsPrecision)}
               </td>
             </tr>
           ))}
         </tbody>
       </table>
       <div style={summaryStyle}>
-        Total: {summary.totalPoints >= 0 ? "+" : ""}
-        {summary.totalPoints.toFixed(2)} pts · Avg:{" "}
-        {summary.avgPointsPerTrade >= 0 ? "+" : ""}
-        {summary.avgPointsPerTrade.toFixed(2)} pts/trade ({summary.trades.length}{" "}
+        Total: {summary.totalPoints.toFixed(pointsPrecision)} pts · Avg:{" "}
+        {summary.avgPointsPerTrade.toFixed(pointsPrecision)} pts/trade ({summary.trades.length}{" "}
         trades) · Win rate: {summary.winRatePercent.toFixed(1)}%
       </div>
     </div>

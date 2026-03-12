@@ -314,6 +314,7 @@ async def _make_snapshot_payload(
                     structure_result.get("swingPivots") or {},
                     candle_colors=structure_result.get("candleColors"),
                     sr_lines=sr_lines,
+                    tick_size=state.tick_size,
                 )
                 chart_data = strategy_output_to_chart(
                     trade_events, stop_segments, interval
@@ -343,6 +344,7 @@ class CandleStreamState:
     task: asyncio.Task[None] | None = None
     volume_profile_window: int = DEFAULT_VOLUME_PROFILE_WINDOW
     strategy_markers: str = "off"
+    tick_size: float | None = None
     # Trade log state (mode=trading)
     logged_entry_ids: set[str] = field(default_factory=set)
     logged_exit_ids: set[str] = field(default_factory=set)
@@ -430,6 +432,12 @@ class CandleStreamHub:
         stream_key = (symbol, interval)
         fetch_interval = settings.fetch_interval_sec
         first_run = True
+        # Fetch tick size once per heartbeat stream (best-effort; fall back to heuristic in strategy).
+        tick_size: float | None = None
+        try:
+            tick_size = await self._bybit_client.get_tick_size(symbol=symbol)
+        except Exception as e:
+            logger.warning("Heartbeat: failed to fetch tick size symbol=%s err=%s", symbol, e)
         while True:
             try:
                 if not first_run:
@@ -449,6 +457,7 @@ class CandleStreamHub:
                     if state is None:
                         return
                     state.candles = candles
+                    state.tick_size = tick_size
                     vp_window = state.volume_profile_window
                     strategy_markers = state.strategy_markers
                     if settings.mode == "trading":

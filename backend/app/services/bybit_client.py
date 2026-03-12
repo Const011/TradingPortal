@@ -125,7 +125,11 @@ class BybitClient:
         )
 
     async def list_spot_symbols(self) -> list[SymbolInfo]:
-        """[Bybit] REST GET /v5/market/instruments-info. Returns tradable symbols for current market."""
+        """[Bybit] REST GET /v5/market/instruments-info. Returns tradable Spot symbols.
+
+        For Spot, Bybit does not use pagination on this endpoint; it returns the full list
+        of instruments for `category=spot` in a single response.
+        """
         url = f"{settings.bybit_rest_base_url}/v5/market/instruments-info"
         params = {"category": self._market_category()}
         async with httpx.AsyncClient(timeout=15.0) as client:
@@ -144,6 +148,42 @@ class BybitClient:
                 )
             )
         return symbols
+
+    async def get_instrument_info(self, *, symbol: str) -> dict:
+        """Return raw instruments-info record for a single symbol (current market category).
+
+        Uses GET /v5/market/instruments-info with category derived from settings.market.
+        """
+        url = f"{settings.bybit_rest_base_url}/v5/market/instruments-info"
+        params = {
+            "category": self._market_category(),
+            "symbol": symbol.upper(),
+        }
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            response = await client.get(url, params=params)
+            response.raise_for_status()
+        payload = response.json()
+        items = payload.get("result", {}).get("list", [])
+        if not items:
+            return {}
+        # Bybit returns a list; for a specific symbol we expect at most one item.
+        return items[0]
+
+    async def get_tick_size(self, *, symbol: str) -> float | None:
+        """Return the exchange tick size (minimum price increment) for the symbol, or None.
+
+        Reads priceFilter.tickSize from instruments-info. If unavailable or unparsable,
+        returns None so callers can fall back to a heuristic.
+        """
+        info = await self.get_instrument_info(symbol=symbol)
+        price_filter = info.get("priceFilter") or {}
+        tick = price_filter.get("tickSize")
+        if tick is None:
+            return None
+        try:
+            return float(tick)
+        except (TypeError, ValueError):
+            return None
 
     async def get_tickers(self, symbols: list[str] | None = None) -> list[TickerSnapshot]:
         """[Bybit] REST GET /v5/market/tickers. Returns 24h snapshots for ticker list."""

@@ -11,8 +11,9 @@ const TICKER_PANEL_MAX_WIDTH = 500;
 const TICKER_PANEL_DEFAULT_WIDTH = 280;
 
 function formatPrice(price: number): string {
-  if (price >= 1000) return price.toFixed(2);
-  if (price >= 1) return price.toFixed(4);
+  const abs = Math.abs(price);
+  if (abs >= 1000) return price.toFixed(2);
+  if (abs >= 1) return price.toFixed(4);
   return price.toFixed(6);
 }
 

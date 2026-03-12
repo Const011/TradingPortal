@@ -1,6 +1,7 @@
 """Order Block Trend-Following strategy. See docs/strategy-order-block-trend-following.md."""
 
 import logging
+import math
 from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -189,6 +190,7 @@ def _compute_initial_stop_long(
     bar_index: int = 0,
     atr_length: int = DEFAULT_ATR_LENGTH,
     atr_stop_mult: float = DEFAULT_ATR_STOP_MULT,
+    guard_eps: float | None = None,
 ) -> float:
     """Higher of OB bottom or support-gap (tighter = better for long). Optionally cap by ATR."""
     support = _get_closest_support_below(sr_lines, entry_price, min_strength)
@@ -209,10 +211,20 @@ def _compute_initial_stop_long(
         if atr_val > 0:
             atr_cap = entry_price - atr_stop_mult * atr_val
             structural = max(structural, atr_cap)
-    # Mandatory: stop cannot be higher than entry candle low - 1 (must be below the bar's low)
+    # Mandatory guard: stop must sit *below* the entry bar's low.
     max_stop = None
     if candles and 0 <= bar_index < len(candles):
-        max_stop = candles[bar_index].low - 1.0
+        bar = candles[bar_index]
+        eps = guard_eps
+        if eps is None:
+            base_price = bar.low or entry_price
+            if base_price <= 0:
+                eps = 0.0
+            else:
+                # Fallback: price‑scaled epsilon when exchange tick size is unknown.
+                scale = 10.0 ** math.floor(math.log10(base_price))
+                eps = 0.001 * scale
+        max_stop = bar.low - eps if eps and eps > 0 else bar.low
         structural = min(structural, max_stop)
 
     # Debug: explain which rule determined the initial long stop.
@@ -221,17 +233,17 @@ def _compute_initial_stop_long(
         _debug = _DEBUG_TS_START <= c.time <= _DEBUG_TS_END
         if _debug:
             logger.info(
-                "[OB_STOP_RULE_LONG] bar=%d time=%s | entry=%.1f ob_bottom=%.1f rule=%s "
-                "support_price=%s stop_below_support=%s atr_cap=%s max_stop_guard=%s final_stop=%.1f",
+                "[OB_STOP_RULE_LONG] bar=%d time=%s | entry=%.4f ob_bottom=%.4f rule=%s "
+                "support_price=%s stop_below_support=%s atr_cap=%s max_stop_guard=%s final_stop=%.4f",
                 bar_index,
                 ts_human(c.time),
                 entry_price,
                 ob_bottom,
                 rule,
-                f"{support_price:.1f}" if support_price is not None else "None",
-                f"{stop_below_support:.1f}" if stop_below_support is not None else "None",
-                f"{atr_cap:.1f}" if atr_cap is not None else "None",
-                f"{max_stop:.1f}" if max_stop is not None else "None",
+                f"{support_price:.4f}" if support_price is not None else "None",
+                f"{stop_below_support:.4f}" if stop_below_support is not None else "None",
+                f"{atr_cap:.4f}" if atr_cap is not None else "None",
+                f"{max_stop:.4f}" if max_stop is not None else "None",
                 structural,
             )
 
@@ -247,6 +259,7 @@ def _compute_initial_stop_short(
     bar_index: int = 0,
     atr_length: int = DEFAULT_ATR_LENGTH,
     atr_stop_mult: float = DEFAULT_ATR_STOP_MULT,
+    guard_eps: float | None = None,
 ) -> float:
     """Lower of OB top or resistance+gap (tighter = better for short). Optionally cap by ATR."""
     resistance = _get_closest_resistance_above(sr_lines, entry_price, min_strength)
@@ -267,10 +280,19 @@ def _compute_initial_stop_short(
         if atr_val > 0:
             atr_cap = entry_price + atr_stop_mult * atr_val
             structural = min(structural, atr_cap)
-    # Mandatory: stop cannot be lower than entry candle high + 1 (must be above the bar's high)
+    # Mandatory guard: stop must sit *above* the entry bar's high.
     min_stop = None
     if candles and 0 <= bar_index < len(candles):
-        min_stop = candles[bar_index].high + 1.0
+        bar = candles[bar_index]
+        eps = guard_eps
+        if eps is None:
+            base_price = bar.high or entry_price
+            if base_price <= 0:
+                eps = 0.0
+            else:
+                scale = 10.0 ** math.floor(math.log10(base_price))
+                eps = 0.001 * scale
+        min_stop = bar.high + eps if eps and eps > 0 else bar.high
         structural = max(structural, min_stop)
 
     # Debug: explain which rule determined the initial short stop.
@@ -279,17 +301,17 @@ def _compute_initial_stop_short(
         _debug = _DEBUG_TS_START <= c.time <= _DEBUG_TS_END
         if _debug:
             logger.info(
-                "[OB_STOP_RULE_SHORT] bar=%d time=%s | entry=%.1f ob_top=%.1f rule=%s "
-                "resistance_price=%s stop_above_res=%s atr_cap=%s min_stop_guard=%s final_stop=%.1f",
+                "[OB_STOP_RULE_SHORT] bar=%d time=%s | entry=%.4f ob_top=%.4f rule=%s "
+                "resistance_price=%s stop_above_res=%s atr_cap=%s min_stop_guard=%s final_stop=%.4f",
                 bar_index,
                 ts_human(c.time),
                 entry_price,
                 ob_top,
                 rule,
-                f"{res_price:.1f}" if res_price is not None else "None",
-                f"{stop_above_res:.1f}" if stop_above_res is not None else "None",
-                f"{atr_cap:.1f}" if atr_cap is not None else "None",
-                f"{min_stop:.1f}" if min_stop is not None else "None",
+                f"{res_price:.4f}" if res_price is not None else "None",
+                f"{stop_above_res:.4f}" if stop_above_res is not None else "None",
+                f"{atr_cap:.4f}" if atr_cap is not None else "None",
+                f"{min_stop:.4f}" if min_stop is not None else "None",
                 structural,
             )
 
@@ -671,6 +693,7 @@ def compute_order_block_trend_following(
     keep_breakers: bool = DEFAULT_KEEP_BREAKERS,
     cvd_length: int = DEFAULT_CVD_LENGTH,
     cvd_sequence_bars: int = DEFAULT_CVD_SEQUENCE_BARS,
+    tick_size: float | None = None,
 ) -> tuple[list[TradeEvent], list[StopSegment]]:
     """
     Run Order Block Trend-Following strategy.
@@ -937,8 +960,15 @@ def compute_order_block_trend_following(
                 if trigger_ob is None:
                     continue
                 stop = _compute_initial_stop_long(
-                    ob_bottom, sr_lines, entry, min_sr_strength,
-                    candles=candles, bar_index=i, atr_length=atr_length, atr_stop_mult=atr_stop_mult,
+                    ob_bottom,
+                    sr_lines,
+                    entry,
+                    min_sr_strength,
+                    candles=candles,
+                    bar_index=i,
+                    atr_length=atr_length,
+                    atr_stop_mult=atr_stop_mult,
+                    guard_eps=tick_size,
                 )
                 target_price, target_source = _select_target_long(
                     entry_price=entry,
@@ -990,8 +1020,15 @@ def compute_order_block_trend_following(
                 if trigger_ob is None:
                     continue
                 stop = _compute_initial_stop_short(
-                    ob_top, sr_lines, entry, min_sr_strength,
-                    candles=candles, bar_index=i, atr_length=atr_length, atr_stop_mult=atr_stop_mult,
+                    ob_top,
+                    sr_lines,
+                    entry,
+                    min_sr_strength,
+                    candles=candles,
+                    bar_index=i,
+                    atr_length=atr_length,
+                    atr_stop_mult=atr_stop_mult,
+                    guard_eps=tick_size,
                 )
                 target_price, target_source = _select_target_short(
                     entry_price=entry,
