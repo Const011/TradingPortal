@@ -11,6 +11,30 @@ import type {
 } from "lightweight-charts";
 import type { OrderBlockData, OrderBlocksData } from "@/lib/types/market";
 
+function formatStrengthCompact(value: number): string {
+  const abs = Math.abs(value);
+  const sign = value < 0 ? "-" : "";
+
+  const formatWithDigits = (v: number): string => {
+    if (v < 10) {
+      return v.toFixed(2);
+    }
+    if (v < 100) {
+      return v.toFixed(1);
+    }
+    // For 3+ digits, avoid decimals to keep label compact (e.g. 154k).
+    return Math.floor(v).toString();
+  };
+
+  if (abs >= 1_000_000) {
+    return `${sign}${formatWithDigits(abs / 1_000_000)}M`;
+  }
+  if (abs >= 1_000) {
+    return `${sign}${formatWithDigits(abs / 1_000)}k`;
+  }
+  return `${sign}${formatWithDigits(abs)}`;
+}
+
 interface BoxToDraw {
   x1: number;
   y1: number;
@@ -103,7 +127,9 @@ class OrderBlocksPaneView implements IPrimitivePaneView {
             ? ob.strengthIndex
             : undefined;
         const strengthText =
-          strength && strength > 0 ? strength.toFixed(2) : undefined;
+          strength !== undefined && strength > 0
+            ? formatStrengthCompact(strength)
+            : undefined;
 
         // If the block has been negated, clamp its visual end at negatedT.
         const lastTime = negatedT != null ? negatedT : tEnd;

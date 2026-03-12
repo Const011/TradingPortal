@@ -1,6 +1,7 @@
 import hmac
 import hashlib
 import json
+import logging
 import time
 from collections.abc import AsyncGenerator
 from urllib.parse import urlencode
@@ -11,6 +12,9 @@ import websockets
 from app.config import settings
 from app.schemas.market import BarUpdate, Candle, SymbolInfo, TickerSnapshot, TickerTick
 from app.utils.timefmt import ts_human
+
+
+logger = logging.getLogger(__name__)
 
 
 class BybitClientError(Exception):
@@ -130,8 +134,15 @@ class BybitClient:
         For Spot, Bybit does not use pagination on this endpoint; it returns the full list
         of instruments for `category=spot` in a single response.
         """
+        category = self._market_category()
         url = f"{settings.bybit_rest_base_url}/v5/market/instruments-info"
-        params = {"category": self._market_category()}
+        params = {"category": category}
+        logger.info(
+            "BybitClient.list_spot_symbols: url=%s category=%s market_setting=%s",
+            url,
+            category,
+            settings.market,
+        )
         async with httpx.AsyncClient(timeout=15.0) as client:
             response = await client.get(url, params=params)
             response.raise_for_status()
@@ -154,11 +165,19 @@ class BybitClient:
 
         Uses GET /v5/market/instruments-info with category derived from settings.market.
         """
+        category = self._market_category()
         url = f"{settings.bybit_rest_base_url}/v5/market/instruments-info"
         params = {
-            "category": self._market_category(),
+            "category": category,
             "symbol": symbol.upper(),
         }
+        logger.info(
+            "BybitClient.get_instrument_info: url=%s category=%s symbol=%s market_setting=%s",
+            url,
+            category,
+            symbol.upper(),
+            settings.market,
+        )
         async with httpx.AsyncClient(timeout=15.0) as client:
             response = await client.get(url, params=params)
             response.raise_for_status()
@@ -247,6 +266,15 @@ class BybitClient:
         """[Bybit] REST GET /v5/market/kline. Returns historical OHLCV candles for chart.
         Bybit max per request is 1000; for limit>1000 we fetch in batches and merge."""
         BYBIT_MAX = 1000
+        category = self._market_category()
+        logger.info(
+            "BybitClient.get_klines: symbol=%s interval=%s limit=%d category=%s market_setting=%s",
+            symbol,
+            interval,
+            limit,
+            category,
+            settings.market,
+        )
         all_candles: list[Candle] = []
         remaining = limit
         end_time: int | None = None
@@ -255,7 +283,7 @@ class BybitClient:
             batch_limit = min(remaining, BYBIT_MAX)
             url = f"{settings.bybit_rest_base_url}/v5/market/kline"
             params: dict = {
-                "category": self._market_category(),
+                "category": category,
                 "symbol": symbol,
                 "interval": interval,
                 "limit": batch_limit,
@@ -286,6 +314,30 @@ class BybitClient:
             if len(batch) < batch_limit:
                 break
             end_time = batch[0].time - 1
+        if all_candles:
+            first_c = all_candles[0]
+            last_c = all_candles[-1]
+            logger.info(
+                "BybitClient.get_klines: assembled %d candles symbol=%s interval=%s category=%s "
+                "first={time=%s open=%s high=%s low=%s close=%s volume=%s} "
+                "last={time=%s open=%s high=%s low=%s close=%s volume=%s}",
+                len(all_candles),
+                symbol,
+                interval,
+                category,
+                getattr(first_c, "time", None),
+                getattr(first_c, "open", None),
+                getattr(first_c, "high", None),
+                getattr(first_c, "low", None),
+                getattr(first_c, "close", None),
+                getattr(first_c, "volume", None),
+                getattr(last_c, "time", None),
+                getattr(last_c, "open", None),
+                getattr(last_c, "high", None),
+                getattr(last_c, "low", None),
+                getattr(last_c, "close", None),
+                getattr(last_c, "volume", None),
+            )
         return all_candles
     async def stream_kline(
         self, symbol: str, interval: str

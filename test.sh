@@ -5,7 +5,7 @@
 # Subaccount: orders/wallet/positions go to the account of the API key. To use sub 550311863, create a sub API key
 # (POST /v5/user/create-sub-api, subuid=550311863) and set BYBIT_API_KEY/BYBIT_API_SECRET to that key.
 
-PORT="${1:-9001}"
+PORT="${1:-9000}"
 BASE="http://localhost:${PORT}"
 
 echo "=== Exec endpoints (port $PORT) ==="

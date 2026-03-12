@@ -29,7 +29,10 @@ if settings.mode == "trading":
         f"position_size={settings.position_size or '(not set)'} leverage={settings.leverage}{dry_run_note}"
     )
 else:
-    print(f"Gateway: port={settings.backend_port} mode=simulation")
+    print(
+        f"Gateway: port={settings.backend_port} mode=simulation market={settings.market} "
+        f"fetch_interval_sec={settings.fetch_interval_sec}"
+    )
 
 
 @asynccontextmanager
