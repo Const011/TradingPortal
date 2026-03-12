@@ -37,11 +37,17 @@ Entry when **all** of the following are true for the last N bars (N = `consecuti
    - **Long:** For each of the last `cvd_sequence_bars` bars, point CVD `delta` is **non-negative** (≥ 0).
    - **Short:** Symmetric: for each of the last `cvd_sequence_bars` bars, CVD `delta` is **non-positive** (≤ 0).
 4. **Risk/reward vs. opposite OB (target-based filter):**
-   - **Long:** The take-profit target is set at the **nearest bearish order block boundary above the entry** (closest `ob.bottom` > entry price) whose **strength is not less than `min_ob_strength × triggering_bullish_ob_strength`**. In other words, the opposite-direction target OB must be at least a configurable fraction of the strength of the bullish OB that triggered the trade, so weak opposite OBs are ignored. The initial stop is computed as in Section 5. The trade is only opened if the reward:risk ratio meets or exceeds `rr_min`:
+   - **Long:** The take-profit target is set at the **nearest eligible target level above the entry**. Eligible long-side target levels are:
+     - a **bearish order block boundary** (`ob.bottom`) above the entry whose **strength is not less than `min_ob_strength × triggering_bullish_ob_strength`**
+     - a **resistance line** above the entry whose `width` is at least `target_sr_min_strength`
+     The strategy chooses whichever eligible target is **closer** to the entry. This allows nearby strong resistance lines to cap trend-following longs even when the nearest acceptable bearish OB is farther away. The initial stop is computed as in Section 5. The trade is only opened if the reward:risk ratio meets or exceeds `rr_min`:
      \[
        \frac{\text{target\_price} - \text{entry}}{\text{entry} - \text{stop}} \ge \text{rr\_min}
      \]
-   - **Short:** Symmetric: target is the **nearest bullish order block boundary below the entry** (closest `ob.top` < entry price) whose **strength is not less than `min_ob_strength × triggering_bearish_ob_strength`**; trade is only opened if:
+   - **Short:** Symmetric: target is the **nearest eligible target level below the entry**:
+     - a **bullish order block boundary** (`ob.top`) below the entry whose **strength is not less than `min_ob_strength × triggering_bearish_ob_strength`**
+     - a **support line** below the entry whose `width` is at least `target_sr_min_strength`
+     The strategy chooses whichever eligible target is **closer** to the entry; trade is only opened if:
      \[
        \frac{\text{entry} - \text{target\_price}}{\text{stop} - \text{entry}} \ge \text{rr\_min}
      \]
@@ -112,6 +118,7 @@ For **short**: breakeven when close below `entry − 0.1×|entry_bar_close − e
 | `consecutive_closes`           | 2       | Window size for entry: last N bars checked for OB event + volume spike conditions                                                   |
 | `trail_consecutive_closes`     | 2       | Consecutive closes above/below level for trail confirmation                                                                         |
 | `min_sr_strength`              | 4.0     | Min S/R line width to count as “strong” support                                                                                     |
+| `target_sr_min_strength`       | 4.0     | Min S/R line width required for a support/resistance line to be considered as a take-profit target candidate.                      |
 | `trail_sr_min_strength`        | 0.0     | Min S/R line width for trailing levels; 0 = include all                                                                             |
 | `trail_param`                  | 0.7     | Trailing stop: level − N × (level − prev_stop) for S/R/OB levels                                                                    |
 | `trail_param_prev_bar`         | 0.9     | Same formula when level is previous bar’s low (long) or high (short); more relaxed to help exit when price is locked in a range    |

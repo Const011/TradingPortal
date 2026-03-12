@@ -5,7 +5,7 @@ import time
 from dataclasses import dataclass
 
 from app.config import settings
-from app.services.bybit_client import BybitClient
+from app.services.bybit_client import BybitClient, BybitClientError
 from app.services.execution_types import ExecutorEntryResponse
 from app.services.trade_log import (
     add_current_trade,

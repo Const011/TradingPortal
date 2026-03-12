@@ -10,8 +10,8 @@ from app.schemas.market import Candle
 logger = logging.getLogger(__name__)
 
 # Temporary debug: log bullish signal steps for bars around 2026-03-02 17:00
-_DEBUG_TS_START = int(datetime(2025, 3, 10, 16, 0).timestamp() * 1000)
-_DEBUG_TS_END = int(datetime(2025, 3, 10, 17, 0).timestamp() * 1000)
+_DEBUG_TS_START = int(datetime(2026, 3, 12, 18, 0).timestamp() * 1000)
+_DEBUG_TS_END = int(datetime(2026, 3, 12, 19, 0).timestamp() * 1000)
 
 from app.utils.timefmt import ts_human
 
@@ -53,6 +53,7 @@ DEFAULT_TRAIL_CONSECUTIVE_CLOSES = 2
 DEFAULT_BLOCK_OB_DISTANCE_MULT = 1.0
 DEFAULT_BLOCK_SR_DISTANCE_MULT = 1.0
 DEFAULT_MIN_SR_STRENGTH = 4.0
+DEFAULT_TARGET_SR_MIN_STRENGTH = 2.5
 DEFAULT_TRAIL_SR_MIN_STRENGTH = 0.0  # Include all S/R for trailing; min_sr_strength only for blocking
 DEFAULT_TRAIL_PARAM = 0.75
 # More relaxed trail when using previous bar low/high as level (test alternative to level-based trailing).
@@ -92,6 +93,7 @@ class _EntryCandidate:
     stop: float
     ob_key: tuple[float, float, int]
     target_price: float | None = None
+    target_source: str | None = None
 
 
 def _is_bullish_trend(candle_colors: dict[int, str] | None, time_ms: int) -> bool:
@@ -279,6 +281,108 @@ def _compute_initial_stop_short(
             )
 
     return structural
+
+
+def _select_target_long(
+    *,
+    entry_price: float,
+    trigger_ob: OrderBlock,
+    bearish_ob: list[OrderBlock],
+    sr_lines: list[dict],
+    min_ob_strength: float,
+    target_sr_min_strength: float,
+    bar_index: int,
+    time_ms: int,
+    debug_enabled: bool,
+) -> tuple[float | None, str | None]:
+    ob_strength_threshold = max(0.0, min_ob_strength * trigger_ob.strength_index)
+    ob_candidates = [
+        (ob.bottom, ob.strength_index, "bearish_ob")
+        for ob in bearish_ob
+        if ob.bottom > entry_price and ob.strength_index >= ob_strength_threshold
+    ]
+    sr_candidates = [
+        (float(line["price"]), float(line.get("width", 1.0)), "resistance")
+        for line in sr_lines
+        if line["price"] > entry_price and line.get("width", 0.0) >= target_sr_min_strength
+    ]
+    all_candidates = [*ob_candidates, *sr_candidates]
+    selected_price: float | None = None
+    selected_source: str | None = None
+    if all_candidates:
+        selected_price, _selected_strength, selected_source = min(
+            all_candidates,
+            key=lambda item: item[0],
+        )
+
+    if debug_enabled:
+        logger.info(
+            "[OB_TARGET_LONG] bar=%d time=%s | entry=%.1f trigger_ob_strength=%.2f "
+            "ob_strength_threshold=%.2f target_sr_min_strength=%.2f "
+            "ob_candidates=%s sr_candidates=%s selected=%s@%s",
+            bar_index,
+            ts_human(time_ms),
+            entry_price,
+            trigger_ob.strength_index,
+            ob_strength_threshold,
+            target_sr_min_strength,
+            [(round(price, 1), round(strength, 2)) for price, strength, _src in ob_candidates],
+            [(round(price, 1), round(strength, 2)) for price, strength, _src in sr_candidates],
+            selected_source or "None",
+            f"{selected_price:.1f}" if selected_price is not None else "None",
+        )
+    return selected_price, selected_source
+
+
+def _select_target_short(
+    *,
+    entry_price: float,
+    trigger_ob: OrderBlock,
+    bullish_ob: list[OrderBlock],
+    sr_lines: list[dict],
+    min_ob_strength: float,
+    target_sr_min_strength: float,
+    bar_index: int,
+    time_ms: int,
+    debug_enabled: bool,
+) -> tuple[float | None, str | None]:
+    ob_strength_threshold = max(0.0, min_ob_strength * trigger_ob.strength_index)
+    ob_candidates = [
+        (ob.top, ob.strength_index, "bullish_ob")
+        for ob in bullish_ob
+        if ob.top < entry_price and ob.strength_index >= ob_strength_threshold
+    ]
+    sr_candidates = [
+        (float(line["price"]), float(line.get("width", 1.0)), "support")
+        for line in sr_lines
+        if line["price"] < entry_price and line.get("width", 0.0) >= target_sr_min_strength
+    ]
+    all_candidates = [*ob_candidates, *sr_candidates]
+    selected_price: float | None = None
+    selected_source: str | None = None
+    if all_candidates:
+        selected_price, _selected_strength, selected_source = max(
+            all_candidates,
+            key=lambda item: item[0],
+        )
+
+    if debug_enabled:
+        logger.info(
+            "[OB_TARGET_SHORT] bar=%d time=%s | entry=%.1f trigger_ob_strength=%.2f "
+            "ob_strength_threshold=%.2f target_sr_min_strength=%.2f "
+            "ob_candidates=%s sr_candidates=%s selected=%s@%s",
+            bar_index,
+            ts_human(time_ms),
+            entry_price,
+            trigger_ob.strength_index,
+            ob_strength_threshold,
+            target_sr_min_strength,
+            [(round(price, 1), round(strength, 2)) for price, strength, _src in ob_candidates],
+            [(round(price, 1), round(strength, 2)) for price, strength, _src in sr_candidates],
+            selected_source or "None",
+            f"{selected_price:.1f}" if selected_price is not None else "None",
+        )
+    return selected_price, selected_source
 
 
 def _confirmed_level_cross_long(
@@ -541,6 +645,7 @@ def compute_order_block_trend_following(
     consecutive_closes: int = DEFAULT_CONSECUTIVE_CLOSES,
     trail_consecutive_closes: int = DEFAULT_TRAIL_CONSECUTIVE_CLOSES,
     min_sr_strength: float = DEFAULT_MIN_SR_STRENGTH,
+    target_sr_min_strength: float = DEFAULT_TARGET_SR_MIN_STRENGTH,
     trail_sr_min_strength: float = DEFAULT_TRAIL_SR_MIN_STRENGTH,
     trail_param: float = DEFAULT_TRAIL_PARAM,
     trail_param_prev_bar: float = DEFAULT_TRAIL_PARAM_PREV_BAR,
@@ -818,22 +923,17 @@ def compute_order_block_trend_following(
                     ob_bottom, sr_lines, entry, min_sr_strength,
                     candles=candles, bar_index=i, atr_length=atr_length, atr_stop_mult=atr_stop_mult,
                 )
-                # Take-profit target for long: nearest bearish OB above entry whose
-                # strength is at least `min_ob_strength × triggering_ob_strength`.
-                target_price: float | None = None
-                target_strength_threshold = max(
-                    0.0,
-                    min_ob_strength * trigger_ob.strength_index,
+                target_price, target_source = _select_target_long(
+                    entry_price=entry,
+                    trigger_ob=trigger_ob,
+                    bearish_ob=bearish_ob,
+                    sr_lines=sr_lines,
+                    min_ob_strength=min_ob_strength,
+                    target_sr_min_strength=target_sr_min_strength,
+                    bar_index=i,
+                    time_ms=c.time,
+                    debug_enabled=_debug,
                 )
-                strong_bearish = [
-                    ob
-                    for ob in bearish_ob
-                    if ob.bottom > entry and ob.strength_index >= target_strength_threshold
-                ]
-                if strong_bearish:
-                    for ob in sorted(strong_bearish, key=lambda o: o.bottom):
-                        target_price = ob.bottom
-                        break
                 long_candidate = _EntryCandidate(
                     side="long",
                     ob_top=ob_top,
@@ -842,6 +942,7 @@ def compute_order_block_trend_following(
                     stop=stop,
                     ob_key=ob_key,
                     target_price=target_price,
+                    target_source=target_source,
                 )
                 break
 
@@ -875,22 +976,17 @@ def compute_order_block_trend_following(
                     ob_top, sr_lines, entry, min_sr_strength,
                     candles=candles, bar_index=i, atr_length=atr_length, atr_stop_mult=atr_stop_mult,
                 )
-                # Take-profit target for short: nearest bullish OB below entry whose
-                # strength is at least `min_ob_strength × triggering_ob_strength`.
-                target_price: float | None = None
-                target_strength_threshold = max(
-                    0.0,
-                    min_ob_strength * trigger_ob.strength_index,
+                target_price, target_source = _select_target_short(
+                    entry_price=entry,
+                    trigger_ob=trigger_ob,
+                    bullish_ob=bullish_ob,
+                    sr_lines=sr_lines,
+                    min_ob_strength=min_ob_strength,
+                    target_sr_min_strength=target_sr_min_strength,
+                    bar_index=i,
+                    time_ms=c.time,
+                    debug_enabled=_debug,
                 )
-                strong_bullish = [
-                    ob
-                    for ob in bullish_ob
-                    if ob.top < entry and ob.strength_index >= target_strength_threshold
-                ]
-                if strong_bullish:
-                    for ob in sorted(strong_bullish, key=lambda o: o.top, reverse=True):
-                        target_price = ob.top
-                        break
                 short_candidate = _EntryCandidate(
                     side="short",
                     ob_top=ob_top,
@@ -899,6 +995,7 @@ def compute_order_block_trend_following(
                     stop=stop,
                     ob_key=ob_key,
                     target_price=target_price,
+                    target_source=target_source,
                 )
                 break
 
@@ -985,13 +1082,14 @@ def compute_order_block_trend_following(
                         if _debug:
                             logger.info(
                                 "[OB_STRAT_%s] bar=%d time=%s | BLOCKED by RR filter "
-                                "(entry=%.1f stop=%.1f target=%.1f risk=%.1f reward=%.1f rr=%.2f)",
+                                "(entry=%.1f stop=%.1f target=%.1f target_source=%s risk=%.1f reward=%.1f rr=%.2f)",
                                 "LONG" if candidate.side == "long" else "SHORT",
                                 i,
                                 ts_human(c.time),
                                 entry_price,
                                 candidate.stop,
                                 candidate.target_price,
+                                candidate.target_source,
                                 risk,
                                 reward,
                                 rr,
@@ -1000,13 +1098,14 @@ def compute_order_block_trend_following(
                     elif _debug:
                         logger.info(
                             "[OB_STRAT_%s] bar=%d time=%s | RR filter PASSED "
-                            "(entry=%.1f stop=%.1f target=%.1f risk=%.1f reward=%.1f rr=%.2f)",
+                            "(entry=%.1f stop=%.1f target=%.1f target_source=%s risk=%.1f reward=%.1f rr=%.2f)",
                             "LONG" if candidate.side == "long" else "SHORT",
                             i,
                             ts_human(c.time),
                             entry_price,
                             candidate.stop,
                             candidate.target_price,
+                            candidate.target_source,
                             risk,
                             reward,
                             rr,
@@ -1014,8 +1113,11 @@ def compute_order_block_trend_following(
                 if candidate.side == "long":
                     if _debug:
                         logger.info(
-                            "[OB_STRAT_LONG] bar=%d time=%s | ENTRY LONG ob=[%.1f,%.1f] price=%.1f (reversal_from=%s)",
-                            i, ts_human(c.time), candidate.ob_top, candidate.ob_bottom, entry_price, current_side,
+                            "[OB_STRAT_LONG] bar=%d time=%s | ENTRY LONG ob=[%.1f,%.1f] price=%.1f target=%s target_source=%s (reversal_from=%s)",
+                            i, ts_human(c.time), candidate.ob_top, candidate.ob_bottom, entry_price,
+                            f"{candidate.target_price:.1f}" if candidate.target_price is not None else "None",
+                            candidate.target_source,
+                            current_side,
                         )
                     events.append(
                         TradeEvent(
@@ -1030,6 +1132,7 @@ def compute_order_block_trend_following(
                                 "ob_top": candidate.ob_top,
                                 "ob_bottom": candidate.ob_bottom,
                                 "trigger": "entry_window",
+                                "target_source": candidate.target_source,
                                 "reversal_from": current_side,
                             },
                         )
@@ -1063,8 +1166,11 @@ def compute_order_block_trend_following(
                 else:
                     if _debug:
                         logger.info(
-                            "[OB_STRAT_SHORT] bar=%d time=%s | ENTRY SHORT ob=[%.1f,%.1f] price=%.1f (reversal_from=%s)",
-                            i, ts_human(c.time), candidate.ob_top, candidate.ob_bottom, entry_price, current_side,
+                            "[OB_STRAT_SHORT] bar=%d time=%s | ENTRY SHORT ob=[%.1f,%.1f] price=%.1f target=%s target_source=%s (reversal_from=%s)",
+                            i, ts_human(c.time), candidate.ob_top, candidate.ob_bottom, entry_price,
+                            f"{candidate.target_price:.1f}" if candidate.target_price is not None else "None",
+                            candidate.target_source,
+                            current_side,
                         )
                     events.append(
                         TradeEvent(
@@ -1079,6 +1185,7 @@ def compute_order_block_trend_following(
                                 "ob_top": candidate.ob_top,
                                 "ob_bottom": candidate.ob_bottom,
                                 "trigger": "entry_window",
+                                "target_source": candidate.target_source,
                                 "reversal_from": current_side,
                             },
                         )
