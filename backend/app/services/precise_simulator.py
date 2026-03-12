@@ -52,7 +52,9 @@ def run_precise_simulation(
     max_window = max(1, min(bars_window, n))
 
     all_events: List[TradeEvent] = []
-    all_stops: List[StopSegment] = []
+    # Aggregate stop segments by stable identity to avoid duplicating the full
+    # historical stop trail on every prefix recomputation.
+    stop_segments_by_key: dict[tuple[str, int, float, str], StopSegment] = {}
 
     for i in range(n):
         # Define prefix / trailing window ending at bar i (inclusive).
@@ -103,10 +105,26 @@ def run_precise_simulation(
                     )
                 )
 
-        # Stop segments are already time-based; we can keep them as-is and let
-        # the chart/result logic decide which segments are active per bar.
+        # `compute_order_block_trend_following` returns the full stop history for
+        # the prefix, so naively appending `stop_segments_i` here duplicates the
+        # same segments many times across prefixes. Keep only the latest version
+        # of each segment keyed by (trade_id, start_time, price, side), updating
+        # `end_time` as prefixes advance.
         for seg in stop_segments_i:
-            all_stops.append(seg)
+            key = (seg.trade_id, seg.start_time, seg.price, seg.side)
+            existing = stop_segments_by_key.get(key)
+            if existing is None or seg.end_time > existing.end_time:
+                stop_segments_by_key[key] = seg
+
+    valid_trade_ids = {ev.trade_id for ev in all_events}
+    all_stops = sorted(
+        (
+            seg
+            for seg in stop_segments_by_key.values()
+            if seg.trade_id in valid_trade_ids
+        ),
+        key=lambda s: (s.trade_id, s.start_time, s.end_time, s.price),
+    )
 
     strategy_signals = strategy_output_to_chart(all_events, all_stops, interval)
 
