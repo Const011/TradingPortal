@@ -199,11 +199,24 @@ async def submit_entry(
                 symbol,
                 settings.leverage,
             )
-            await client.set_linear_leverage(
-                symbol=symbol,
-                buyLeverage=settings.leverage,
-                sellLeverage=settings.leverage,
-            )
+            try:
+                await client.set_linear_leverage(
+                    symbol=symbol,
+                    buyLeverage=settings.leverage,
+                    sellLeverage=settings.leverage,
+                )
+            except BybitClientError as e:
+                # Bybit returns "leverage not modified" when the requested leverage
+                # matches the existing value. Treat this as a non-fatal no-op and
+                # continue to place the entry order.
+                if (e.ret_msg or "").lower().startswith("leverage not modified"):
+                    logger.info(
+                        "Executor: set_linear_leverage no-op (unchanged) symbol=%s leverage=%s",
+                        symbol,
+                        settings.leverage,
+                    )
+                else:
+                    raise
         logger.info(
             "Executor: calling create_order category=%s symbol=%s side=%s qty=%s",
             category,
