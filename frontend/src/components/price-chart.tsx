@@ -25,6 +25,7 @@ import {
 import { toChartTimeLocal } from "@/lib/chart-time";
 import { useMarketData } from "@/contexts/market-data-context";
 import { OrderBlocks } from "@/lib/chart-plugins/order-blocks";
+import { SupportResistanceLabelsPrimitive } from "@/lib/chart-plugins/support-resistance-labels";
 import { StructurePrimitive } from "@/lib/chart-plugins/structure";
 import { StrategySignalsPrimitive } from "@/lib/chart-plugins/strategy-signals";
 import { VolumeProfile } from "@/lib/chart-plugins/volume-profile";
@@ -231,6 +232,8 @@ export function PriceChart() {
   const cvdStrengthSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
   const volumeProfilePrimitiveRef = useRef<VolumeProfile | null>(null);
   const supportResistancePriceLinesRef = useRef<IPriceLine[]>([]);
+  const supportResistanceLabelsPrimitiveRef =
+    useRef<SupportResistanceLabelsPrimitive | null>(null);
   const orderBlocksPrimitiveRef = useRef<OrderBlocks | null>(null);
   const structurePrimitiveRef = useRef<StructurePrimitive | null>(null);
   const strategySignalsPrimitiveRef = useRef<StrategySignalsPrimitive | null>(null);
@@ -424,6 +427,11 @@ export function PriceChart() {
         candlestickSeries.removePriceLine(pl);
       }
       supportResistancePriceLinesRef.current = [];
+      const srLabelsPrim = supportResistanceLabelsPrimitiveRef.current;
+      if (srLabelsPrim) {
+        candlestickSeries.detachPrimitive(srLabelsPrim);
+        supportResistanceLabelsPrimitiveRef.current = null;
+      }
       const obPrim = orderBlocksPrimitiveRef.current;
       if (obPrim) {
         candlestickSeries.detachPrimitive(obPrim);
@@ -618,13 +626,19 @@ export function PriceChart() {
 
   useEffect(() => {
     const series = seriesRef.current;
-    if (!series) return;
+    const chart = chartRef.current;
+    if (!series || !chart) return;
 
     // Remove existing S/R price lines
     for (const pl of supportResistancePriceLinesRef.current) {
       series.removePriceLine(pl);
     }
     supportResistancePriceLinesRef.current = [];
+    const labelsPrimitive = supportResistanceLabelsPrimitiveRef.current;
+    if (labelsPrimitive) {
+      series.detachPrimitive(labelsPrimitive);
+      supportResistanceLabelsPrimitiveRef.current = null;
+    }
 
     if (
       !supportResistanceEnabled ||
@@ -651,6 +665,14 @@ export function PriceChart() {
       });
       supportResistancePriceLinesRef.current.push(priceLine);
     }
+
+    const nextLabelsPrimitive = new SupportResistanceLabelsPrimitive(
+      chart,
+      series,
+      supportResistance
+    );
+    series.attachPrimitive(nextLabelsPrimitive);
+    supportResistanceLabelsPrimitiveRef.current = nextLabelsPrimitive;
   }, [supportResistanceEnabled, supportResistance]);
 
   useEffect(() => {
