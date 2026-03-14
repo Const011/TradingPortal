@@ -82,6 +82,8 @@ showBull = input.int(3, 'Show Last Bullish OB', minval = 0, group = BLOCKS_GROUP
 showBear = input.int(3, 'Show Last Bearish OB', minval = 0, group = BLOCKS_GROUP)
 useBody  = input(false, 'Use Candle Body', group = BLOCKS_GROUP)
 obStrengthLength = input.int(2, 'OB Strength Window (vol bars)', minval = 1, maxval = 100, group = BLOCKS_GROUP, tooltip = 'Number of candles (including the initiating candle) used to sum volume for OB strength, matching Python implementation')
+// Match Python DEFAULT_KEEP_BREAKERS: keep breaker OBs when price negates them; if false, remove on negation.
+keepBreakersInput = input.bool(true, 'Keep breakers after negation', group = BLOCKS_GROUP, tooltip = 'When true (Python default), negated breakers stay in history for plots/API; breaker box ends at negation bar. When false, OB is removed when price crosses back through the zone (same as Python keep_breakers=False).')
 
 //Style
 bullCss      = input(color.new(#2157f3, 80), 'Bullish OB'   , inline = 'bullcss', group = BLOCKS_GROUP)
@@ -115,6 +117,8 @@ type ob
     int   loc = bar_index
     bool  breaker = false
     int   break_loc = na
+    // Bar index when breaker was negated (price crossed back through zone). na = not negated. Aligns with Python negated_bar.
+    int   negated_loc = na
     float strength = 0.0
 
 type swing
@@ -200,6 +204,8 @@ var int active_bullish_obs = 0
 var int active_bearish_obs = 0
 var int active_bullish_breakers = 0
 var int active_bearish_breakers = 0
+var int active_bullish_breakers_negated = 0
+var int active_bearish_breakers_negated = 0
 var float nearest_bull_top = na
 var float nearest_bull_btm = na
 var float nearest_bear_top = na
@@ -238,6 +244,8 @@ var bool bullish_boundary_crossed = false
 var bool bearish_boundary_crossed = false
 var bool bullish_breaker_created = false
 var bool bearish_breaker_created = false
+var bool bullish_breaker_negated = false
+var bool bearish_breaker_negated = false
 var array<label> obStrengthLabels = array.new<label>()
 
 //------------------------------------------------------------------------------
@@ -402,7 +410,7 @@ create_bullish_ob_from_pivot(int pivot_bar_index) =>
                 maxima := high[i]
                 loc_bar := bar_index - i
         strength = ob_strength_for_loc(loc_bar, obStrengthLength)
-        bullish_ob.unshift(ob.new(top=maxima, btm=minima, loc=loc_bar, breaker=false, break_loc=na, strength=strength))
+        bullish_ob.unshift(ob.new(top=maxima, btm=minima, loc=loc_bar, breaker=false, break_loc=na, negated_loc=na, strength=strength))
         strength
 
 // Create a bearish OB when price breaks below a pivot (swing or internal low).
@@ -426,7 +434,7 @@ create_bearish_ob_from_pivot(int pivot_bar_index) =>
                 minima := low[i]
                 loc_bar := bar_index - i
         strength = ob_strength_for_loc(loc_bar, obStrengthLength)
-        bearish_ob.unshift(ob.new(top=maxima, btm=minima, loc=loc_bar, breaker=false, break_loc=na, strength=strength))
+        bearish_ob.unshift(ob.new(top=maxima, btm=minima, loc=loc_bar, breaker=false, break_loc=na, negated_loc=na, strength=strength))
         strength
 
 method notransp(color css) => color.rgb(color.r(css), color.g(css), color.b(css))
@@ -446,21 +454,26 @@ method display(ob id, css, break_css)=>
             startTime = lookbackDistance <= maxLookback ? time[lookbackDistance] : time[maxLookback]
             breakLookback = bar_index - id.break_loc
             breakTime = breakLookback <= maxLookback ? time[breakLookback] : time[maxLookback]
-            
+            // Breaker segment ends at negation bar when negated; else extends right (live breaker)
+            negLookback = na(id.negated_loc) ? 0 : bar_index - id.negated_loc
+            endTimeBreaker = na(id.negated_loc) ? time + 1 : (negLookback <= maxLookback ? time[negLookback] : time[maxLookback])
+            extendBreaker = na(id.negated_loc) ? extend.right : extend.none
+            breakSegCss = na(id.negated_loc) ? break_css : color.new(break_css, 55)
+
             box.new(startTime, id.top, breakTime, id.btm, css.notransp()
              , bgcolor = css
              , xloc = xloc.bar_time)
 
-            box.new(breakTime, id.top, time+1, id.btm, na
-             , bgcolor = break_css
-             , extend = extend.right
+            box.new(breakTime, id.top, endTimeBreaker, id.btm, na
+             , bgcolor = breakSegCss
+             , extend = extendBreaker
              , xloc = xloc.bar_time)
             
             // Store order block lines for proper cleanup
             orderBlockLines.push(line.new(startTime, id.top, breakTime, id.top, xloc.bar_time, color = css.notransp()))
             orderBlockLines.push(line.new(startTime, id.btm, breakTime, id.btm, xloc.bar_time, color = css.notransp()))
-            orderBlockLines.push(line.new(breakTime, id.top, time+1, id.top, xloc.bar_time, extend.right, break_css.notransp(), line.style_dashed))
-            orderBlockLines.push(line.new(breakTime, id.btm, time+1, id.btm, xloc.bar_time, extend.right, break_css.notransp(), line.style_dashed))
+            orderBlockLines.push(line.new(breakTime, id.top, endTimeBreaker, id.top, xloc.bar_time, extendBreaker, break_css.notransp(), line.style_dashed))
+            orderBlockLines.push(line.new(breakTime, id.btm, endTimeBreaker, id.btm, xloc.bar_time, extendBreaker, break_css.notransp(), line.style_dashed))
         else
             // Use safe historical access with lookback limit check
             startTime = lookbackDistance <= maxLookback ? time[lookbackDistance] : time[maxLookback]
@@ -697,21 +710,26 @@ bullish_boundary_crossed := false
 bearish_boundary_crossed := false
 bullish_breaker_created := false
 bearish_breaker_created := false
+bullish_breaker_negated := false
+bearish_breaker_negated := false
 latest_bull_ob_strength := na
 latest_bear_ob_strength := na
 
+// Bullish OB: breaker when body/wick goes below OB bottom; after that, negated when body/wick reclaims above OB top (Python order_blocks.py)
 if bullish_ob.size() > 0
     for i = bullish_ob.size()-1 to 0
         element = bullish_ob.get(i)
-    
         if not element.breaker and element.loc < bar_index
             if math.min(close, open) < element.btm
                 element.breaker := true
                 element.break_loc := bar_index
-                bullish_breaker_created := true  // Track when OB becomes breaker
-        else
-            if close > element.top
-                bullish_ob.remove(i)
+                bullish_breaker_created := true
+        else if element.breaker and na(element.negated_loc)
+            if math.max(close, open) > element.top
+                element.negated_loc := bar_index
+                bullish_breaker_negated := true
+                if not keepBreakersInput
+                    bullish_ob.remove(i)
 
 // Clean up old bullish order blocks
 bullish_ob := cleanupOldOrderBlocks(bullish_ob)
@@ -726,18 +744,21 @@ if bullish_ob.size() > 0
                 bull_break_conf := 1
                 bullish_boundary_crossed := true
 
+// Bearish OB: breaker when price above OB top; negated when price crosses back below OB bottom
 if bearish_ob.size() > 0
     for i = bearish_ob.size()-1 to 0
         element = bearish_ob.get(i)
-
         if not element.breaker and element.loc < bar_index
             if math.max(close, open) > element.top
                 element.breaker := true
                 element.break_loc := bar_index
-                bearish_breaker_created := true  // Track when OB becomes breaker
-        else
-            if close < element.btm
-                bearish_ob.remove(i)
+                bearish_breaker_created := true
+        else if element.breaker and na(element.negated_loc)
+            if math.min(close, open) < element.btm
+                element.negated_loc := bar_index
+                bearish_breaker_negated := true
+                if not keepBreakersInput
+                    bearish_ob.remove(i)
 
 // Clean up old bearish order blocks
 bearish_ob := cleanupOldOrderBlocks(bearish_ob)
@@ -806,6 +827,8 @@ active_bullish_obs := 0
 active_bearish_obs := 0
 active_bullish_breakers := 0
 active_bearish_breakers := 0
+active_bullish_breakers_negated := 0
+active_bearish_breakers_negated := 0
 nearest_bull_top := na
 nearest_bull_btm := na
 nearest_bear_top := na
@@ -852,11 +875,12 @@ if showBull > 0 and bullish_ob.size() > 0
             if close >= element.btm and close <= element.top
                 price_in_bull_ob := true
         else
-            active_bullish_breakers := active_bullish_breakers + 1
-            
-            // Check if price is inside this breaker
-            if close >= element.btm and close <= element.top
-                price_in_bull_breaker := true
+            if na(element.negated_loc)
+                active_bullish_breakers := active_bullish_breakers + 1
+                if close >= element.btm and close <= element.top
+                    price_in_bull_breaker := true
+            else
+                active_bullish_breakers_negated := active_bullish_breakers_negated + 1
 
 // Calculate bearish order block data  
 if showBear > 0 and bearish_ob.size() > 0
@@ -884,11 +908,12 @@ if showBear > 0 and bearish_ob.size() > 0
             if close >= element.btm and close <= element.top
                 price_in_bear_ob := true
         else
-            active_bearish_breakers := active_bearish_breakers + 1
-            
-            // Check if price is inside this breaker
-            if close >= element.btm and close <= element.top
-                price_in_bear_breaker := true
+            if na(element.negated_loc)
+                active_bearish_breakers := active_bearish_breakers + 1
+                if close >= element.btm and close <= element.top
+                    price_in_bear_breaker := true
+            else
+                active_bearish_breakers_negated := active_bearish_breakers_negated + 1
 
 //------------------------------------------------------------------------------
 //Plot Data for Strategies and Data Window
@@ -896,8 +921,10 @@ if showBear > 0 and bearish_ob.size() > 0
 // Core Order Block metrics
 plot(showDataPlots ? active_bullish_obs : na, "Active Bullish OBs", color.new(color.blue, 0), 1, plot.style_line)
 plot(showDataPlots ? active_bearish_obs : na, "Active Bearish OBs", color.new(color.red, 0), 1, plot.style_line)
-plot(showDataPlots ? active_bullish_breakers : na, "Bullish Breakers", color.new(color.blue, 50), 1, plot.style_line)
-plot(showDataPlots ? active_bearish_breakers : na, "Bearish Breakers", color.new(color.red, 50), 1, plot.style_line)
+plot(showDataPlots ? active_bullish_breakers : na, "Bullish Breakers (not negated)", color.new(color.blue, 50), 1, plot.style_line)
+plot(showDataPlots ? active_bearish_breakers : na, "Bearish Breakers (not negated)", color.new(color.red, 50), 1, plot.style_line)
+plot(showDataPlots ? active_bullish_breakers_negated : na, "Bullish breakers negated (count)", color.new(color.gray, 30), 1, plot.style_line)
+plot(showDataPlots ? active_bearish_breakers_negated : na, "Bearish breakers negated (count)", color.new(color.gray, 30), 1, plot.style_line)
 plot(showDataPlots ? latest_bull_ob_strength : na, "Latest Bull OB Strength", color.new(color.blue, 40), 1, plot.style_histogram)
 plot(showDataPlots ? latest_bear_ob_strength : na, "Latest Bear OB Strength", color.new(color.red, 40), 1, plot.style_histogram)
 
@@ -947,6 +974,8 @@ plotshape(series = showShapes and bullish_boundary_crossed, title = "Bullish OB 
 plotshape(series = showShapes and bearish_boundary_crossed, title = "Bearish OB Breakout", style = shape.triangledown, location = location.abovebar, color = color.new(#ff3b3b, 0), text = "", size = size.tiny) //BEAR BREAKOUT
 plotshape(series = showShapes and bullish_breaker_created, title = "Bullish OB Broken", style = shape.diamond, location = location.belowbar, color = color.new(#ff3beb, 0), text = "", size = size.tiny) //BULL OB BROKEN
 plotshape(series = showShapes and bearish_breaker_created, title = "Bearish OB Broken", style = shape.diamond, location = location.abovebar, color = color.new(#ff3beb, 0), text = "", size = size.tiny) //BEAR OB BROKEN
+plotshape(series = showShapes and bullish_breaker_negated, title = "Bull breaker negated", style = shape.xcross, location = location.belowbar, color = color.new(color.gray, 0), text = "", size = size.tiny)
+plotshape(series = showShapes and bearish_breaker_negated, title = "Bear breaker negated", style = shape.xcross, location = location.abovebar, color = color.new(color.gray, 0), text = "", size = size.tiny)
 
 // Boolean signals for strategy use - hide behind showDataPlots
 plot(showDataPlots and price_in_bull_ob ? 1 : na, "In Bull OB Signal", color.new(color.blue, 80), 1, plot.style_histogram)
@@ -1005,47 +1034,51 @@ if barstate.islast
                 label.delete(obStrengthLabels.get(i))
             obStrengthLabels.clear()
 
-        // Bullish: annotate each displayed bullish OB (respecting showBull)
+        // Bullish: annotate each displayed bullish OB (no label for negated breakers)
         if bullish_ob.size() > 0 and showBull > 0
             for i = 0 to math.min(showBull - 1, bullish_ob.size() - 1)
                 latest_bull_ob = bullish_ob.get(i)
-                bull_y = (latest_bull_ob.top + latest_bull_ob.btm) / 2.0
-                bull_text = format_strength(latest_bull_ob.strength)
-                lbl = label.new(
-                     bar_index + strengthLabelOffsetBars,  // a few bars to the right of the last candle
-                     bull_y,
-                     bull_text,
-                     xloc = xloc.bar_index,
-                     yloc = yloc.price,
-                     style = label.style_label_left,
-                     textcolor = color.white,
-                     color = color.new(color.blue, 80),
-                     size = size.small)
-                obStrengthLabels.push(lbl)
+                skip_bull_label = latest_bull_ob.breaker and not na(latest_bull_ob.negated_loc)
+                if not skip_bull_label
+                    bull_y = (latest_bull_ob.top + latest_bull_ob.btm) / 2.0
+                    bull_text = format_strength(latest_bull_ob.strength)
+                    lbl = label.new(
+                         bar_index + strengthLabelOffsetBars,
+                         bull_y,
+                         bull_text,
+                         xloc = xloc.bar_index,
+                         yloc = yloc.price,
+                         style = label.style_label_left,
+                         textcolor = color.white,
+                         color = color.new(color.blue, 80),
+                         size = size.small)
+                    obStrengthLabels.push(lbl)
 
-        // Bearish: annotate each displayed bearish OB (respecting showBear)
+        // Bearish: annotate each displayed bearish OB (no label for negated breakers)
         if bearish_ob.size() > 0 and showBear > 0
             for i = 0 to math.min(showBear - 1, bearish_ob.size() - 1)
                 latest_bear_ob = bearish_ob.get(i)
-                bear_y = (latest_bear_ob.top + latest_bear_ob.btm) / 2.0
-                bear_text = format_strength(latest_bear_ob.strength)
-                lbl_bear = label.new(
-                     bar_index + strengthLabelOffsetBars,
-                     bear_y,
-                     bear_text,
-                     xloc = xloc.bar_index,
-                     yloc = yloc.price,
-                     style = label.style_label_left,
-                     textcolor = color.white,
-                     color = color.new(color.red, 80),
-                     size = size.small)
-                obStrengthLabels.push(lbl_bear)
+                skip_bear_label = latest_bear_ob.breaker and not na(latest_bear_ob.negated_loc)
+                if not skip_bear_label
+                    bear_y = (latest_bear_ob.top + latest_bear_ob.btm) / 2.0
+                    bear_text = format_strength(latest_bear_ob.strength)
+                    lbl_bear = label.new(
+                         bar_index + strengthLabelOffsetBars,
+                         bear_y,
+                         bear_text,
+                         xloc = xloc.bar_index,
+                         yloc = yloc.price,
+                         style = label.style_label_left,
+                         textcolor = color.white,
+                         color = color.new(color.red, 80),
+                         size = size.small)
+                    obStrengthLabels.push(lbl_bear)
 
 //------------------------------------------------------------------------------
 //Status Table
 //------------------------------------------------------------------------------{
 if showTable and barstate.islast
-    var table infoTable = table.new(position.top_right, 2, 16, bgcolor = color.new(color.white, 80), border_width = 1)
+    var table infoTable = table.new(position.top_right, 2, 17, bgcolor = color.new(color.white, 80), border_width = 1)
     
     table.cell(infoTable, 0, 0, "Metric", text_color = color.black, text_size = size.small)
     table.cell(infoTable, 1, 0, "Value", text_color = color.black, text_size = size.small)
@@ -1089,6 +1122,10 @@ if showTable and barstate.islast
     table.cell(infoTable, 0, 13, "Order Block Lines", text_color = color.gray, text_size = size.small)
     table.cell(infoTable, 1, 13, str.tostring(orderBlockLines.size()), text_color = color.black, text_size = size.small)
     
-    table.cell(infoTable, 0, 14, "Price Level", text_color = color.black, text_size = size.small)
-    table.cell(infoTable, 1, 14, str.tostring(close, "#.####"), text_color = color.black, text_size = size.small)
+    table.cell(infoTable, 0, 14, "Bull breakers negated", text_color = color.gray, text_size = size.small)
+    table.cell(infoTable, 1, 14, str.tostring(active_bullish_breakers_negated), text_color = color.black, text_size = size.small)
+    table.cell(infoTable, 0, 15, "Bear breakers negated", text_color = color.gray, text_size = size.small)
+    table.cell(infoTable, 1, 15, str.tostring(active_bearish_breakers_negated), text_color = color.black, text_size = size.small)
+    table.cell(infoTable, 0, 16, "Price Level", text_color = color.black, text_size = size.small)
+    table.cell(infoTable, 1, 16, str.tostring(close, "#.####"), text_color = color.black, text_size = size.small)
 

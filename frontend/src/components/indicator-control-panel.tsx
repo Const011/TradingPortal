@@ -21,13 +21,6 @@ const toggleButtonActiveStyle = {
   borderColor: "#3b82f6",
 };
 
-const inputStyle = {
-  ...toggleButtonStyle,
-  padding: "6px 10px",
-  width: 72,
-  fontSize: 13,
-};
-
 export function IndicatorControlPanel() {
   const {
     selectedSymbol,
@@ -38,14 +31,8 @@ export function IndicatorControlPanel() {
     orderBlocks,
     structure,
     strategySignals,
-    obShowBull,
-    setObShowBull,
-    obShowBear,
-    setObShowBear,
     volumeProfileEnabled,
     setVolumeProfileEnabled,
-    volumeProfileWindow,
-    setVolumeProfileWindow,
     supportResistanceEnabled,
     setSupportResistanceEnabled,
     orderBlocksEnabled,
@@ -56,8 +43,6 @@ export function IndicatorControlPanel() {
     setCandleColoringEnabled,
     strategyMarkersEnabled,
     setStrategyMarkersEnabled,
-    strategyMarkersWindow,
-    setStrategyMarkersWindow,
     symbolAndIntervalLocked,
     preciseSimulationEnabled,
     setPreciseSimulationEnabled,
@@ -85,7 +70,6 @@ export function IndicatorControlPanel() {
 
   const handleTogglePreciseSimulation = async (): Promise<void> => {
     if (preciseSimulationEnabled) {
-      // Toggle off: go back to quick simulation; allow stream to overwrite signals again.
       setPreciseSimulationEnabled(false);
       return;
     }
@@ -118,34 +102,6 @@ export function IndicatorControlPanel() {
       >
         OB
       </button>
-      {orderBlocksEnabled && (
-        <label style={{ display: "flex", alignItems: "center", gap: 4 }}>
-          <span style={{ fontSize: 12, color: "#5f6368" }}>Bull:</span>
-          <input
-            type="number"
-            min={0}
-            max={150}
-            value={obShowBull}
-            onChange={(e) => {
-              const v = parseInt(e.target.value, 10);
-              if (!Number.isNaN(v) && v >= 0 && v <= 150) setObShowBull(v);
-            }}
-            style={{ ...inputStyle, width: 72 }}
-          />
-          <span style={{ fontSize: 12, color: "#5f6368" }}>Bear:</span>
-          <input
-            type="number"
-            min={0}
-            max={150}
-            value={obShowBear}
-            onChange={(e) => {
-              const v = parseInt(e.target.value, 10);
-              if (!Number.isNaN(v) && v >= 0 && v <= 150) setObShowBear(v);
-            }}
-            style={{ ...inputStyle, width: 72 }}
-          />
-        </label>
-      )}
       <button
         type="button"
         onClick={() => setStructureEnabled(!structureEnabled)}
@@ -186,57 +142,14 @@ export function IndicatorControlPanel() {
       >
         {preciseSimulationRunning ? "Running..." : "Precise simulate"}
       </button>
-      <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-        <span style={{ fontSize: 12, color: "#5f6368" }}>Markers:</span>
-        {(["off", "on"] as const).map((mode) => (
-          <button
-            key={mode}
-            type="button"
-            onClick={() => setStrategyMarkersEnabled(mode === "on")}
-            style={strategyMarkersEnabled === (mode === "on") ? toggleButtonActiveStyle : toggleButtonStyle}
-          >
-            {mode === "off" ? "Off" : "On"}
-          </button>
-        ))}
-        {strategyMarkersEnabled && !symbolAndIntervalLocked && (
-          <label style={{ display: "flex", alignItems: "center", gap: 4 }}>
-            <span style={{ fontSize: 12, color: "#5f6368" }}>Markers window:</span>
-            <input
-              type="number"
-              min={100}
-              max={10000}
-              step={100}
-              value={strategyMarkersWindow}
-              onChange={(e) => {
-                const v = parseInt(e.target.value, 10);
-                if (!Number.isNaN(v) && v >= 100 && v <= 10000) {
-                  setStrategyMarkersWindow(v);
-                }
-              }}
-              style={{ ...inputStyle, width: 72 }}
-            />
-          </label>
-        )}
-      </div>
-      {volumeProfileEnabled && (
-        <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          <span style={{ fontSize: 12, color: "#5f6368" }}>VP window:</span>
-          <input
-            type="number"
-            min={100}
-            max={10000}
-            step={100}
-            value={volumeProfileWindow}
-            onChange={(e) => {
-              const v = parseInt(e.target.value, 10);
-              if (!Number.isNaN(v) && v >= 100 && v <= 10000) {
-                setVolumeProfileWindow(v);
-              }
-            }}
-            style={inputStyle}
-          />
-        </label>
-      )}
+      <button
+        type="button"
+        onClick={() => setStrategyMarkersEnabled(!strategyMarkersEnabled)}
+        style={strategyMarkersEnabled ? toggleButtonActiveStyle : toggleButtonStyle}
+        title="Strategy entry/exit markers and stop segments"
+      >
+        Markers
+      </button>
     </div>
   );
 }

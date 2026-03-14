@@ -19,7 +19,6 @@ import { toChartTimeLocal } from "@/lib/chart-time";
 import {
   getStoredChartPreferences,
   setStoredChartPreferences,
-  STRATEGY_MARKERS_WINDOW_DEFAULT,
   VOLUME_PROFILE_WINDOW_DEFAULT,
 } from "@/lib/chart-preferences-storage";
 import {
@@ -60,8 +59,6 @@ type MarketDataContextValue = {
   setLogScaleEnabled: (enabled: boolean) => void;
   volumeProfileEnabled: boolean;
   setVolumeProfileEnabled: (enabled: boolean) => void;
-  volumeProfileWindow: number;
-  setVolumeProfileWindow: (window: number) => void;
   supportResistanceEnabled: boolean;
   setSupportResistanceEnabled: (enabled: boolean) => void;
   orderBlocksEnabled: boolean;
@@ -72,12 +69,6 @@ type MarketDataContextValue = {
   setCandleColoringEnabled: (enabled: boolean) => void;
   strategyMarkersEnabled: boolean;
   setStrategyMarkersEnabled: (enabled: boolean) => void;
-  strategyMarkersWindow: number;
-  setStrategyMarkersWindow: (window: number) => void;
-  obShowBull: number;
-  setObShowBull: (n: number) => void;
-  obShowBear: number;
-  setObShowBear: (n: number) => void;
   swingLabelsShow: number;
   setSwingLabelsShow: (n: number) => void;
   candles: Candle[];
@@ -124,15 +115,11 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
   const [autoScaleEnabled, setAutoScaleEnabled] = useState<boolean>(true);
   const [logScaleEnabled, setLogScaleEnabled] = useState<boolean>(false);
   const [volumeProfileEnabled, setVolumeProfileEnabled] = useState<boolean>(false);
-  const [volumeProfileWindow, setVolumeProfileWindow] = useState<number>(VOLUME_PROFILE_WINDOW_DEFAULT);
   const [supportResistanceEnabled, setSupportResistanceEnabled] = useState<boolean>(false);
   const [orderBlocksEnabled, setOrderBlocksEnabled] = useState<boolean>(false);
   const [structureEnabled, setStructureEnabled] = useState<boolean>(false);
   const [candleColoringEnabled, setCandleColoringEnabled] = useState<boolean>(false);
   const [strategyMarkersEnabled, setStrategyMarkersEnabled] = useState<boolean>(false);
-  const [strategyMarkersWindow, setStrategyMarkersWindow] = useState<number>(STRATEGY_MARKERS_WINDOW_DEFAULT);
-  const [obShowBull, setObShowBull] = useState<number>(5);
-  const [obShowBear, setObShowBear] = useState<number>(5);
   const [swingLabelsShow, setSwingLabelsShow] = useState<number>(15);
   const [candles, setCandles] = useState<Candle[]>([]);
   const [volumeProfile, setVolumeProfile] = useState<VolumeProfileData | null>(null);
@@ -163,15 +150,11 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
     setAutoScaleEnabled(prefs.autoScale);
     setLogScaleEnabled(prefs.logScale);
     setVolumeProfileEnabled(prefs.volumeProfileEnabled);
-    setVolumeProfileWindow(prefs.volumeProfileWindow);
     setSupportResistanceEnabled(prefs.supportResistanceEnabled);
     setOrderBlocksEnabled(prefs.orderBlocksEnabled);
     setStructureEnabled(prefs.structureEnabled);
     setCandleColoringEnabled(prefs.candleColoringEnabled);
     setStrategyMarkersEnabled(prefs.strategyMarkersEnabled);
-    setStrategyMarkersWindow(prefs.strategyMarkersWindow);
-    setObShowBull(prefs.obShowBull);
-    setObShowBear(prefs.obShowBear);
     setSwingLabelsShow(prefs.swingLabelsShow);
     setCumulativeVolumeDeltaEnabled(prefs.cumulativeVolumeDeltaEnabled);
   }, []);
@@ -201,19 +184,28 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
       autoScale: autoScaleEnabled,
       logScale: logScaleEnabled,
       volumeProfileEnabled,
-      volumeProfileWindow,
       supportResistanceEnabled,
       orderBlocksEnabled,
       structureEnabled,
       candleColoringEnabled,
       strategyMarkersEnabled,
-      strategyMarkersWindow,
-      obShowBull,
-      obShowBear,
       swingLabelsShow,
       cumulativeVolumeDeltaEnabled,
     });
-  }, [selectedSymbol, chartInterval, autoScaleEnabled, logScaleEnabled, volumeProfileEnabled, volumeProfileWindow, supportResistanceEnabled, orderBlocksEnabled, structureEnabled, candleColoringEnabled, strategyMarkersEnabled, strategyMarkersWindow, obShowBull, obShowBear, swingLabelsShow]);
+  }, [
+    selectedSymbol,
+    chartInterval,
+    autoScaleEnabled,
+    logScaleEnabled,
+    volumeProfileEnabled,
+    supportResistanceEnabled,
+    orderBlocksEnabled,
+    structureEnabled,
+    candleColoringEnabled,
+    strategyMarkersEnabled,
+    swingLabelsShow,
+    cumulativeVolumeDeltaEnabled,
+  ]);
 
   useEffect(() => {
     if (!backendBaseUrl) {
@@ -351,7 +343,7 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
     const vpWindow =
       isTrading && gatewayConfig?.bars_window != null
         ? gatewayConfig.bars_window
-        : volumeProfileWindow;
+        : VOLUME_PROFILE_WINDOW_DEFAULT;
     const ws = new WebSocket(
       getCandlesWebSocketUrl(
         backendBaseUrl,
@@ -366,7 +358,19 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
     ws.onmessage = (event: MessageEvent<string>) => {
       try {
         const payload = JSON.parse(event.data) as
-          | { event: "snapshot"; candles: Candle[]; graphics?: { volumeProfile?: VolumeProfileData; supportResistance?: SupportResistanceData; orderBlocks?: OrderBlocksData; smartMoney?: { structure?: SmartMoneyStructureData }; strategySignals?: StrategySignalsData }; volumeProfile?: VolumeProfileData }
+          | {
+              event: "snapshot";
+              candles: Candle[];
+              graphics?: {
+                volumeProfile?: VolumeProfileData;
+                supportResistance?: SupportResistanceData;
+                orderBlocks?: OrderBlocksData;
+                smartMoney?: { structure?: SmartMoneyStructureData };
+                strategySignals?: StrategySignalsData;
+                cumulativeVolumeDelta?: CumulativeVolumeDeltaData;
+              };
+              volumeProfile?: VolumeProfileData;
+            }
           | { event: "heartbeat" };
         if (payload.event === "heartbeat") {
           return;
@@ -399,7 +403,6 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
     backendBaseUrl,
     selectedSymbol,
     chartInterval,
-    volumeProfileWindow,
     strategyMarkersEnabled,
     isTrading,
     gatewayConfig?.bars_window,
@@ -564,8 +567,6 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
       setLogScaleEnabled,
       volumeProfileEnabled,
       setVolumeProfileEnabled,
-      volumeProfileWindow,
-      setVolumeProfileWindow,
       supportResistanceEnabled,
       setSupportResistanceEnabled,
   orderBlocksEnabled,
@@ -576,12 +577,6 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
       setCandleColoringEnabled,
       strategyMarkersEnabled,
       setStrategyMarkersEnabled,
-      strategyMarkersWindow,
-      setStrategyMarkersWindow,
-      obShowBull,
-      setObShowBull,
-      obShowBear,
-      setObShowBear,
       swingLabelsShow,
       setSwingLabelsShow,
       candles,
@@ -615,7 +610,7 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
             selectedSymbol,
             chartInterval,
             limit,
-            volumeProfileWindow
+            VOLUME_PROFILE_WINDOW_DEFAULT
           );
           setCandles(resp.candles);
           const graphics = resp.graphics;
@@ -645,15 +640,11 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
       autoScaleEnabled,
       logScaleEnabled,
       volumeProfileEnabled,
-      volumeProfileWindow,
       supportResistanceEnabled,
       orderBlocksEnabled,
       structureEnabled,
       candleColoringEnabled,
       strategyMarkersEnabled,
-      strategyMarkersWindow,
-      obShowBull,
-      obShowBear,
       swingLabelsShow,
       candles,
       volumeProfile,
@@ -675,7 +666,6 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
       selectedSymbol,
       candles.length,
       chartInterval,
-      volumeProfileWindow,
       preciseSimulationRunning,
       cumulativeVolumeDeltaEnabled,
       cumulativeVolumeDelta,

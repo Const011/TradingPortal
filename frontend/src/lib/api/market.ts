@@ -8,6 +8,7 @@ import {
   SupportResistanceData,
   OrderBlocksData,
   SmartMoneyStructureData,
+  CumulativeVolumeDeltaData,
 } from "@/lib/types/market";
 
 /** Backend mode: simulation (stream strategy) or trading (trade log). */
@@ -173,6 +174,7 @@ export type PreciseSimulationResponse = {
     orderBlocks?: OrderBlocksData;
     smartMoney?: { structure?: SmartMoneyStructureData };
     strategySignals?: StrategySignalsData | null;
+    cumulativeVolumeDelta?: CumulativeVolumeDeltaData;
   };
 };
 

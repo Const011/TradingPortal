@@ -10,8 +10,8 @@ const VALID_INTERVALS = new Set<string>(
   CHART_INTERVAL_OPTIONS.map((o) => o.value)
 );
 
+/** Backend default for volume profile / strategy bar window; WS and precise API use this or gateway bars_window. */
 export const VOLUME_PROFILE_WINDOW_DEFAULT = 2000;
-export const STRATEGY_MARKERS_WINDOW_DEFAULT = 2000;
 
 export type StoredChartPreferences = {
   selectedSymbol: string;
@@ -19,15 +19,11 @@ export type StoredChartPreferences = {
   autoScale: boolean;
   logScale: boolean;
   volumeProfileEnabled: boolean;
-  volumeProfileWindow: number;
   supportResistanceEnabled: boolean;
   orderBlocksEnabled: boolean;
   structureEnabled: boolean;
   candleColoringEnabled: boolean;
   strategyMarkersEnabled: boolean;
-  strategyMarkersWindow: number;
-  obShowBull: number;
-  obShowBear: number;
   swingLabelsShow: number;
   cumulativeVolumeDeltaEnabled: boolean;
 };
@@ -38,15 +34,11 @@ const DEFAULTS: StoredChartPreferences = {
   autoScale: true,
   logScale: false,
   volumeProfileEnabled: false,
-  volumeProfileWindow: VOLUME_PROFILE_WINDOW_DEFAULT,
   supportResistanceEnabled: false,
   orderBlocksEnabled: false,
   structureEnabled: false,
   candleColoringEnabled: false,
   strategyMarkersEnabled: true,
-  strategyMarkersWindow: STRATEGY_MARKERS_WINDOW_DEFAULT,
-  obShowBull: 5,
-  obShowBear: 5,
   swingLabelsShow: 15,
   cumulativeVolumeDeltaEnabled: false,
 };
@@ -74,13 +66,6 @@ function parseStored(raw: string | null): Partial<StoredChartPreferences> {
     if (typeof parsed.volumeProfileEnabled === "boolean") {
       out.volumeProfileEnabled = parsed.volumeProfileEnabled;
     }
-    if (
-      typeof parsed.volumeProfileWindow === "number" &&
-      parsed.volumeProfileWindow >= 100 &&
-      parsed.volumeProfileWindow <= 10000
-    ) {
-      out.volumeProfileWindow = parsed.volumeProfileWindow;
-    }
     if (typeof parsed.supportResistanceEnabled === "boolean") {
       out.supportResistanceEnabled = parsed.supportResistanceEnabled;
     }
@@ -97,32 +82,11 @@ function parseStored(raw: string | null): Partial<StoredChartPreferences> {
       out.strategyMarkersEnabled = parsed.strategyMarkersEnabled;
     }
     if (
-      typeof parsed.strategyMarkersWindow === "number" &&
-      parsed.strategyMarkersWindow >= 100 &&
-      parsed.strategyMarkersWindow <= 10000
-    ) {
-      out.strategyMarkersWindow = parsed.strategyMarkersWindow;
-    }
-    if (
       parsed.strategyMarkers === "off" ||
       parsed.strategyMarkers === "simulation" ||
       parsed.strategyMarkers === "trade"
     ) {
       out.strategyMarkersEnabled = parsed.strategyMarkers !== "off";
-    }
-    if (
-      typeof parsed.obShowBull === "number" &&
-      parsed.obShowBull >= 0 &&
-      parsed.obShowBull <= 150
-    ) {
-      out.obShowBull = parsed.obShowBull;
-    }
-    if (
-      typeof parsed.obShowBear === "number" &&
-      parsed.obShowBear >= 0 &&
-      parsed.obShowBear <= 150
-    ) {
-      out.obShowBear = parsed.obShowBear;
     }
     if (
       typeof parsed.swingLabelsShow === "number" &&
@@ -157,10 +121,6 @@ export function getStoredChartPreferences(): StoredChartPreferences {
       partial.volumeProfileEnabled !== undefined
         ? partial.volumeProfileEnabled
         : DEFAULTS.volumeProfileEnabled,
-    volumeProfileWindow:
-      partial.volumeProfileWindow !== undefined
-        ? partial.volumeProfileWindow
-        : DEFAULTS.volumeProfileWindow,
     supportResistanceEnabled:
       partial.supportResistanceEnabled !== undefined
         ? partial.supportResistanceEnabled
@@ -181,14 +141,6 @@ export function getStoredChartPreferences(): StoredChartPreferences {
       partial.strategyMarkersEnabled !== undefined
         ? partial.strategyMarkersEnabled
         : DEFAULTS.strategyMarkersEnabled,
-    strategyMarkersWindow:
-      partial.strategyMarkersWindow !== undefined
-        ? partial.strategyMarkersWindow
-        : DEFAULTS.strategyMarkersWindow,
-    obShowBull:
-      partial.obShowBull !== undefined ? partial.obShowBull : DEFAULTS.obShowBull,
-    obShowBear:
-      partial.obShowBear !== undefined ? partial.obShowBear : DEFAULTS.obShowBear,
     swingLabelsShow:
       partial.swingLabelsShow !== undefined
         ? partial.swingLabelsShow
@@ -212,8 +164,6 @@ export function setStoredChartPreferences(
     logScale: prefs.logScale ?? current.logScale,
     volumeProfileEnabled:
       prefs.volumeProfileEnabled ?? current.volumeProfileEnabled,
-    volumeProfileWindow:
-      prefs.volumeProfileWindow ?? current.volumeProfileWindow,
     supportResistanceEnabled:
       prefs.supportResistanceEnabled ?? current.supportResistanceEnabled,
     orderBlocksEnabled:
@@ -224,10 +174,6 @@ export function setStoredChartPreferences(
       prefs.candleColoringEnabled ?? current.candleColoringEnabled,
     strategyMarkersEnabled:
       prefs.strategyMarkersEnabled ?? current.strategyMarkersEnabled,
-    strategyMarkersWindow:
-      prefs.strategyMarkersWindow ?? current.strategyMarkersWindow,
-    obShowBull: prefs.obShowBull ?? current.obShowBull,
-    obShowBear: prefs.obShowBear ?? current.obShowBear,
     swingLabelsShow: prefs.swingLabelsShow ?? current.swingLabelsShow,
     cumulativeVolumeDeltaEnabled:
       prefs.cumulativeVolumeDeltaEnabled ?? current.cumulativeVolumeDeltaEnabled,

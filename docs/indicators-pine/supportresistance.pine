@@ -75,12 +75,14 @@ if barstate.islast
     
     //basket_index := math.max(0, math.min(basket_index, N - 1))  // Ensure index is within [0, N-1]
 
-    // Accumulate volume in the appropriate basket
+    // Recency weighting — aligned with Python volume_profile: newest weight 1, oldest small but non-zero
+    // was: volume[i]*(bars_back-i) (oldest bar weight 0); now: volume[i] * (bars_back - i + 1) / (bars_back + 1)
+    denom_bars = float(bars_back + 1)
     for i=0 to bars_back
         avg_price = (high[i] + low[i]) / 2
         basket_index = int(math.floor((avg_price - min_price) / (max_price - min_price) * (N - 1)))    
         if basket_index < array.size (volume_baskets)    
-            array.set(volume_baskets, basket_index, array.get(volume_baskets, basket_index) + volume[i]*(bars_back-i))
+            array.set(volume_baskets, basket_index, array.get(volume_baskets, basket_index) + volume[i] * (bars_back - i + 1) / denom_bars)
 
     var line min_price_line = na
     var line max_price_line = na

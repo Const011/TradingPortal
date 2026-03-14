@@ -76,13 +76,10 @@ export function PriceChart() {
     supportResistance,
     orderBlocksEnabled,
     orderBlocks,
-    obShowBull,
-    obShowBear,
     structureEnabled,
     structure,
     candleColoringEnabled,
     strategyMarkersEnabled,
-    strategyMarkersWindow,
     strategySignals,
     tradeLogTrades,
     symbolAndIntervalLocked,
@@ -91,18 +88,7 @@ export function PriceChart() {
     cumulativeVolumeDeltaEnabled,
   } = useMarketData();
 
-  const orderBlocksForDisplay = useMemo(() => {
-    if (!orderBlocks) return null;
-    const sliceBull = obShowBull > 0 ? obShowBull : 999;
-    const sliceBear = obShowBear > 0 ? obShowBear : 999;
-    return {
-      ...orderBlocks,
-      bullish: (orderBlocks.bullish ?? []).slice(0, sliceBull),
-      bearish: (orderBlocks.bearish ?? []).slice(0, sliceBear),
-      bullishBreakers: (orderBlocks.bullishBreakers ?? []).slice(0, sliceBull),
-      bearishBreakers: (orderBlocks.bearishBreakers ?? []).slice(0, sliceBear),
-    };
-  }, [orderBlocks, obShowBull, obShowBear]);
+  const orderBlocksForDisplay = useMemo(() => orderBlocks, [orderBlocks]);
 
   /** Order blocks with times converted to local for chart display. */
   const orderBlocksForChart = useMemo(() => {
@@ -170,36 +156,8 @@ export function PriceChart() {
 
   const strategySignalsForDisplay = useMemo(() => {
     if (!strategySignals || !strategyMarkersEnabled) return null;
-    if (symbolAndIntervalLocked) {
-      return strategySignals;
-    }
-    if (candles.length === 0 || strategyMarkersWindow <= 0) return strategySignals;
-    const cutoffIndex = Math.max(0, candles.length - strategyMarkersWindow);
-    // Candles use ms; strategy signals use seconds — normalize to seconds for comparison
-    const rawCutoff = candles[cutoffIndex]?.time ?? 0;
-    const cutoffTime = rawCutoff >= 1e12 ? Math.floor(rawCutoff / 1000) : rawCutoff;
-    const filterByTime = <T extends { time?: number }>(items: T[] | undefined): T[] =>
-      (items ?? []).filter((x) => (x.time ?? 0) >= cutoffTime);
-    return {
-      ...strategySignals,
-      markers: filterByTime(strategySignals.markers),
-      stopLines: (strategySignals.stopLines ?? []).filter((line) => {
-        const fromTime = line.from?.time ?? 0;
-        const toTime = line.to?.time ?? 0;
-        return fromTime >= cutoffTime || toTime >= cutoffTime;
-      }),
-      events: filterByTime(strategySignals.events),
-      stopSegments: (strategySignals.stopSegments ?? []).filter(
-        (s) => (s.startTime ?? 0) >= cutoffTime || (s.endTime ?? 0) >= cutoffTime
-      ),
-    };
-  }, [
-    strategySignals,
-    strategyMarkersEnabled,
-    symbolAndIntervalLocked,
-    candles,
-    strategyMarkersWindow,
-  ]);
+    return strategySignals;
+  }, [strategySignals, strategyMarkersEnabled]);
 
   /** Strategy signals with times converted to local for chart display. */
   const strategySignalsForChart = useMemo(() => {
