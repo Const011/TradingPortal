@@ -20,11 +20,11 @@ MAX_LOOKBACK = 1000
 DEFAULT_OB_STRENGTH_N = 2
 
 # Valid order blocks: bullish = greenish, bearish = reddish
-BULL_FILL = "rgba(34, 197, 94, 0.2)"
-BEAR_FILL = "rgba(239, 68, 68, 0.15)"
+BULL_FILL = "rgba(150, 255, 150, 0.3)" #"rgba(34, 197, 94, 0.2)"
+BEAR_FILL = "rgba(255, 150, 150, 0.3)" #"rgba(239, 68, 68, 0.15)"
 # Breakers: bullish = violetish, bearish = yellowish
-BULL_BREAKER_FILL = "rgba(139, 92, 246, 0.05)"
-BEAR_BREAKER_FILL = "rgba(234, 179, 8, 0.05)"
+BULL_BREAKER_FILL = "rgba(150, 150, 255, 0.15)"#"rgba(139, 92, 246, 0.05)"
+BEAR_BREAKER_FILL = "rgba(255, 200, 150, 0.15)" #"rgba(234, 179, 8, 0.05)"
 
 
 DEFAULT_KEEP_BREAKERS = True
