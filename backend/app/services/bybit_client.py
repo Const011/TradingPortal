@@ -233,7 +233,13 @@ class BybitClient:
         """[Bybit] WebSocket tickers.{symbol}. Streams lastPrice, volume24h, change%.
         For ticker list only; do not use for chart bar updates."""
         topic = f"tickers.{symbol}"
-        async with websockets.connect(self._ws_public_url()) as connection:
+        # ping_* helps detect dead connections; hub reconnects on exit/error.
+        async with websockets.connect(
+            self._ws_public_url(),
+            ping_interval=20,
+            ping_timeout=25,
+            close_timeout=5,
+        ) as connection:
             subscribe_message = json.dumps({"op": "subscribe", "args": [topic]})
             await connection.send(subscribe_message)
 
@@ -345,7 +351,12 @@ class BybitClient:
         """[Bybit] WebSocket kline.{interval}.{symbol}. Streams current bar OHLCV updates.
         confirm=false while bar is open; confirm=true when closed. Uses market-specific stream."""
         topic = f"kline.{interval}.{symbol}"
-        async with websockets.connect(self._ws_public_url()) as connection:
+        async with websockets.connect(
+            self._ws_public_url(),
+            ping_interval=20,
+            ping_timeout=25,
+            close_timeout=5,
+        ) as connection:
             subscribe_message = json.dumps({"op": "subscribe", "args": [topic]})
             await connection.send(subscribe_message)
 

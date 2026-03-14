@@ -114,11 +114,22 @@ export async function fetchTickers(
   if (symbols.length > 0) {
     searchParams.set("symbols", symbols.join(","));
   }
-  const response = await fetch(`${backendBaseUrl}/api/v1/tickers?${searchParams.toString()}`);
-  if (!response.ok) {
-    throw new Error("Failed to fetch tickers");
+  const url = `${backendBaseUrl}/api/v1/tickers?${searchParams.toString()}`;
+  const maxAttempts = 5;
+  let lastStatus = 0;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const response = await fetch(url);
+    lastStatus = response.status;
+    if (response.ok) {
+      return (await response.json()) as TickerSnapshot[];
+    }
+    if (response.status !== 503 && response.status !== 502 && response.status !== 504) {
+      throw new Error(`Failed to fetch tickers (${response.status})`);
+    }
+    const delayMs = Math.min(30_000, 1000 * 2 ** (attempt - 1));
+    await new Promise((r) => setTimeout(r, delayMs));
   }
-  return (await response.json()) as TickerSnapshot[];
+  throw new Error(`Failed to fetch tickers after retries (last status ${lastStatus})`);
 }
 
 /** [Backend] WS /stream/ticks. Ticker stream for ticker list only (lastPrice, volume24h, change%). */

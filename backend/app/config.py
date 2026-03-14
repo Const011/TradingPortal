@@ -44,6 +44,10 @@ class Settings(BaseSettings):
 
     # Data fetch: heartbeat polls Bybit REST at this interval (both simulation and trading)
     fetch_interval_sec: int = 60
+    # After a failed REST/WS call, backoff grows up to this cap (seconds) before retry.
+    network_reconnect_max_sec: int = Field(
+        120, description="Max delay between retries when Bybit/network fails (env: NETWORK_RECONNECT_MAX_SEC)"
+    )
 
     # Trade executor: order qty and leverage (set via POSITION_SIZE and LEVERAGE in run-dev-trading.sh).
     position_size: str = ""

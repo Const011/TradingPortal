@@ -29,6 +29,25 @@ from app.utils.timefmt import ts_human
 logger = logging.getLogger(__name__)
 DEFAULT_VOLUME_PROFILE_WINDOW = 2000
 
+
+def _log_heartbeat_task_done(stream_key: tuple[str, str], task: asyncio.Task[None]) -> None:
+    """Avoid 'Future exception was never retrieved' if the heartbeat task exits unexpectedly."""
+    try:
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            logger.error(
+                "Heartbeat task ended %s/%s: %s",
+                stream_key[0],
+                stream_key[1],
+                exc,
+                exc_info=exc,
+            )
+    except asyncio.CancelledError:
+        pass
+
+
 def _restore_current_trades(symbol: str, interval: str, state: "CandleStreamState") -> None:
     """Load current trades from file and merge into state. Called once per stream on start."""
     if getattr(state, "current_trades_restored", False):
@@ -378,7 +397,11 @@ class CandleStreamHub:
             if settings.mode == "trading":
                 _restore_current_trades(symbol.upper(), interval, state)
             if state.task is None or state.task.done():
-                state.task = asyncio.create_task(self._run_heartbeat(symbol.upper(), interval))
+                t = asyncio.create_task(self._run_heartbeat(symbol.upper(), interval))
+                t.add_done_callback(
+                    lambda task, sk=stream_key: _log_heartbeat_task_done(sk, task)
+                )
+                state.task = t
 
     async def subscribe(
         self,
@@ -406,7 +429,11 @@ class CandleStreamHub:
                     bybit_client=self._bybit_client,
                 )
             if state.task is None or state.task.done():
-                state.task = asyncio.create_task(self._run_heartbeat(symbol, interval))
+                t = asyncio.create_task(self._run_heartbeat(symbol, interval))
+                t.add_done_callback(
+                    lambda task, sk=stream_key: _log_heartbeat_task_done(sk, task)
+                )
+                state.task = t
         if snapshot_payload is not None:
             await queue.put(snapshot_payload)
         return queue
@@ -429,8 +456,11 @@ class CandleStreamHub:
 
     async def _run_heartbeat(self, symbol: str, interval: str) -> None:
         """Heartbeat loop: fetch from Bybit REST at fetch_interval_sec, compute, broadcast."""
-        stream_key = (symbol, interval)
+        stream_key = (symbol.upper(), interval)
         fetch_interval = settings.fetch_interval_sec
+        reconnect_max = max(fetch_interval, settings.network_reconnect_max_sec)
+        # After errors, sleep grows up to reconnect_max (reduces log/DNS hammer when offline).
+        error_backoff = fetch_interval
         first_run = True
         # Fetch tick size once per heartbeat stream (best-effort; fall back to heuristic in strategy).
         tick_size: float | None = None
@@ -500,11 +530,24 @@ class CandleStreamHub:
                     len(state.queues),
                     pos_summary,
                 )
+                error_backoff = fetch_interval
             except asyncio.CancelledError:
                 break
-            except Exception:
-                logger.exception("Heartbeat fetch failed, retrying in %ds", fetch_interval)
-                await asyncio.sleep(fetch_interval)
+            except Exception as e:
+                logger.warning(
+                    "Heartbeat %s %s: %s (%s); retry in %ds",
+                    symbol,
+                    interval,
+                    type(e).__name__,
+                    e,
+                    error_backoff,
+                )
+                try:
+                    await asyncio.sleep(error_backoff)
+                except asyncio.CancelledError:
+                    break
+                error_backoff = min(reconnect_max, max(fetch_interval, error_backoff * 2))
+                first_run = True  # retry soon; do not wait fetch_interval again before next get_klines
 
     async def get_cached_candles(self, symbol: str, interval: str, limit: int = 2000) -> list[Candle]:
         """Return cached candles for symbol/interval if available. Used by GET /candles."""
