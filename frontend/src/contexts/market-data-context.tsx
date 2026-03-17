@@ -426,6 +426,7 @@ export function MarketDataProvider({ children }: MarketDataProviderProps) {
         const merged = {
           markers: trades.flatMap((t) => t.markers ?? []),
           stopLines: trades.flatMap((t) => t.stopLines ?? []),
+          targetLines: trades.flatMap((t) => t.targetLines ?? []),
           events: trades.flatMap((t) => t.events ?? []),
           stopSegments: trades.flatMap((t) => t.stopSegments ?? []),
         } as StrategySignalsData;

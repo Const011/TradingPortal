@@ -14,11 +14,16 @@ from app.services.indicators.smart_money_structure import compute_structure
 from app.services.indicators.cumulative_volume_delta import compute_cumulative_volume_delta
 from app.services.trading_strategy.order_block_trend_following import compute_order_block_trend_following
 from app.services.trading_strategy.chart_format import strategy_output_to_chart
-from app.services.trading_strategy.types import TradeEvent, StopSegment
+from app.services.trading_strategy.types import (
+    StrategySeedPosition,
+    TradeEvent,
+    StopSegment,
+)
 from app.services.trade_log import (
     append_exit,
     compute_trade_results,
     get_effective_stop_segments_for_bar,
+    load_current_trade_seed,
     load_current_trades,
     write_entry_snapshot_md_only,
 )
@@ -94,6 +99,49 @@ def _refresh_current_trades_from_file(
             state.last_stop_price_per_trade[tid] = t.get("currentStopPrice", 0.0)
 
 
+def _build_strategy_seed_position(
+    symbol: str,
+    interval: str,
+    state: "CandleStreamState",
+) -> StrategySeedPosition | None:
+    """Restore the current open trade so the strategy can resume live trailing."""
+    if settings.mode != "trading":
+        return None
+    if len(state.restored_trades) != 1:
+        return None
+
+    trade_id = str(state.restored_trades[0].get("tradeId", "")).strip()
+    if not trade_id:
+        return None
+
+    seed = load_current_trade_seed(symbol, interval, trade_id)
+    if seed is None:
+        return None
+
+    side = str(seed.get("side", "")).lower()
+    if side not in {"long", "short"}:
+        return None
+
+    entry_time = int(seed.get("entryTime", 0) or 0)
+    entry_price = float(seed.get("entryPrice", 0.0) or 0.0)
+    stop_price = float(seed.get("currentStopPrice", seed.get("initialStopPrice", 0.0)) or 0.0)
+    active_stop_time = int(seed.get("activeStopTime", entry_time) or entry_time)
+    target_value = seed.get("targetPrice")
+    target_price = float(target_value) if isinstance(target_value, (int, float)) else None
+    if entry_time <= 0 or entry_price <= 0.0 or stop_price <= 0.0:
+        return None
+
+    return StrategySeedPosition(
+        trade_id=trade_id,
+        side=side,
+        entry_time=entry_time,
+        entry_price=entry_price,
+        stop_price=stop_price,
+        target_price=target_price,
+        active_stop_time=active_stop_time,
+    )
+
+
 async def _apply_trade_logging(
     symbol: str,
     interval: str,
@@ -125,6 +173,15 @@ async def _apply_trade_logging(
     current_bar_start_sec = candles[-1].time // 1000
     interval_sec = interval_seconds(interval, default=3600)
     current_bar_end_sec = current_bar_start_sec + interval_sec
+    # In trading mode, entries are evaluated on the current bar, but trailing
+    # stops should be submitted for the last fully closed bar. When we have at
+    # least two candles, use candles[-2] as the closed bar window for stop
+    # updates; otherwise fall back to the current bar.
+    trailing_bar_start_sec = current_bar_start_sec
+    trailing_bar_end_sec = current_bar_end_sec
+    if len(candles) >= 2:
+        trailing_bar_start_sec = candles[-2].time // 1000
+        trailing_bar_end_sec = current_bar_start_sec
 
     # Prevent duplicate entries per bar, but allow multiple stop updates
     # (we rely on last_stop_price_per_trade to avoid duplicate prices).
@@ -170,8 +227,8 @@ async def _apply_trade_logging(
 
     best_seg_per_trade = get_effective_stop_segments_for_bar(
         stop_segments,
-        current_bar_start_sec,
-        current_bar_end_sec,
+        trailing_bar_start_sec,
+        trailing_bar_end_sec,
         events_by_side,
         state.logged_entry_ids,
     )
@@ -183,8 +240,8 @@ async def _apply_trade_logging(
         # actually changed. We allow both tighter and looser moves.
         if prev is not None and seg.price == prev:
             continue
-        # At most one stop move per bar per trade to avoid wobble from repeated live updates.
-        if state.logged_stop_bar_per_trade.get(trade_id) == current_bar_start_sec:
+        # At most one stop move per *closed* bar per trade to avoid wobble from repeated live updates.
+        if state.logged_stop_bar_per_trade.get(trade_id) == trailing_bar_start_sec:
             continue
         # Executor owns current.json and index (stop_move): dry run logs and persists; live sets Bybit then persists.
         await update_stop(
@@ -197,7 +254,7 @@ async def _apply_trade_logging(
             bybit_client,
         )
         state.last_stop_price_per_trade[trade_id] = seg.price
-        state.logged_stop_bar_per_trade[trade_id] = current_bar_start_sec
+        state.logged_stop_bar_per_trade[trade_id] = trailing_bar_start_sec
         # Keep in-memory restored trades consistent with executor-written current.json.
         for t in getattr(state, "restored_trades", []):
             if t.get("tradeId") == trade_id:
@@ -328,12 +385,14 @@ async def _make_snapshot_payload(
             if cvd.get("points"):
                 graphics["cumulativeVolumeDelta"] = cvd
             if strategy_markers in ("simulation", "trade"):
+                seed_position = _build_strategy_seed_position(symbol, interval, state)
                 trade_events, stop_segments = compute_order_block_trend_following(
                     candles,
                     structure_result.get("swingPivots") or {},
                     candle_colors=structure_result.get("candleColors"),
                     sr_lines=sr_lines,
                     tick_size=state.tick_size,
+                    seed_position=seed_position,
                 )
                 chart_data = strategy_output_to_chart(
                     trade_events, stop_segments, interval

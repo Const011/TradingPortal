@@ -54,6 +54,52 @@ def load_current_trades(symbol: str, interval: str) -> list[CurrentTrade]:
         return []
 
 
+def load_current_trade_seed(symbol: str, interval: str, trade_id: str) -> CurrentTrade | None:
+    """Return open-trade seed with the latest logged stop bar time.
+
+    `current.json` holds the actual active stop price, but its `currentStopTime` is wall-clock
+    update time rather than candle time. For strategy restore we need the last candle-time from
+    `index.jsonl` where this stop became active, so trailing for the pre-last bar starts from the
+    real executor stop level.
+    """
+    trade = next(
+        (item for item in load_current_trades(symbol, interval) if item.get("tradeId") == trade_id),
+        None,
+    )
+    if trade is None:
+        return None
+
+    latest_stop_time: int | None = None
+    index_path = _index_path(symbol, interval)
+    if index_path.exists():
+        try:
+            with index_path.open("r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        rec = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if rec.get("tradeId") != trade_id or rec.get("type") != "stop_move":
+                        continue
+                    raw_time = rec.get("time")
+                    if isinstance(raw_time, (int, float)):
+                        latest_stop_time = int(raw_time)
+        except OSError as e:
+            logger.warning(
+                "Trade log: failed to read seed for trade_id=%s from %s: %s",
+                trade_id,
+                index_path,
+                e,
+            )
+
+    seed = dict(trade)
+    seed["activeStopTime"] = latest_stop_time or int(trade.get("entryTime", 0))
+    return seed
+
+
 def save_current_trades(symbol: str, interval: str, trades: list[CurrentTrade]) -> None:
     """Write current open trades to file."""
     log_dir = _log_dir(symbol, interval)
@@ -665,16 +711,34 @@ def get_trades(
                     )
 
         if exit_rec is not None:
-            close_dt_iso = _ts_to_iso(exit_rec.get("time", 0))
+            close_ts = exit_rec.get("time", 0)
+            close_dt_iso = _ts_to_iso(close_ts)
             close_price = exit_rec.get("closePrice")
             close_reason = exit_rec.get("closeReason", "manual")
             points = exit_rec.get("points", 0.0)
         else:
             # Still-open trade: no realized PnL yet. Represent as "open" with zero points.
+            close_ts = last_time
             close_dt_iso = _ts_to_iso(last_time)
             close_price = entry.get("price")
             close_reason = "open"
             points = 0.0
+
+        # Take-profit target line: draw from entry time until close (or last_time for open trades).
+        target_lines: list[dict[str, Any]] = []
+        tp = entry.get("targetPrice")
+        if tp is not None:
+            target_end_time = close_ts
+            target_lines.append(
+                {
+                    "type": "lineSegment",
+                    "from": {"time": entry_time, "price": tp},
+                    "to": {"time": target_end_time, "price": tp},
+                    "color": "#22c55e" if side == "long" else "#ef4444",
+                    "width": 1,
+                    "style": "solid",
+                }
+            )
 
         trade_obj: dict[str, Any] = {
             "tradeId": trade_id,
@@ -688,6 +752,7 @@ def get_trades(
             "markers": markers,
             "stopSegments": chart_stop_segments,
             "stopLines": stop_lines,
+            "targetLines": target_lines,
             "events": [{
                 "time": entry.get("time"),
                 "tradeId": trade_id,

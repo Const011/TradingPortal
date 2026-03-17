@@ -4,15 +4,21 @@ import logging
 import math
 from collections import deque
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 from app.schemas.market import Candle
 
 logger = logging.getLogger(__name__)
 
 # Temporary debug: log bullish signal steps for bars around 2026-03-02 17:00
-_DEBUG_TS_START = int(datetime(2025, 3, 10, 11, 0).timestamp() * 1000)
-_DEBUG_TS_END = int(datetime(2025, 3, 10, 11, 0).timestamp() * 1000)
+now = datetime.now(timezone.utc)
+current_hour = now.replace(minute=0, second=0, microsecond=0)
+#_DEBUG_TS_START = int(datetime(2025, 3, 16, 0, 0).timestamp() * 1000)
+#_DEBUG_TS_END = int(datetime(2025, 3, 16, 1, 0).timestamp() * 1000)
+
+# last bar
+_DEBUG_TS_START = int((current_hour - timedelta(hours=1)).timestamp() * 1000)
+_DEBUG_TS_END = int((current_hour + timedelta(hours=1)).timestamp() * 1000)
 
 from app.utils.timefmt import ts_human
 
@@ -25,7 +31,11 @@ from app.services.indicators.cumulative_volume_delta import (
     compute_cumulative_volume_delta,
     DEFAULT_CVD_LENGTH,
 )
-from app.services.trading_strategy.types import TradeEvent, StopSegment
+from app.services.trading_strategy.types import (
+    StrategySeedPosition,
+    TradeEvent,
+    StopSegment,
+)
 from app.services.indicators.order_blocks import DEFAULT_KEEP_BREAKERS
 
 logger = logging.getLogger(__name__)
@@ -108,6 +118,17 @@ def _last_segment_for_trade(
     if last.trade_id != trade_id:
         return None
     return last
+
+
+def _candle_time_sec(candle: Candle) -> int:
+    return candle.time // 1000
+
+
+def _find_bar_index_by_time(candles: list[Candle], time_sec: int) -> int | None:
+    for idx, candle in enumerate(candles):
+        if _candle_time_sec(candle) == time_sec:
+            return idx
+    return None
 
 
 def _is_bullish_trend(candle_colors: dict[int, str] | None, time_ms: int) -> bool:
@@ -694,6 +715,7 @@ def compute_order_block_trend_following(
     cvd_length: int = DEFAULT_CVD_LENGTH,
     cvd_sequence_bars: int = DEFAULT_CVD_SEQUENCE_BARS,
     tick_size: float | None = None,
+    seed_position: StrategySeedPosition | None = None,
 ) -> tuple[list[TradeEvent], list[StopSegment]]:
     """
     Run Order Block Trend-Following strategy.
@@ -706,9 +728,37 @@ def compute_order_block_trend_following(
     events: list[TradeEvent] = []
     stop_segments: list[StopSegment] = []
     position: _ActivePosition | None = None
+    seeded_position_activated = False
     vol_lookback = 20
     ob_entry_counts: dict[tuple[float, float, int], int] = {}  # Count actual trades per OB, not crosses
     events_history: deque[tuple[int, list[dict]]] = deque(maxlen=consecutive_closes)
+
+    seed_entry_bar: int | None = None
+    seed_active_bar: int | None = None
+    if seed_position is not None:
+        seed_entry_bar = _find_bar_index_by_time(candles, seed_position.entry_time)
+        seed_active_bar = _find_bar_index_by_time(candles, seed_position.active_stop_time)
+        if seed_entry_bar is None:
+            logger.warning(
+                "[OB_STRAT_SEED] ignored trade_id=%s because entry_time=%s was not found in candles",
+                seed_position.trade_id,
+                seed_position.entry_time,
+            )
+            seed_position = None
+        else:
+            if seed_active_bar is None or seed_active_bar < seed_entry_bar:
+                seed_active_bar = seed_entry_bar
+            logger.info(
+                "[OB_STRAT_SEED] trade_id=%s side=%s entry_time=%s seed_stop_time=%s entry_bar=%s seed_bar=%s stop=%.4f target=%s",
+                seed_position.trade_id,
+                seed_position.side,
+                seed_position.entry_time,
+                seed_position.active_stop_time,
+                seed_entry_bar,
+                seed_active_bar,
+                seed_position.stop_price,
+                f"{seed_position.target_price:.4f}" if seed_position.target_price is not None else "None",
+            )
 
     # Precompute global average OB strength (bullish + bearish) for relative filtering.
     all_bull, all_bear = _compute_order_blocks_from_pivots(
@@ -749,11 +799,26 @@ def compute_order_block_trend_following(
         swing_pivots,
         keep_breakers=keep_breakers,
     ):
+        _debug_bar = _DEBUG_TS_START <= c.time <= _DEBUG_TS_END
+        if _debug_bar and (bullish_ob or bearish_ob):
+            for ob in bullish_ob:
+                logger.info(
+                    "[OB_STRAT] bar=%d time=%s | BULL ob raw: [%.2f, %.2f] formation_bar=%d loc=%d strength=%.1f threshold=%.1f",
+                    i, ts_human(c.time), ob.top, ob.bottom, ob.formation_bar, ob.loc,
+                    ob.strength_index, strength_threshold,
+                )
         # Relative strength filter: keep only OBs whose strength is above
         # (min_ob_strength × average strength) across all identified blocks.
         if strength_threshold > 0.0:
+            bullish_before = len(bullish_ob)
+            bearish_before = len(bearish_ob)
             bullish_ob = [ob for ob in bullish_ob if ob.strength_index >= strength_threshold]
             bearish_ob = [ob for ob in bearish_ob if ob.strength_index >= strength_threshold]
+            if _debug_bar and (bullish_before != len(bullish_ob) or bearish_before != len(bearish_ob)):
+                logger.info(
+                    "[OB_STRAT] bar=%d time=%s | strength filter: BULL %d->%d BEAR %d->%d",
+                    i, ts_human(c.time), bullish_before, len(bullish_ob), bearish_before, len(bearish_ob),
+                )
         # Filter out OBs that have been fully negated on or before the current bar.
         bullish_ob = [
             ob
@@ -783,6 +848,42 @@ def compute_order_block_trend_following(
         is_bull = _is_bullish_trend(candle_colors, c.time)
         is_bear = _is_bearish_trend(candle_colors, c.time)
         _debug = _DEBUG_TS_START <= c.time <= _DEBUG_TS_END
+        if (
+            seed_position is not None
+            and not seeded_position_activated
+            and seed_entry_bar is not None
+            and seed_active_bar is not None
+            and i == seed_active_bar
+        ):
+            position = _ActivePosition(
+                side=seed_position.side,
+                trade_id=seed_position.trade_id,
+                entry_price=seed_position.entry_price,
+                entry_bar=seed_entry_bar,
+                stop_price=seed_position.stop_price,
+                target_price=seed_position.target_price,
+                trigger_ob_top=0.0,
+                trigger_ob_bottom=0.0,
+            )
+            stop_segments.append(
+                StopSegment(
+                    start_time=seed_position.active_stop_time,
+                    end_time=time_s,
+                    trade_id=seed_position.trade_id,
+                    price=seed_position.stop_price,
+                    side=seed_position.side,
+                )
+            )
+            seeded_position_activated = True
+            if _debug:
+                logger.info(
+                    "[OB_STRAT_SEED] activated trade_id=%s bar=%d time=%s entry_bar=%d stop=%.4f",
+                    seed_position.trade_id,
+                    i,
+                    ts_human(c.time),
+                    seed_entry_bar,
+                    seed_position.stop_price,
+                )
         if _debug and raw_events:
             logger.info(
                 "[OB_STRAT] bar=%d time=%s | raw_events=%d types=%s",
@@ -1289,7 +1390,20 @@ def compute_order_block_trend_following(
                         )
                 ob_entry_counts[candidate.ob_key] = ob_entry_counts.get(candidate.ob_key, 0) + 1
 
-            if current_side is None:
+            seed_guard_active = (
+                seed_position is not None
+                and seed_active_bar is not None
+                and i <= seed_active_bar
+            )
+            if seed_guard_active:
+                if _debug and (long_candidate is not None or short_candidate is not None):
+                    logger.info(
+                        "[OB_STRAT_SEED] bar=%d time=%s | skipping entry/reversal evaluation until after seed bar=%d",
+                        i,
+                        ts_human(c.time),
+                        seed_active_bar,
+                    )
+            elif current_side is None:
                 chosen: _EntryCandidate | None = None
                 if long_candidate and not short_candidate:
                     chosen = long_candidate
@@ -1357,7 +1471,7 @@ def compute_order_block_trend_following(
         # can emit multiple segments per bar (e.g. breakeven then level_cross). For execution
         # and logging, use get_effective_stop_segments_for_bar() to get the single best stop
         # per trade (long: max price, short: min price among segments for that bar).
-        if position and prev_candle is not None and position.entry_bar < i:
+        if position and prev_candle is not None and position.entry_bar <= i:
             if position.side == "long":
                 # Breakeven: trail toward entry + 0.1×entry_bar_body when close above that level
                 breakeven_target_long = position.entry_price
@@ -1402,6 +1516,15 @@ def compute_order_block_trend_following(
                                 price=new_stop,
                                 side="long",
                             )
+                        )
+                    elif _debug:
+                        logger.info(
+                            "[OB_STOP_BREAKEVEN_LONG] bar=%d time=%s | candidate rejected (<= old stop) old_stop=%.1f candidate=%.1f breakeven_target=%.1f",
+                            i,
+                            ts_human(c.time),
+                            position.stop_price,
+                            new_stop,
+                            breakeven_target_long,
                         )
                 # S/R support + bullish OB tops + bearish breaker bottoms (act as support when broken)
                 # + entry price + optional breakeven target (entry + frac*body)
@@ -1475,6 +1598,16 @@ def compute_order_block_trend_following(
                                 side="long",
                             )
                         )
+                    elif _debug:
+                        logger.info(
+                            "[OB_STOP_TRAIL_LONG] bar=%d time=%s | candidate rejected (<= old stop) level=%.1f source=%s old_stop=%.1f candidate=%.1f",
+                            i,
+                            ts_human(c.time),
+                            crossed,
+                            level_source,
+                            position.stop_price,
+                            new_stop,
+                        )
                 else:
                     last = _last_segment_for_trade(stop_segments, position.trade_id)
                     if last is not None:
@@ -1534,6 +1667,15 @@ def compute_order_block_trend_following(
                                 price=new_stop,
                                 side="short",
                             )
+                        )
+                    elif _debug:
+                        logger.info(
+                            "[OB_STOP_BREAKEVEN_SHORT] bar=%d time=%s | candidate rejected (>= old stop) old_stop=%.1f candidate=%.1f breakeven_target=%.1f",
+                            i,
+                            ts_human(c.time),
+                            position.stop_price,
+                            new_stop,
+                            breakeven_target_short,
                         )
                 # S/R resistance + bearish OB bottoms + bullish breaker tops (act as resistance when broken)
                 # + entry price + optional breakeven target (entry + frac*body)
@@ -1605,6 +1747,16 @@ def compute_order_block_trend_following(
                                 price=new_stop,
                                 side="short",
                             )
+                        )
+                    elif _debug:
+                        logger.info(
+                            "[OB_STOP_TRAIL_SHORT] bar=%d time=%s | candidate rejected (>= old stop) level=%.1f source=%s old_stop=%.1f candidate=%.1f",
+                            i,
+                            ts_human(c.time),
+                            crossed,
+                            level_source,
+                            position.stop_price,
+                            new_stop,
                         )
                 else:
                     last = _last_segment_for_trade(stop_segments, position.trade_id)

@@ -27,3 +27,16 @@ class StopSegment:
     trade_id: str
     price: float
     side: str  # "long" | "short"
+
+
+@dataclass
+class StrategySeedPosition:
+    """Open trade state restored from the trade log for live trailing."""
+
+    trade_id: str
+    side: str
+    entry_time: int
+    entry_price: float
+    stop_price: float
+    target_price: float | None
+    active_stop_time: int
