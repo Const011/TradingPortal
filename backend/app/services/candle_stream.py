@@ -173,15 +173,11 @@ async def _apply_trade_logging(
     current_bar_start_sec = candles[-1].time // 1000
     interval_sec = interval_seconds(interval, default=3600)
     current_bar_end_sec = current_bar_start_sec + interval_sec
-    # In trading mode, entries are evaluated on the current bar, but trailing
-    # stops should be submitted for the last fully closed bar. When we have at
-    # least two candles, use candles[-2] as the closed bar window for stop
-    # updates; otherwise fall back to the current bar.
+    # In trading mode, both entry and trailing-stop updates are evaluated on the
+    # current bar. We always submit the stop level computed by the strategy for
+    # this bar whenever it differs from the last logged stop for that trade.
     trailing_bar_start_sec = current_bar_start_sec
     trailing_bar_end_sec = current_bar_end_sec
-    if len(candles) >= 2:
-        trailing_bar_start_sec = candles[-2].time // 1000
-        trailing_bar_end_sec = current_bar_start_sec
 
     # Prevent duplicate entries per bar, but allow multiple stop updates
     # (we rely on last_stop_price_per_trade to avoid duplicate prices).
@@ -240,7 +236,7 @@ async def _apply_trade_logging(
         # actually changed. We allow both tighter and looser moves.
         if prev is not None and seg.price == prev:
             continue
-        # At most one stop move per *closed* bar per trade to avoid wobble from repeated live updates.
+        # At most one stop move per bar per trade to avoid wobble from repeated live updates.
         if state.logged_stop_bar_per_trade.get(trade_id) == trailing_bar_start_sec:
             continue
         # Executor owns current.json and index (stop_move): dry run logs and persists; live sets Bybit then persists.
