@@ -126,6 +126,10 @@ def _build_strategy_seed_position(
     entry_price = float(seed.get("entryPrice", 0.0) or 0.0)
     stop_price = float(seed.get("currentStopPrice", seed.get("initialStopPrice", 0.0)) or 0.0)
     active_stop_time = int(seed.get("activeStopTime", entry_time) or entry_time)
+    reference_stop_time = int(seed.get("referenceStopTime", entry_time) or entry_time)
+    reference_stop_price = float(
+        seed.get("referenceStopPrice", seed.get("initialStopPrice", stop_price)) or stop_price
+    )
     target_value = seed.get("targetPrice")
     target_price = float(target_value) if isinstance(target_value, (int, float)) else None
     if entry_time <= 0 or entry_price <= 0.0 or stop_price <= 0.0:
@@ -139,6 +143,8 @@ def _build_strategy_seed_position(
         stop_price=stop_price,
         target_price=target_price,
         active_stop_time=active_stop_time,
+        reference_stop_price=reference_stop_price,
+        reference_stop_time=reference_stop_time,
     )
 
 

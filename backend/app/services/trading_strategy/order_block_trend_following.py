@@ -749,14 +749,16 @@ def compute_order_block_trend_following(
             if seed_active_bar is None or seed_active_bar < seed_entry_bar:
                 seed_active_bar = seed_entry_bar
             logger.info(
-                "[OB_STRAT_SEED] trade_id=%s side=%s entry_time=%s seed_stop_time=%s entry_bar=%s seed_bar=%s stop=%.4f target=%s",
+                "[OB_STRAT_SEED] trade_id=%s side=%s entry_time=%s seed_stop_time=%s ref_stop_time=%s entry_bar=%s seed_bar=%s stop=%.4f ref_stop=%.4f target=%s",
                 seed_position.trade_id,
                 seed_position.side,
                 seed_position.entry_time,
                 seed_position.active_stop_time,
+                seed_position.reference_stop_time,
                 seed_entry_bar,
                 seed_active_bar,
                 seed_position.stop_price,
+                seed_position.reference_stop_price,
                 f"{seed_position.target_price:.4f}" if seed_position.target_price is not None else "None",
             )
 
@@ -1472,6 +1474,13 @@ def compute_order_block_trend_following(
         # and logging, use get_effective_stop_segments_for_bar() to get the single best stop
         # per trade (long: max price, short: min price among segments for that bar).
         if position and prev_candle is not None and position.entry_bar <= i:
+            bar_reference_stop_price = position.stop_price
+            if (
+                seed_position is not None
+                and seed_active_bar is not None
+                and i == seed_active_bar
+            ):
+                bar_reference_stop_price = seed_position.reference_stop_price
             if position.side == "long":
                 # Breakeven: trail toward entry + 0.1×entry_bar_body when close above that level
                 breakeven_target_long = position.entry_price
@@ -1480,17 +1489,18 @@ def compute_order_block_trend_following(
                     breakeven_target_long = position.entry_price + breakeven_body_frac * abs(
                         ec.close - ec.open
                     )
-                if position.entry_price > position.stop_price and c.close > breakeven_target_long:
+                if position.entry_price > bar_reference_stop_price and c.close > breakeven_target_long:
                     new_stop = breakeven_target_long - trail_param * (
-                        breakeven_target_long - position.stop_price
+                        breakeven_target_long - bar_reference_stop_price
                     )
                     if new_stop > position.stop_price:
                         if _debug:
                             entry_body = abs(candles[position.entry_bar].close - candles[position.entry_bar].open) if 0 <= position.entry_bar < len(candles) else 0.0
                             logger.info(
-                                "[OB_STOP_BREAKEVEN_LONG] bar=%d time=%s | rule=breakeven | old_stop=%.1f new_stop=%.1f breakeven_target=%.1f | params: trail_param=%.2f breakeven_body_frac=%.2f entry_bar_body=%.1f",
+                                "[OB_STOP_BREAKEVEN_LONG] bar=%d time=%s | rule=breakeven | ref_stop=%.1f active_stop=%.1f new_stop=%.1f breakeven_target=%.1f | params: trail_param=%.2f breakeven_body_frac=%.2f entry_bar_body=%.1f",
                                 i,
                                 ts_human(c.time),
+                                bar_reference_stop_price,
                                 position.stop_price,
                                 new_stop,
                                 breakeven_target_long,
@@ -1519,9 +1529,10 @@ def compute_order_block_trend_following(
                         )
                     elif _debug:
                         logger.info(
-                            "[OB_STOP_BREAKEVEN_LONG] bar=%d time=%s | candidate rejected (<= old stop) old_stop=%.1f candidate=%.1f breakeven_target=%.1f",
+                            "[OB_STOP_BREAKEVEN_LONG] bar=%d time=%s | candidate rejected (<= active stop) ref_stop=%.1f active_stop=%.1f candidate=%.1f breakeven_target=%.1f",
                             i,
                             ts_human(c.time),
+                            bar_reference_stop_price,
                             position.stop_price,
                             new_stop,
                             breakeven_target_long,
@@ -1546,7 +1557,7 @@ def compute_order_block_trend_following(
                     )
                     level_tuples_long.append((breakeven_target, "breakeven_target"))
                 # Alternative: previous bar's low as support when above current stop (higher low = support).
-                if prev_candle.low > position.stop_price:
+                if prev_candle.low > bar_reference_stop_price:
                     level_tuples_long.append((prev_candle.low, "prev_bar_low"))
                 levels_long = [p for p, _ in level_tuples_long]
                 crossed = _confirmed_level_cross_long(
@@ -1554,7 +1565,7 @@ def compute_order_block_trend_following(
                     i,
                     prev_candle,
                     levels_long,
-                    position.stop_price,
+                    bar_reference_stop_price,
                     volume_spike_mult,
                     trail_consecutive_closes,
                     vol_lookback,
@@ -1562,15 +1573,16 @@ def compute_order_block_trend_following(
                 if crossed is not None:
                     level_source = next((s for (p, s) in level_tuples_long if p == crossed), "unknown")
                     param_long = trail_param_prev_bar if level_source == "prev_bar_low" else trail_param
-                    new_stop = crossed - param_long * (crossed - position.stop_price)
+                    new_stop = crossed - param_long * (crossed - bar_reference_stop_price)
                     if new_stop > position.stop_price:
                         if _debug:
                             logger.info(
-                                "[OB_STOP_TRAIL_LONG] bar=%d time=%s | rule=level_cross level=%.1f source=%s old_stop=%.1f new_stop=%.1f | params: trail_param=%.2f trail_sr_min_strength=%.0f volume_spike_mult=%.2f trail_consecutive_closes=%d vol_lookback=%d",
+                                "[OB_STOP_TRAIL_LONG] bar=%d time=%s | rule=level_cross level=%.1f source=%s ref_stop=%.1f active_stop=%.1f new_stop=%.1f | params: trail_param=%.2f trail_sr_min_strength=%.0f volume_spike_mult=%.2f trail_consecutive_closes=%d vol_lookback=%d",
                                 i,
                                 ts_human(c.time),
                                 crossed,
                                 level_source,
+                                bar_reference_stop_price,
                                 position.stop_price,
                                 new_stop,
                                 param_long,
@@ -1600,11 +1612,12 @@ def compute_order_block_trend_following(
                         )
                     elif _debug:
                         logger.info(
-                            "[OB_STOP_TRAIL_LONG] bar=%d time=%s | candidate rejected (<= old stop) level=%.1f source=%s old_stop=%.1f candidate=%.1f",
+                            "[OB_STOP_TRAIL_LONG] bar=%d time=%s | candidate rejected (<= active stop) level=%.1f source=%s ref_stop=%.1f active_stop=%.1f candidate=%.1f",
                             i,
                             ts_human(c.time),
                             crossed,
                             level_source,
+                            bar_reference_stop_price,
                             position.stop_price,
                             new_stop,
                         )
@@ -1631,17 +1644,18 @@ def compute_order_block_trend_following(
                     breakeven_target_short = position.entry_price - breakeven_body_frac * abs(
                         ec.close - ec.open
                     )
-                if position.entry_price < position.stop_price and c.close < breakeven_target_short:
+                if position.entry_price < bar_reference_stop_price and c.close < breakeven_target_short:
                     new_stop = breakeven_target_short + trail_param * (
-                        position.stop_price - breakeven_target_short
+                        bar_reference_stop_price - breakeven_target_short
                     )
                     if new_stop < position.stop_price:
                         if _debug:
                             entry_body = abs(candles[position.entry_bar].close - candles[position.entry_bar].open) if 0 <= position.entry_bar < len(candles) else 0.0
                             logger.info(
-                                "[OB_STOP_BREAKEVEN_SHORT] bar=%d time=%s | rule=breakeven | old_stop=%.1f new_stop=%.1f breakeven_target=%.1f | params: trail_param=%.2f breakeven_body_frac=%.2f entry_bar_body=%.1f",
+                                "[OB_STOP_BREAKEVEN_SHORT] bar=%d time=%s | rule=breakeven | ref_stop=%.1f active_stop=%.1f new_stop=%.1f breakeven_target=%.1f | params: trail_param=%.2f breakeven_body_frac=%.2f entry_bar_body=%.1f",
                                 i,
                                 ts_human(c.time),
+                                bar_reference_stop_price,
                                 position.stop_price,
                                 new_stop,
                                 breakeven_target_short,
@@ -1670,9 +1684,10 @@ def compute_order_block_trend_following(
                         )
                     elif _debug:
                         logger.info(
-                            "[OB_STOP_BREAKEVEN_SHORT] bar=%d time=%s | candidate rejected (>= old stop) old_stop=%.1f candidate=%.1f breakeven_target=%.1f",
+                            "[OB_STOP_BREAKEVEN_SHORT] bar=%d time=%s | candidate rejected (>= active stop) ref_stop=%.1f active_stop=%.1f candidate=%.1f breakeven_target=%.1f",
                             i,
                             ts_human(c.time),
+                            bar_reference_stop_price,
                             position.stop_price,
                             new_stop,
                             breakeven_target_short,
@@ -1696,7 +1711,7 @@ def compute_order_block_trend_following(
                     )
                     level_tuples_short.append((breakeven_target, "breakeven_target"))
                 # Alternative: previous bar's high as resistance when below current stop (lower high = resistance).
-                if prev_candle.high < position.stop_price:
+                if prev_candle.high < bar_reference_stop_price:
                     level_tuples_short.append((prev_candle.high, "prev_bar_high"))
                 levels_short = [p for p, _ in level_tuples_short]
                 crossed = _confirmed_level_cross_short(
@@ -1704,7 +1719,7 @@ def compute_order_block_trend_following(
                     i,
                     prev_candle,
                     levels_short,
-                    position.stop_price,
+                    bar_reference_stop_price,
                     volume_spike_mult,
                     trail_consecutive_closes,
                     vol_lookback,
@@ -1712,15 +1727,16 @@ def compute_order_block_trend_following(
                 if crossed is not None:
                     level_source = next((s for (p, s) in level_tuples_short if p == crossed), "unknown")
                     param_short = trail_param_prev_bar if level_source == "prev_bar_high" else trail_param
-                    new_stop = crossed + param_short * (position.stop_price - crossed)
+                    new_stop = crossed + param_short * (bar_reference_stop_price - crossed)
                     if new_stop < position.stop_price:
                         if _debug:
                             logger.info(
-                                "[OB_STOP_TRAIL_SHORT] bar=%d time=%s | rule=level_cross level=%.1f source=%s old_stop=%.1f new_stop=%.1f | params: trail_param=%.2f trail_sr_min_strength=%.0f volume_spike_mult=%.2f trail_consecutive_closes=%d vol_lookback=%d",
+                                "[OB_STOP_TRAIL_SHORT] bar=%d time=%s | rule=level_cross level=%.1f source=%s ref_stop=%.1f active_stop=%.1f new_stop=%.1f | params: trail_param=%.2f trail_sr_min_strength=%.0f volume_spike_mult=%.2f trail_consecutive_closes=%d vol_lookback=%d",
                                 i,
                                 ts_human(c.time),
                                 crossed,
                                 level_source,
+                                bar_reference_stop_price,
                                 position.stop_price,
                                 new_stop,
                                 param_short,
@@ -1750,11 +1766,12 @@ def compute_order_block_trend_following(
                         )
                     elif _debug:
                         logger.info(
-                            "[OB_STOP_TRAIL_SHORT] bar=%d time=%s | candidate rejected (>= old stop) level=%.1f source=%s old_stop=%.1f candidate=%.1f",
+                            "[OB_STOP_TRAIL_SHORT] bar=%d time=%s | candidate rejected (>= active stop) level=%.1f source=%s ref_stop=%.1f active_stop=%.1f candidate=%.1f",
                             i,
                             ts_human(c.time),
                             crossed,
                             level_source,
+                            bar_reference_stop_price,
                             position.stop_price,
                             new_stop,
                         )

@@ -55,12 +55,13 @@ def load_current_trades(symbol: str, interval: str) -> list[CurrentTrade]:
 
 
 def load_current_trade_seed(symbol: str, interval: str, trade_id: str) -> CurrentTrade | None:
-    """Return open-trade seed with the latest logged stop bar time.
+    """Return open-trade seed with active and reference stop state.
 
     `current.json` holds the actual active stop price, but its `currentStopTime` is wall-clock
-    update time rather than candle time. For strategy restore we need the last candle-time from
-    `index.jsonl` where this stop became active, so trailing for the pre-last bar starts from the
-    real executor stop level.
+    update time rather than candle time. For strategy restore we need:
+    - the last candle-time from `index.jsonl` where the active stop became effective
+    - the stop that was active on the previous bar, so current-bar trailing is always computed
+      from the previous-bar stop and does not compound within the same bar across heartbeats
     """
     trade = next(
         (item for item in load_current_trades(symbol, interval) if item.get("tradeId") == trade_id),
@@ -69,7 +70,7 @@ def load_current_trade_seed(symbol: str, interval: str, trade_id: str) -> Curren
     if trade is None:
         return None
 
-    latest_stop_time: int | None = None
+    stop_moves: list[tuple[int, float]] = []
     index_path = _index_path(symbol, interval)
     if index_path.exists():
         try:
@@ -85,8 +86,9 @@ def load_current_trade_seed(symbol: str, interval: str, trade_id: str) -> Curren
                     if rec.get("tradeId") != trade_id or rec.get("type") != "stop_move":
                         continue
                     raw_time = rec.get("time")
-                    if isinstance(raw_time, (int, float)):
-                        latest_stop_time = int(raw_time)
+                    raw_price = rec.get("price")
+                    if isinstance(raw_time, (int, float)) and isinstance(raw_price, (int, float)):
+                        stop_moves.append((int(raw_time), float(raw_price)))
         except OSError as e:
             logger.warning(
                 "Trade log: failed to read seed for trade_id=%s from %s: %s",
@@ -96,7 +98,21 @@ def load_current_trade_seed(symbol: str, interval: str, trade_id: str) -> Curren
             )
 
     seed = dict(trade)
-    seed["activeStopTime"] = latest_stop_time or int(trade.get("entryTime", 0))
+    entry_time = int(trade.get("entryTime", 0) or 0)
+    initial_stop_price = float(
+        trade.get("initialStopPrice", trade.get("currentStopPrice", 0.0)) or 0.0
+    )
+    active_stop_time = stop_moves[-1][0] if stop_moves else entry_time
+    reference_stop_time = entry_time
+    reference_stop_price = initial_stop_price
+    for stop_time, stop_price in stop_moves:
+        if stop_time < active_stop_time:
+            reference_stop_time = stop_time
+            reference_stop_price = stop_price
+
+    seed["activeStopTime"] = active_stop_time
+    seed["referenceStopTime"] = reference_stop_time
+    seed["referenceStopPrice"] = reference_stop_price
     return seed
 
 

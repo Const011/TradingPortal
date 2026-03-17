@@ -40,3 +40,5 @@ class StrategySeedPosition:
     stop_price: float
     target_price: float | None
     active_stop_time: int
+    reference_stop_price: float
+    reference_stop_time: int
