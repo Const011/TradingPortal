@@ -370,6 +370,7 @@ async def sync_from_exchange(
     key = (symbol.upper(), interval)
 
     try:
+        current_price: float | None = None
         if settings.executor_dry_run:
             current_low: float | None = None
             current_high: float | None = None
@@ -380,6 +381,8 @@ async def sync_from_exchange(
                     last_candle = candles[-1]
                     current_low = float(getattr(last_candle, "low", 0.0) or 0.0)
                     current_high = float(getattr(last_candle, "high", 0.0) or 0.0)
+                    # Use bar close as an approximate last traded price for TP/stop classification.
+                    current_price = float(getattr(last_candle, "close", 0.0) or 0.0)
             except Exception as e:
                 logger.warning(
                     "Executor: failed to fetch candles for dry-run stop simulation symbol=%s interval=%s err=%s",
@@ -393,6 +396,19 @@ async def sync_from_exchange(
             logger.info("Executor: sync_from_exchange fetching live position state symbol=%s market=%s", symbol, settings.market)
             position_size, _ = await _get_live_position_state(client, symbol)
             positions: list[dict] = []
+            # Fetch current last traded price once for TP/stop classification.
+            try:
+                snapshots = await client.get_tickers([symbol])
+                for snap in snapshots:
+                    if snap.symbol.upper() == symbol.upper():
+                        current_price = float(snap.price)
+                        break
+            except Exception as e:
+                logger.warning(
+                    "Executor: failed to fetch tickers for stop/tp classification symbol=%s err=%s",
+                    symbol,
+                    e,
+                )
         # ----- end TEMPORARY DEBUG STUBS -----
 
         # 1) Pending entry: try to confirm fill (skip in dry run; we simulate immediate fill in submit_entry)
@@ -452,7 +468,8 @@ async def sync_from_exchange(
                     return exited_ids
 
         # 2) Stop/take-profit hit: position size 0 but current.json has trades
-        # → cancel any open orders for symbol, append exit, remove from current.json
+        # → cancel any open orders for symbol, classify stop vs take-profit based on
+        # which boundary is closer to the current price, append exit, remove from current.json.
         current = load_current_trades(symbol, interval)
         logger.info(
             "Executor: stop-hit check position_size=%s current_trades=%s",
@@ -497,16 +514,28 @@ async def sync_from_exchange(
                     else None
                 )
                 side = t.get("side", "long")
-                # If a target price was configured, treat this as a
-                # take-profit exit and use the target for close/points.
-                if target_price is not None:
-                    close_price = target_price
-                    close_reason = "take_profit"
-                    if side == "long":
-                        points = close_price - entry_price
+                # Classify exit: if a target price was configured and we know the
+                # current price, decide whether stop or TP is closer. This avoids
+                # mislabelling pure stop exits as take-profit just because TP was set.
+                if target_price is not None and current_price is not None:
+                    dist_to_tp = abs(current_price - target_price)
+                    dist_to_stop = abs(current_price - stop_price)
+                    if dist_to_tp <= dist_to_stop:
+                        close_price = target_price
+                        close_reason = "take_profit"
+                        if side == "long":
+                            points = close_price - entry_price
+                        else:
+                            points = entry_price - close_price
                     else:
-                        points = entry_price - close_price
+                        close_price = stop_price
+                        close_reason = "stop"
+                        if side == "long":
+                            points = close_price - entry_price
+                        else:
+                            points = entry_price - close_price
                 else:
+                    # Fallback: no TP configured or no reliable current price; treat as stop exit.
                     close_price = stop_price
                     close_reason = "stop"
                     if side == "long":
