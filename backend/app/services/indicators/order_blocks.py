@@ -12,7 +12,7 @@ from app.schemas.market import Candle
 DEFAULT_SWING_LENGTH = 50
 DEFAULT_SHOW_BULL = 50
 DEFAULT_SHOW_BEAR = 50
-MAX_LOOKBACK = 1000
+MAX_LOOKBACK = 2000
 
 # Order block strength parameters:
 # N = bars in the "impulse window" including the structure-breaking candle.

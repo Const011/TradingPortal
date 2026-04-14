@@ -849,7 +849,16 @@ def compute_trade_results(
         for s in stop_segments
     ]
 
+    exit_by_trade: dict[str, tuple[int, float, str]] = {}
     for ev in events:
+        if ev.type == "FORCED_CLOSE" and ev.side in ("long", "short"):
+            exit_by_trade[ev.trade_id] = (ev.bar_index, ev.price, "forced_closure")
+        elif ev.type == "REVERSAL_CLOSE" and ev.side in ("long", "short"):
+            exit_by_trade[ev.trade_id] = (ev.bar_index, ev.price, "reversal")
+
+    for ev in events:
+        if ev.type not in ("OB_TREND_BUY", "OB_TREND_SELL"):
+            continue
         if ev.side not in ("long", "short"):
             continue
         entry_bar_index = ev.bar_index
@@ -897,6 +906,12 @@ def compute_trade_results(
                 close_price = target_price
                 close_bar_index = i
                 close_reason = "take_profit"
+                break
+            exit_row = exit_by_trade.get(ev.trade_id)
+            if exit_row is not None and exit_row[0] == i:
+                close_bar_index = exit_row[0]
+                close_price = exit_row[1]
+                close_reason = exit_row[2]
                 break
 
         if close_reason == "end_of_data" and entry_bar_index < len(candles) - 1:

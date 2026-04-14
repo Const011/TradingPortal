@@ -6,11 +6,9 @@ Strategy that generates buy/sell signals based on order blocks, candle trend col
 
 ## 1. Trend Filter (Candle Coloring)
 
-- **Trend source:** Candle coloring from Smart Money structure.
-- The strategy receives a **single color per candle** and interprets it as:
-  - **Bullish color** → allowed direction for **long** entries and long→short reversals.
-  - **Bearish color** → allowed direction for **short** entries and short→long reversals.
-- Any other/mixed color is treated as **neutral** and will not open new positions or trigger reversals (see Section 4 for the blocking rule).
+- **Trend source:** Candle coloring from Smart Money structure (one hex per bar).
+- **Current tuning:** The bullish and bearish color sets in code both include **all** structure hues, so candle-color alignment is **not** used to discriminate direction; **CVD, risk/reward, and OB/volume rules** (Sections 3–4) carry entry and reversal discipline instead.
+- Legacy helpers `is_bull` / `is_bear` remain for optional logging; they are not an extra gate on **reversals** (see Section 3).
 
 ---
 
@@ -55,7 +53,15 @@ Entry when **all** of the following are true for the last N bars (N = `consecuti
 
 We watch these conditions over the last N bars; if all are true → entry.
 
-**Reversal:** If a position is already open and the **opposite** direction’s entry conditions are met on the current bar, the strategy **closes the open position and opens in the reverse direction** on the same bar (close price). Only one position is held at a time; a new long (short) signal while flat opens long (short); a new short (long) signal while long (short) reverses to short (long).
+**Reversal:** If a position is open **long** (**short**) and the strategy has built a valid **short** (**long**) entry candidate for this bar, it runs the **same opening path** as when flat (`_open_from_candidate`): CVD sequence, RR vs. target, etc. Only if that path **accepts** the opposite trade does the strategy flip (replace position and emit the new entry event). If filters block the opposite entry, the existing position is **kept**. There is no separate reversal-only candle-color check. The strategy emits a **`REVERSAL_CLOSE`** event for the closed trade id on that bar so simulation **results** can attribute P/L to **Reversal** instead of running the old leg until stop/TP.
+
+**Forced closure (exit only, not a reversal):** After the entry bar, if **stop** and **take-profit** have not already closed the trade on this bar, the position closes when **all** are true:
+
+- The bar’s range **intersects** at least one active **opposite** order block (long → bearish OB span; short → bullish OB span), using the same strength-filtered OB lists as the rest of the bar.
+- A **volume spike in the opposite direction** to the open trade: for a **long**, a **bearish** candle (`close < open`) with `volume ≥ forced_closure_volume_mult ×` average volume over the last `volume_confirmation_lookback` bars (same averaging window as volume confirmation; current bar excluded from the average). For a **short**, a **bullish** candle with the same volume rule.
+- Default **`forced_closure_volume_mult`** is **3.0** (vs. **1.5** for entry `volume_spike_mult`).
+
+On trigger, the strategy emits **`FORCED_CLOSE`** and flatlines; no new position opens. Simulation summaries treat close reason as **Forced closure** at the bar’s **close** price.
 
 ---
 
@@ -63,10 +69,7 @@ We watch these conditions over the last N bars; if all are true → entry.
 
 Even when a signal is triggered and confirmed, **block** the order if:
 
-1. **Trend mismatch (hard filter, always on):**  - confirmed substantial improvement
-   - **Long:** Block if the current candle color is **not bullish** (the strategy’s `is_bull` flag is False).
-   - **Short:** Block if the current candle color is **not bearish** (the strategy’s `is_bear` flag is False).
-   This matches the implementation where entries and reversals are only allowed when the candle color is classified as bullish (for longs) or bearish (for shorts); all other colors are blocked for that direction.
+1. **Optional candle-color alignment:** With overlapping bull/bear color sets, this branch does not materially restrict entries; rely on the rules below.
 2. **Insufficient CVD sequence (chop guard):**
    - **Long:** Even when OB + volume spike conditions are met, **skip** the entry if the last `cvd_sequence_bars` CVD `delta` bars do **not** satisfy the long CVD impulse rule above (i.e. there are not enough same-direction CVD bars, or CVD is weakening too much).
    - **Short:** Symmetric; skip if the last `cvd_sequence_bars` CVD `delta` bars do not satisfy the short CVD impulse rule.
@@ -154,6 +157,6 @@ COLORS disabled (all colors allow entry)
 For **sell** signals:
 
 - Trigger: price touched the **entry zone** (OB top − N×OB height to OB top) and closed below with bearish candle, or crossed below a breaker that acts as resistance. The entry zone extends from the OB upper boundary downward by N×OB height (`entry_zone_mult`). The same OB entry limit (max N **actual trades** per OB) applies.
-- Entry: same 2 conditions (OB event and volume spike) over last N bars. Reversal (long→short or short→long) on opposite signal applies as in Section 3.
+- Entry: same conditions as Section 3 (OB event, volume spike, CVD, RR). Reversal uses that **full** opposite-side path when a position is already open the other way, as in Section 3.
 - Initial stop: OB top or above closest resistance with gap/2.
 - Trailing: when price crosses a lower level (resistance, lower OB), move stop down.

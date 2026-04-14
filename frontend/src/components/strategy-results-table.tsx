@@ -33,6 +33,10 @@ function formatCloseReason(reason: string): string {
       return "End of data";
     case "manual":
       return "Manual";
+    case "forced_closure":
+      return "Forced closure";
+    case "reversal":
+      return "Reversal";
     default:
       return reason;
   }

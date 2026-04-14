@@ -14,14 +14,14 @@ def strategy_output_to_chart(
     markers: list[dict] = []
     events_export: list[dict] = []
     for ev in events:
-        if ev.side == "long":
+        if ev.type in ("OB_TREND_BUY", "OB_TREND_SELL") and ev.side == "long":
             markers.append({
                 "time": ev.time,
                 "position": "below",
                 "shape": "arrowUp",
                 "color": "#22c55e",
             })
-        elif ev.side == "short":
+        elif ev.type in ("OB_TREND_BUY", "OB_TREND_SELL") and ev.side == "short":
             markers.append({
                 "time": ev.time,
                 "position": "above",

@@ -9,7 +9,13 @@ import type {
   StrategyStopSegmentData,
 } from "@/lib/types/market";
 
-export type CloseReason = "stop" | "take_profit" | "end_of_data" | "manual";
+export type CloseReason =
+  | "stop"
+  | "take_profit"
+  | "end_of_data"
+  | "manual"
+  | "forced_closure"
+  | "reversal";
 
 export type StrategyTradeResult = {
   /** Entry bar index */
@@ -76,6 +82,28 @@ function getStopPriceForBar(
   return endedBefore.length > 0 ? endedBefore[0].price : initialStop;
 }
 
+type ExitRow = { barIndex: number; closePrice: number; reason: CloseReason };
+
+function buildExitByTradeId(events: StrategyTradeEventData[]): Map<string, ExitRow> {
+  const m = new Map<string, ExitRow>();
+  for (const ev of events) {
+    if (ev.type === "FORCED_CLOSE" && (ev.side === "long" || ev.side === "short")) {
+      m.set(ev.tradeId, {
+        barIndex: ev.barIndex,
+        closePrice: ev.price,
+        reason: "forced_closure",
+      });
+    } else if (ev.type === "REVERSAL_CLOSE" && (ev.side === "long" || ev.side === "short")) {
+      m.set(ev.tradeId, {
+        barIndex: ev.barIndex,
+        closePrice: ev.price,
+        reason: "reversal",
+      });
+    }
+  }
+  return m;
+}
+
 /** Compute strategy results from trades, candles, and stop segments */
 export function computeStrategyResults(
   events: StrategyTradeEventData[],
@@ -83,8 +111,10 @@ export function computeStrategyResults(
   stopSegments: StrategyStopSegmentData[]
 ): StrategyResultsSummary {
   const trades: StrategyTradeResult[] = [];
+  const exitByTradeId = buildExitByTradeId(events);
 
   for (const ev of events) {
+    if (ev.type !== "OB_TREND_BUY" && ev.type !== "OB_TREND_SELL") continue;
     if (ev.side !== "long" && ev.side !== "short") continue;
     const entryBarIndex = ev.barIndex;
     if (entryBarIndex < 0 || entryBarIndex >= candles.length) continue;
@@ -137,6 +167,13 @@ export function computeStrategyResults(
         closePrice = targetPrice;
         closeBarIndex = i;
         closeReason = "take_profit";
+        break;
+      }
+      const exitRow = exitByTradeId.get(tradeId);
+      if (exitRow !== undefined && exitRow.barIndex === i) {
+        closePrice = exitRow.closePrice;
+        closeBarIndex = exitRow.barIndex;
+        closeReason = exitRow.reason;
         break;
       }
     }

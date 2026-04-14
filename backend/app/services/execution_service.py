@@ -113,6 +113,7 @@ async def submit_entry(
         )
 
     new_side = ev.side or "long"
+    reversal_closed_trade_id: str | None = None
 
     # Reversal: if we have an open position in the opposite direction, close it first (cancel orders, close, then enter).
     if settings.executor_dry_run:
@@ -141,7 +142,20 @@ async def submit_entry(
                         logger.info("Executor: cancelled open order orderId=%s (reversal) symbol=%s", order_id, symbol)
             except Exception as e:
                 logger.warning("Executor: cancel open orders before reversal failed symbol=%s err=%s", symbol, e)
-        close_result = await close_position(symbol, interval, client)
+        cur_rev = load_current_trades(symbol, interval)
+        if cur_rev:
+            rt = cur_rev[0].get("tradeId")
+            if isinstance(rt, str):
+                reversal_closed_trade_id = rt
+        close_result = await close_position(
+            symbol,
+            interval,
+            client,
+            close_trade_id=reversal_closed_trade_id,
+            exit_reason="reversal",
+            log_close_price=ev.price,
+            log_exit_time=int(ev.time),
+        )
         if not close_result.get("ok"):
             return ExecutorEntryResponse(
                 order_received=False,
@@ -189,7 +203,12 @@ async def submit_entry(
                 bar_index=ev.bar_index,
             )
             logger.info("Executor: [DRY RUN] entry simulated trade_id=%s", trade_id)
-            return ExecutorEntryResponse(order_received=True, entry_yet=False, message="dry run: simulated fill")
+            return ExecutorEntryResponse(
+                order_received=True,
+                entry_yet=False,
+                message="dry run: simulated fill",
+                reversal_closed_trade_id=reversal_closed_trade_id,
+            )
         # ----- end TEMPORARY DEBUG STUBS -----
 
         # ----- LIVE (runs when EXECUTOR_DRY_RUN=false) -----
@@ -261,6 +280,7 @@ async def submit_entry(
             entry_yet=False,
             order_id=order_id,
             order_link_id=order_link_id,
+            reversal_closed_trade_id=reversal_closed_trade_id,
         )
     except Exception as e:
         logger.exception("Executor: submit_entry failed trade_id=%s", trade_id)
@@ -632,37 +652,60 @@ async def update_stop(
 async def close_position(
     symbol: str,
     interval: str,
-    client: BybitClient,
-) -> dict[str, str | float | None]:
+    client: BybitClient | None,
+    *,
+    close_trade_id: str | None = None,
+    exit_reason: str = "manual",
+    log_close_price: float | None = None,
+    log_exit_time: int | None = None,
+) -> dict[str, str | float | bool | None]:
     """Close live position for current market: get live size, place opposite market order,
     append exit and remove from current.json. Returns result dict with ok, message,
-    and optionally close_price/points."""
+    and optionally close_price/points.
+
+    ``close_trade_id`` limits logging to that open leg (one position per stream). For
+    strategy-driven exits, pass ``exit_reason`` ``reversal`` / ``forced_closure`` and
+    ``log_close_price`` / ``log_exit_time`` from the strategy bar.
+    """
+    exit_ts = int(log_exit_time) if log_exit_time is not None else int(time.time())
     try:
         # ----- TEMPORARY DEBUG STUB: read from current.json, no real Bybit close -----
         if settings.executor_dry_run:
             current = load_current_trades(symbol, interval)
-            for t in current:
-                trade_id = t.get("tradeId", "")
-                if not trade_id:
-                    continue
-                entry_price = float(t.get("entryPrice", 0) or 0)
-                stop_price = float(t.get("currentStopPrice", 0) or t.get("initialStopPrice", 0) or entry_price)
-                side = t.get("side", "long")
-                points = (stop_price - entry_price) if side == "long" else (entry_price - stop_price)
-                print(f" [TEMPORARY DEBUG STUB] close position with params: symbol={symbol} trade_id={trade_id} close_price={stop_price} reason=manual")
-                append_exit(
-                    symbol=symbol,
-                    interval=interval,
-                    trade_id=trade_id,
-                    time=int(time.time()),
-                    close_price=stop_price,
-                    close_reason="manual",
-                    points=points,
-                )
-                remove_current_trade(symbol, interval, trade_id)
-                return {"ok": True, "close_price": stop_price, "points": points, "message": "dry run: simulated close"}
-            return {"ok": False, "message": "dry run: no trade in current.json"}
+            candidates = [
+                t
+                for t in current
+                if t.get("tradeId")
+                and (close_trade_id is None or str(t.get("tradeId")) == close_trade_id)
+            ]
+            if not candidates:
+                return {"ok": False, "message": "dry run: no trade in current.json"}
+            t = candidates[0]
+            tid = str(t.get("tradeId", ""))
+            entry_price = float(t.get("entryPrice", 0) or 0)
+            stop_price = float(t.get("currentStopPrice", 0) or t.get("initialStopPrice", 0) or entry_price)
+            side = t.get("side", "long")
+            close_px = float(log_close_price) if log_close_price is not None else stop_price
+            points = (close_px - entry_price) if side == "long" else (entry_price - close_px)
+            print(
+                f" [TEMPORARY DEBUG STUB] close position symbol={symbol} trade_id={tid} "
+                f"close_price={close_px} reason={exit_reason}"
+            )
+            append_exit(
+                symbol=symbol,
+                interval=interval,
+                trade_id=tid,
+                time=exit_ts,
+                close_price=close_px,
+                close_reason=exit_reason,
+                points=points,
+            )
+            remove_current_trade(symbol, interval, tid)
+            return {"ok": True, "close_price": close_px, "points": points, "message": "dry run: simulated close"}
         # ----- end TEMPORARY DEBUG STUBS -----
+
+        if client is None:
+            return {"ok": False, "message": "no client for live close"}
 
         # Live close: use market-aware position state and create an opposite market order.
         position_size, position_side = await _get_live_position_state(client, symbol)
@@ -692,32 +735,67 @@ async def close_position(
         for t in current:
             if t.get("side") != position_side:
                 continue
-            trade_id = t.get("tradeId", "")
-            if not trade_id:
+            tid = str(t.get("tradeId", ""))
+            if not tid:
+                continue
+            if close_trade_id is not None and tid != close_trade_id:
                 continue
             entry_price = float(t.get("entryPrice", 0) or 0)
-            # We don't know exact fill price of the close order here; approximate with entry +/- 0 for now.
-            # Caller can reconcile with exchange fills if needed.
-            # For consistency with linear path, treat avg_price ~= entry_price for points calc placeholder.
-            avg_price = entry_price
+            close_px = float(log_close_price) if log_close_price is not None else entry_price
             if position_side == "long":
-                points = avg_price - entry_price
+                points = close_px - entry_price
             else:
-                points = entry_price - avg_price
+                points = entry_price - close_px
             append_exit(
                 symbol=symbol,
                 interval=interval,
-                trade_id=trade_id,
-                time=int(time.time()),
-                close_price=avg_price,
-                close_reason="manual",
+                trade_id=tid,
+                time=exit_ts,
+                close_price=close_px,
+                close_reason=exit_reason,
                 points=points,
             )
-            remove_current_trade(symbol, interval, trade_id)
-            logger.info("Executor: closed position trade_id=%s", trade_id)
-            return {"ok": True, "close_price": avg_price, "points": points}
+            remove_current_trade(symbol, interval, tid)
+            logger.info("Executor: closed position trade_id=%s reason=%s", tid, exit_reason)
+            return {"ok": True, "close_price": close_px, "points": points}
+        if close_trade_id is not None:
+            return {
+                "ok": False,
+                "message": "Position closed on exchange but no matching trade_id in current.json",
+            }
         return {"ok": True, "message": "Position closed, no matching trade in current.json"}
     except Exception as e:
         logger.exception("Executor: close_position failed symbol=%s", symbol)
         return {"ok": False, "message": str(e)}
     return {"ok": False, "message": "No position to close"}
+
+
+async def execute_forced_closure(
+    symbol: str,
+    interval: str,
+    ev: TradeEvent,
+    client: BybitClient | None,
+) -> dict[str, str | float | bool | None]:
+    """Close the open leg identified by ``FORCED_CLOSE`` (exchange + trade log)."""
+    if ev.type != "FORCED_CLOSE":
+        return {"ok": False, "message": "not FORCED_CLOSE"}
+    current = load_current_trades(symbol, interval)
+    if not any(str(t.get("tradeId", "")) == ev.trade_id for t in current):
+        return {"ok": False, "message": "no open trade for trade_id"}
+    if not settings.executor_dry_run and client is None:
+        return {"ok": False, "message": "no client"}
+    logger.info(
+        "Executor: strategy forced_closure trade_id=%s symbol=%s price=%.4f",
+        ev.trade_id,
+        symbol,
+        ev.price,
+    )
+    return await close_position(
+        symbol,
+        interval,
+        client,
+        close_trade_id=ev.trade_id,
+        exit_reason="forced_closure",
+        log_close_price=ev.price,
+        log_exit_time=int(ev.time),
+    )

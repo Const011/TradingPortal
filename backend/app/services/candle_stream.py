@@ -27,7 +27,12 @@ from app.services.trade_log import (
     load_current_trades,
     write_entry_snapshot_md_only,
 )
-from app.services.execution_service import submit_entry, sync_from_exchange, update_stop
+from app.services.execution_service import (
+    execute_forced_closure,
+    submit_entry,
+    sync_from_exchange,
+    update_stop,
+)
 from app.utils.intervals import interval_seconds
 from app.utils.timefmt import ts_human
 
@@ -189,9 +194,24 @@ async def _apply_trade_logging(
     # (we rely on last_stop_price_per_trade to avoid duplicate prices).
     entry_emitted_for_bar = current_bar_start_sec in state.signals_emitted_for_bar
 
+    # Strategy forced exit (flat only): before new entries / dry-run replay.
+    for ev in trade_events:
+        if ev.bar_index != current_bar_index or ev.type != "FORCED_CLOSE":
+            continue
+        tid = ev.trade_id
+        if tid in state.logged_exit_ids:
+            continue
+        res = await execute_forced_closure(symbol, interval, ev, bybit_client)
+        if res.get("ok"):
+            state.logged_exit_ids.add(tid)
+            if getattr(state, "restored_trades", None):
+                state.restored_trades = [t for t in state.restored_trades if t.get("tradeId") != tid]
+
     if not entry_emitted_for_bar and bybit_client is not None:
         for ev in trade_events:
             if ev.bar_index != current_bar_index:
+                continue
+            if ev.type not in ("OB_TREND_BUY", "OB_TREND_SELL"):
                 continue
             trade_id = ev.trade_id
             if trade_id not in state.logged_entry_ids:
@@ -202,6 +222,13 @@ async def _apply_trade_logging(
                     state.last_stop_price_per_trade[trade_id] = ev.initial_stop_price
                     state.signals_emitted_for_bar.add(current_bar_start_sec)
                     entry_emitted_for_bar = True
+                    rev_closed = response.reversal_closed_trade_id
+                    if rev_closed:
+                        state.logged_exit_ids.add(rev_closed)
+                        if getattr(state, "restored_trades", None):
+                            state.restored_trades = [
+                                t for t in state.restored_trades if t.get("tradeId") != rev_closed
+                            ]
                 else:
                     logger.warning(
                         "Executor: entry not received trade_id=%s msg=%s",
@@ -215,6 +242,8 @@ async def _apply_trade_logging(
     # last logged value for that trade.
     events_by_side: dict[str, list[tuple[int, str]]] = {"long": [], "short": []}
     for ev in trade_events:
+        if ev.type not in ("OB_TREND_BUY", "OB_TREND_SELL"):
+            continue
         if ev.side in events_by_side:
             events_by_side[ev.side].append((ev.time, ev.trade_id))
     for t in getattr(state, "restored_trades", []):
@@ -317,6 +346,9 @@ async def _apply_trade_logging(
         for r in results:
             tid = r["tradeId"]
             if tid in state.logged_exit_ids:
+                continue
+            if r["closeReason"] in ("forced_closure", "reversal"):
+                # Already logged via execute_forced_closure / submit_entry reversal close.
                 continue
             if r["closeReason"] == "end_of_data":
                 continue

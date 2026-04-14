@@ -12,3 +12,4 @@ class ExecutorEntryResponse:
     order_id: str | None = None
     order_link_id: str | None = None
     message: str | None = None  # Error or info
+    reversal_closed_trade_id: str | None = None  # Prior leg closed before this entry (reversal)
