@@ -124,6 +124,24 @@ def save_current_trades(symbol: str, interval: str, trades: list[CurrentTrade]) 
     path.write_text(json.dumps({"trades": trades}, indent=2), encoding="utf-8")
 
 
+def ensure_trade_log_initialized(symbol: str, interval: str) -> None:
+    """Create ``{trade_log_dir}/{symbol}_{interval}/`` and empty ``current.json`` if missing.
+
+    Used when a trading gateway starts so each symbol/interval has an on-disk folder before
+    the first trade. Does not overwrite an existing ``current.json``.
+    """
+    path = _current_trades_path(symbol, interval)
+    if path.exists():
+        return
+    save_current_trades(symbol, interval, [])
+    logger.info(
+        "Trade log: initialized empty current.json symbol=%s interval=%s path=%s",
+        symbol,
+        interval,
+        path,
+    )
+
+
 def add_current_trade(
     symbol: str,
     interval: str,

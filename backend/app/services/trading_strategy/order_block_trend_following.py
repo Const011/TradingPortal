@@ -584,22 +584,31 @@ def _detect_ob_events(
     Detect boundary crosses and breaker-created events for strategy triggers.
     All crossover/entry logic lives in the strategy layer.
     Event emission is not capped; the strategy caps actual trade entries per OB.
+
+    Per-bar pipeline (see strategy spec “OB event detection”):
+    1. ``bullish_ob`` / ``bearish_ob`` are the full lists for bar ``i`` — the indicator
+       has already appended any block formed on ``i`` (see ``_iter_order_blocks_from_pivots``).
+    2. On the same bar, every eligible non-breaker is evaluated with the touch +
+       directional-close rules, including blocks with ``formation_bar == i``.
+    3. ``*_boundary_crossed`` is emitted only when the entry band is touched and the
+       close confirms the trade direction; formation alone never emits a boundary cross.
     """
     events: list[dict] = []
-    emitted_boundary: set[tuple[float, float, int]] = set()
     _debug = _DEBUG_TS_START <= c.time <= _DEBUG_TS_END
-
-    def ob_key(ob: OrderBlock) -> tuple[float, float, int]:
-        return (ob.top, ob.bottom, ob.formation_bar)
 
     def _tf(x: bool) -> str:
         return "true" if x else "false"
+
+    def _non_breaker_boundary_eligible(ob: OrderBlock) -> bool:
+        """Non-breaker OBs may get boundary (or wick→breaker) eval when anchored before i or formed on i."""
+        return ob.loc < i or ob.formation_bar == i
 
     bar_ctx = (
         f"bar_index={i} time={ts_human(c.time)} "
         f"candle_o={c.open:.2f} candle_h={c.high:.2f} candle_l={c.low:.2f} candle_c={c.close:.2f}"
     )
 
+    # --- (1) Lists are already complete for bar i. (2–3) Evaluate each OB below. ---
     # Bullish: boundary cross and breaker created
     for ob in bullish_ob:
         ob_meta = (
@@ -607,12 +616,12 @@ def _detect_ob_events(
             f"formation_bar={ob.formation_bar} loc={ob.loc} breaker={_tf(ob.breaker)} "
             f"break_loc={ob.break_loc}"
         )
-        if not ob.breaker and ob.loc < i:
+        if not ob.breaker and _non_breaker_boundary_eligible(ob):
             min_oc = min(c.close, c.open)
             wick_below = min_oc < ob.bottom
             if _debug:
                 logger.info(
-                    "[OB_EVENTS] %s | %s | path=active_non_breaker loc<i | "
+                    "[OB_EVENTS] %s | %s | path=active_non_breaker boundary_eligible | "
                     "cond_wick_breaker min(o,c)<bottom -> %s (min_oc=%.2f <? bottom=%.2f)",
                     bar_ctx,
                     ob_meta,
@@ -621,8 +630,6 @@ def _detect_ob_events(
                     ob.bottom,
                 )
             if wick_below:
-                if ob.formation_bar == i:
-                    emitted_boundary.add(ob_key(ob))  # Prevent second loop from emitting boundary for this OB
                 events.append({"type": "bullish_breaker_created", "ob_top": ob.top, "ob_bottom": ob.bottom, "ob_loc": ob.loc, "ob_formation_bar": ob.formation_bar})
                 if _debug:
                     logger.info(
@@ -669,7 +676,6 @@ def _detect_ob_events(
                         ),
                     )
                 if touched_zone and close_above:
-                    emitted_boundary.add(ob_key(ob))
                     events.append({"type": "bullish_boundary_crossed", "ob_top": ob.top, "ob_bottom": ob.bottom, "ob_loc": ob.loc, "ob_formation_bar": ob.formation_bar})
         elif ob.breaker and ob.break_loc == i:
             events.append({"type": "bullish_breaker_created", "ob_top": ob.top, "ob_bottom": ob.bottom, "ob_loc": ob.loc, "ob_formation_bar": ob.formation_bar})
@@ -680,40 +686,18 @@ def _detect_ob_events(
                     ob_meta,
                 )
         elif _debug:
-            skip_loc = ob.loc >= i
             logger.info(
-                "[OB_EVENTS] %s | %s | path=SKIP_first_pass | cond_loc_lt_i=%s (loc=%d i=%d) | "
-                "cond_breaker_and_break_loc_eq_i=%s | outcome=SKIP (no boundary/breaker eval on this pass)",
+                "[OB_EVENTS] %s | %s | path=SKIP_non_breaker_pass | "
+                "boundary_eligible=%s (loc=%d formation_bar=%d i=%d) | "
+                "breaker_break_loc_eq_i=%s | outcome=SKIP (no boundary/breaker eval on this pass)",
                 bar_ctx,
                 ob_meta,
-                _tf(not skip_loc),
+                _tf(_non_breaker_boundary_eligible(ob) if not ob.breaker else False),
                 ob.loc,
+                ob.formation_bar,
                 i,
                 _tf(ob.breaker and ob.break_loc == i),
             )
-
-    # When OB is newly created on bar i, the current bar is the structure-breaking bar — emit for bar i.
-    # (No previous-bar workaround: structure runs first, so OB forms on same bar as break.)
-    for ob in bullish_ob:
-        if ob.formation_bar == i and ob_key(ob) not in emitted_boundary:
-            emitted_boundary.add(ob_key(ob))
-            events.append({
-                "type": "bullish_boundary_crossed",
-                "ob_top": ob.top, "ob_bottom": ob.bottom, "ob_loc": ob.loc, "ob_formation_bar": ob.formation_bar,
-                "trigger_bar": i,
-            })
-            if _debug:
-                logger.info(
-                    "[OB_EVENTS] %s | OB=BULL top=%.2f bottom=%.2f formation_bar=%d loc=%d | "
-                    "path=newly_formed_same_bar | outcome=EMIT bullish_boundary_crossed (trigger_bar=i, auto on formation)",
-                    bar_ctx,
-                    ob.top,
-                    ob.bottom,
-                    ob.formation_bar,
-                    ob.loc,
-                )
-
-    emitted_bearish_boundary: set[tuple[float, float, int]] = set()
 
     # Bearish: boundary cross and breaker created
     for ob in bearish_ob:
@@ -722,12 +706,12 @@ def _detect_ob_events(
             f"formation_bar={ob.formation_bar} loc={ob.loc} breaker={_tf(ob.breaker)} "
             f"break_loc={ob.break_loc}"
         )
-        if not ob.breaker and ob.loc < i:
+        if not ob.breaker and _non_breaker_boundary_eligible(ob):
             max_oc = max(c.close, c.open)
             wick_above = max_oc > ob.top
             if _debug:
                 logger.info(
-                    "[OB_EVENTS] %s | %s | path=active_non_breaker loc<i | "
+                    "[OB_EVENTS] %s | %s | path=active_non_breaker boundary_eligible | "
                     "cond_wick_breaker max(o,c)>top -> %s (max_oc=%.2f >? top=%.2f)",
                     bar_ctx,
                     ob_meta,
@@ -736,8 +720,6 @@ def _detect_ob_events(
                     ob.top,
                 )
             if wick_above:
-                if ob.formation_bar == i:
-                    emitted_bearish_boundary.add(ob_key(ob))  # Prevent second loop from emitting boundary for this OB
                 events.append({"type": "bearish_breaker_created", "ob_top": ob.top, "ob_bottom": ob.bottom, "ob_loc": ob.loc, "ob_formation_bar": ob.formation_bar})
                 if _debug:
                     logger.info(
@@ -784,7 +766,6 @@ def _detect_ob_events(
                         ),
                     )
                 if touched_zone and close_below:
-                    emitted_bearish_boundary.add(ob_key(ob))
                     events.append({"type": "bearish_boundary_crossed", "ob_top": ob.top, "ob_bottom": ob.bottom, "ob_loc": ob.loc, "ob_formation_bar": ob.formation_bar})
         elif ob.breaker and ob.break_loc == i:
             events.append({"type": "bearish_breaker_created", "ob_top": ob.top, "ob_bottom": ob.bottom, "ob_loc": ob.loc, "ob_formation_bar": ob.formation_bar})
@@ -795,37 +776,18 @@ def _detect_ob_events(
                     ob_meta,
                 )
         elif _debug:
-            skip_loc_b = ob.loc >= i
             logger.info(
-                "[OB_EVENTS] %s | %s | path=SKIP_first_pass | cond_loc_lt_i=%s (loc=%d i=%d) | "
-                "cond_breaker_and_break_loc_eq_i=%s | outcome=SKIP (no boundary/breaker eval on this pass)",
+                "[OB_EVENTS] %s | %s | path=SKIP_non_breaker_pass | "
+                "boundary_eligible=%s (loc=%d formation_bar=%d i=%d) | "
+                "breaker_break_loc_eq_i=%s | outcome=SKIP (no boundary/breaker eval on this pass)",
                 bar_ctx,
                 ob_meta,
-                _tf(not skip_loc_b),
+                _tf(_non_breaker_boundary_eligible(ob) if not ob.breaker else False),
                 ob.loc,
+                ob.formation_bar,
                 i,
                 _tf(ob.breaker and ob.break_loc == i),
             )
-
-    # When bearish OB newly created, emit for current bar (structure-breaking bar).
-    for ob in bearish_ob:
-        if ob.formation_bar == i and ob_key(ob) not in emitted_bearish_boundary:
-            emitted_bearish_boundary.add(ob_key(ob))
-            events.append({
-                "type": "bearish_boundary_crossed",
-                "ob_top": ob.top, "ob_bottom": ob.bottom, "ob_loc": ob.loc, "ob_formation_bar": ob.formation_bar,
-                "trigger_bar": i,
-            })
-            if _debug:
-                logger.info(
-                    "[OB_EVENTS] %s | OB=BEAR top=%.2f bottom=%.2f formation_bar=%d loc=%d | "
-                    "path=newly_formed_same_bar | outcome=EMIT bearish_boundary_crossed (trigger_bar=i, auto on formation)",
-                    bar_ctx,
-                    ob.top,
-                    ob.bottom,
-                    ob.formation_bar,
-                    ob.loc,
-                )
 
     if _debug and events:
         for ev in events:
@@ -994,6 +956,7 @@ def compute_order_block_trend_following(
             (ob.top, ob.bottom, ob.formation_bar): ob for ob in bearish_ob
         }
 
+        # OB lists for bar i already include any block formed on i (_iter_order_blocks_from_pivots).
         raw_events = _detect_ob_events(
             i, c, candles, bullish_ob, bearish_ob,
             entry_zone_mult=entry_zone_mult,

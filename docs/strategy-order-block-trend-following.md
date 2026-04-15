@@ -21,6 +21,16 @@ A **buy** signal can originate from:
 
 Both cases are treated as breakout/continuation above a significant level.
 
+### OB event detection (per bar)
+
+Order in the implementation matches the intended rules:
+
+1. **Registration:** For bar index `i`, the bullish and bearish OB lists are the **complete** sets for that bar (the pivot-based iterator has already appended any block whose `formation_bar` is `i`).
+2. **Same-bar evaluation:** Every **eligible** non-breaker block in those lists is tested for the touch + directional-close rules, **including** blocks that first appear on `i`. Eligibility is: anchor `loc < i` **or** `formation_bar == i` (so a block formed on the current bar is never skipped merely because `loc >= i`).
+3. **Emit:** `bullish_boundary_crossed` / `bearish_boundary_crossed` is emitted **only** when the bar intersects the entry band **and** the close confirms direction (bullish candle above the OB top for longs; bearish candle below the OB bottom for shorts). **Formation on `i` alone does not emit a boundary cross** — the candle must still satisfy the touch-and-exit geometry on that bar.
+
+Breaker-created events (`*_breaker_created`) follow their separate rules (wick through level, or `break_loc == i`).
+
 **OB entry limit:** Each order block can generate at most **N** actual trade entries (default 2). This protects against stale price ranges when price oscillates back and forth. The cap counts only **confirmed entries** (trades that were opened), not boundary crosses that were considered but not confirmed (e.g. pending signals that lost confirmation, or triggers that were blocked). Boundary-crossed events are emitted freely; the limit is enforced only when opening a position.
 
 ---
@@ -29,7 +39,7 @@ Both cases are treated as breakout/continuation above a significant level.
 
 Entry when **all** of the following are true for the last N bars (N = `consecutive_closes`, default 2), **excluding** the initial warm-up window of `warmup_bars` (default 1000 bars). No trades are opened before bar index `warmup_bars`:
 
-1. **OB event (strong OBs only):** On any of the last N bars, there is an order block boundary cross or breaker event for an order block **whose strength is above a relative threshold** (see Section 7).
+1. **OB event (strong OBs only):** On any of the last N bars, there is an order block boundary cross or breaker event for an order block **whose strength is above a relative threshold** (see Section 7). Boundary crosses are defined in Section 2 (“OB event detection”): touch of entry band plus directional close, including for OBs first listed on that bar.
 2. **Volume spike:** On any of the last N bars, there is a bar in the direction of trade (bullish for long, bearish for short) with volume ≥ `volume_spike_mult` × average volume of previous 10 bars (default 1.5).
 3. **CVD impulse (anti-chop filter):** The **Cumulative Volume Delta (CVD)** over the last `cvd_sequence_bars` candles (default 1 in current tuning) must show a **consistent directional run**:
    - **Long:** For each of the last `cvd_sequence_bars` bars, point CVD `delta` is **non-negative** (≥ 0).
@@ -156,7 +166,7 @@ COLORS disabled (all colors allow entry)
 
 For **sell** signals:
 
-- Trigger: price touched the **entry zone** (OB top − N×OB height to OB top) and closed below with bearish candle, or crossed below a breaker that acts as resistance. The entry zone extends from the OB upper boundary downward by N×OB height (`entry_zone_mult`). The same OB entry limit (max N **actual trades** per OB) applies.
+- Trigger: price touched the **entry zone** (OB top − N×OB height to OB top) and closed below with bearish candle, or crossed below a breaker that acts as resistance. The entry zone extends from the OB upper boundary downward by N×OB height (`entry_zone_mult`). Section 2 (“OB event detection”) applies symmetrically: blocks formed on the signal bar are in the list before evaluation, and `bearish_boundary_crossed` requires band touch + bearish close — not formation alone. The same OB entry limit (max N **actual trades** per OB) applies.
 - Entry: same conditions as Section 3 (OB event, volume spike, CVD, RR). Reversal uses that **full** opposite-side path when a position is already open the other way, as in Section 3.
 - Initial stop: OB top or above closest resistance with gap/2.
 - Trailing: when price crosses a lower level (resistance, lower OB), move stop down.

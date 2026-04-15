@@ -20,6 +20,7 @@ from app.services.trading_strategy.types import (
     StopSegment,
 )
 from app.services.trade_log import (
+    ensure_trade_log_initialized,
     append_exit,
     compute_trade_results,
     get_effective_stop_segments_for_bar,
@@ -488,7 +489,9 @@ class CandleStreamHub:
             state.volume_profile_window = volume_profile_window
             state.strategy_markers = strategy_markers
             if settings.mode == "trading":
-                _restore_current_trades(symbol.upper(), interval, state)
+                sym = symbol.upper()
+                ensure_trade_log_initialized(sym, interval)
+                _restore_current_trades(sym, interval, state)
             if state.task is None or state.task.done():
                 t = asyncio.create_task(self._run_heartbeat(symbol.upper(), interval))
                 t.add_done_callback(

@@ -29,7 +29,7 @@ const buttonActiveStyle = {
 const inputStyle = {
   ...buttonStyle,
   padding: "4px 8px",
-  width: 56,
+  width: 84, // 1.5× prior 56px — five-digit ports + spinner
   fontSize: 13,
 };
 
