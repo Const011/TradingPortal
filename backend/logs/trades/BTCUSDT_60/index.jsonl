@@ -1,0 +1,205 @@
+{"type": "entry", "tradeId": "1772722800", "time": 1772722800, "barIndex": 1999, "side": "short", "price": 71451.1, "initialStopPrice": 73052.90224440124, "targetPrice": null, "context": {"ob_top": 73565.2, "ob_bottom": 72520.7, "trigger": "entry_window", "reversal_from": null}, "snapshotFile": "entry_1772722800.md"}
+{"type": "stop_move", "tradeId": "1772722800", "time": 1772726400, "price": 73258.60224440123, "side": "short"}
+{"type": "stop_move", "tradeId": "1772722800", "time": 1772730000, "price": 72647.77503641679, "side": "short"}
+{"type": "stop_move", "tradeId": "1772722800", "time": 1772730000, "price": 72430.59202913343, "side": "short"}
+{"type": "stop_move", "tradeId": "1772722800", "time": 1772733600, "price": 72256.84562330674, "side": "short"}
+{"type": "stop_move", "tradeId": "1772722800", "time": 1772740800, "price": 71674.40483130644, "side": "short"}
+{"type": "stop_move", "tradeId": "1772722800", "time": 1772787600, "timeHuman": "2026-03-06 12:00:00", "price": 71233.93100944512, "side": "short"}
+{"type": "stop_move", "tradeId": "1772722800", "time": 1772787600, "timeHuman": "2026-03-06 12:00:00", "price": 71189.9048075561, "side": "short"}
+{"type": "stop_move", "tradeId": "1772722800", "time": 1772791200, "timeHuman": "2026-03-06 13:00:00", "price": 71072.34384604488, "side": "short"}
+{"type": "stop_move", "tradeId": "1772722800", "time": 1772794800, "timeHuman": "2026-03-06 14:00:00", "price": 70978.2950768359, "side": "short"}
+{"type": "stop_move", "tradeId": "1772722800", "time": 1772794800, "timeHuman": "2026-03-06 14:00:00", "price": 71072.34384604488, "side": "short"}
+{"type": "stop_move", "tradeId": "1772722800", "time": 1772798400, "timeHuman": "2026-03-06 15:00:00", "price": 70978.2950768359, "side": "short"}
+{"type": "stop_move", "tradeId": "1772722800", "time": 1772798400, "timeHuman": "2026-03-06 15:00:00", "price": 70878.39606146872, "side": "short"}
+{"type": "stop_move", "tradeId": "1772722800", "time": 1772798400, "timeHuman": "2026-03-06 15:00:00", "price": 70978.2950768359, "side": "short"}
+{"type": "stop_move", "tradeId": "1772722800", "time": 1772798400, "timeHuman": "2026-03-06 15:00:00", "price": 70878.39606146872, "side": "short"}
+{"type": "stop_move", "tradeId": "1772722800", "time": 1772798400, "timeHuman": "2026-03-06 15:00:00", "price": 70978.2950768359, "side": "short"}
+{"type": "stop_move", "tradeId": "1772722800", "time": 1772802000, "timeHuman": "2026-03-06 16:00:00", "price": 70793.98606146872, "side": "short"}
+{"type": "stop_move", "tradeId": "1772722800", "time": 1772802000, "timeHuman": "2026-03-06 16:00:00", "price": 70646.53884917498, "side": "short"}
+{"type": "stop_move", "tradeId": "1772722800", "time": 1772802000, "timeHuman": "2026-03-06 16:00:00", "price": 70793.98606146872, "side": "short"}
+{"type": "stop_move", "tradeId": "1772722800", "time": 1772802000, "timeHuman": "2026-03-06 16:00:00", "price": 70646.53884917498, "side": "short"}
+{"type": "stop_move", "tradeId": "1772722800", "time": 1772802000, "timeHuman": "2026-03-06 16:00:00", "price": 70793.98606146872, "side": "short"}
+{"type": "stop_move", "tradeId": "1772722800", "time": 1772802000, "timeHuman": "2026-03-06 16:00:00", "price": 70646.53884917498, "side": "short"}
+{"type": "stop_move", "tradeId": "1772722800", "time": 1772802000, "timeHuman": "2026-03-06 16:00:00", "price": 70793.98606146872, "side": "short"}
+{"type": "stop_move", "tradeId": "1772722800", "time": 1772805600, "timeHuman": "2026-03-06 17:00:00", "price": 70646.53884917498, "side": "short"}
+{"type": "stop_move", "tradeId": "1772722800", "time": 1772805600, "timeHuman": "2026-03-06 17:00:00", "price": 70316.71107933998, "side": "short"}
+{"type": "stop_move", "tradeId": "1772722800", "time": 1772805600, "timeHuman": "2026-03-06 17:00:00", "price": 70646.53884917498, "side": "short"}
+{"type": "stop_move", "tradeId": "1772722800", "time": 1772805600, "timeHuman": "2026-03-06 17:00:00", "price": 70316.71107933998, "side": "short"}
+{"type": "stop_move", "tradeId": "1772722800", "time": 1772805600, "timeHuman": "2026-03-06 17:00:00", "price": 70646.53884917498, "side": "short"}
+{"type": "stop_move", "tradeId": "1772722800", "time": 1772805600, "timeHuman": "2026-03-06 17:00:00", "price": 70316.71107933998, "side": "short"}
+{"type": "stop_move", "tradeId": "1772722800", "time": 1772809200, "timeHuman": "2026-03-06 18:00:00", "price": 70052.84886347198, "side": "short"}
+{"type": "stop_move", "tradeId": "1772722800", "time": 1772809200, "timeHuman": "2026-03-06 18:00:00", "price": 70316.71107933998, "side": "short"}
+{"type": "stop_move", "tradeId": "1772722800", "time": 1772809200, "timeHuman": "2026-03-06 18:00:00", "price": 70052.84886347198, "side": "short"}
+{"type": "stop_move", "tradeId": "1772722800", "time": 1772809200, "timeHuman": "2026-03-06 18:00:00", "price": 70316.71107933998, "side": "short"}
+{"type": "stop_move", "tradeId": "1772722800", "time": 1772809200, "timeHuman": "2026-03-06 18:00:00", "price": 70052.84886347198, "side": "short"}
+{"type": "stop_move", "tradeId": "1772722800", "time": 1772809200, "timeHuman": "2026-03-06 18:00:00", "price": 70316.71107933998, "side": "short"}
+{"type": "stop_move", "tradeId": "1772722800", "time": 1772809200, "timeHuman": "2026-03-06 18:00:00", "price": 70052.84886347198, "side": "short"}
+{"type": "stop_move", "tradeId": "1772722800", "time": 1772809200, "timeHuman": "2026-03-06 18:00:00", "price": 70264.71886347198, "side": "short"}
+{"type": "stop_move", "tradeId": "1772722800", "time": 1772809200, "timeHuman": "2026-03-06 18:00:00", "price": 70052.84886347198, "side": "short"}
+{"type": "stop_move", "tradeId": "1772722800", "time": 1772809200, "timeHuman": "2026-03-06 18:00:00", "price": 70264.71886347198, "side": "short"}
+{"type": "stop_move", "tradeId": "1772722800", "time": 1772809200, "timeHuman": "2026-03-06 18:00:00", "price": 70052.84886347198, "side": "short"}
+{"type": "stop_move", "tradeId": "1772722800", "time": 1772812800, "timeHuman": "2026-03-06 19:00:00", "price": 70431.30410356683, "side": "short"}
+{"type": "stop_move", "tradeId": "1772722800", "time": 1772816400, "timeHuman": "2026-03-06 20:00:00", "price": 69925.60847206594, "side": "short"}
+{"type": "stop_move", "tradeId": "1772722800", "time": 1772820000, "timeHuman": "2026-03-06 21:00:00", "price": 69734.14720125606, "side": "short"}
+{"type": "stop_move", "tradeId": "1772722800", "time": 1772823600, "timeHuman": "2026-03-06 22:00:00", "price": 69545.59012106765, "side": "short"}
+{"type": "stop_move", "tradeId": "1772722800", "time": 1772827200, "timeHuman": "2026-03-06 23:00:00", "price": 69385.3316029075, "side": "short"}
+{"type": "stop_move", "tradeId": "1772722800", "time": 1772830800, "timeHuman": "2026-03-07 00:00:00", "price": 69220.13186247137, "side": "short"}
+{"type": "stop_move", "tradeId": "1772722800", "time": 1772830800, "timeHuman": "2026-03-07 00:00:00", "price": 69385.3316029075, "side": "short"}
+{"type": "stop_move", "tradeId": "1772722800", "time": 1772830800, "timeHuman": "2026-03-07 00:00:00", "price": 69220.13186247137, "side": "short"}
+{"type": "stop_move", "tradeId": "1772722800", "time": 1772830800, "timeHuman": "2026-03-07 00:00:00", "price": 69385.3316029075, "side": "short"}
+{"type": "stop_move", "tradeId": "1772722800", "time": 1772834400, "timeHuman": "2026-03-07 01:00:00", "price": 69227.13686247138, "side": "short"}
+{"type": "stop_move", "tradeId": "1772722800", "time": 1772834400, "timeHuman": "2026-03-07 01:00:00", "price": 69385.3316029075, "side": "short"}
+{"type": "stop_move", "tradeId": "1772722800", "time": 1772834400, "timeHuman": "2026-03-07 01:00:00", "price": 69227.13686247138, "side": "short"}
+{"type": "stop_move", "tradeId": "1772722800", "time": 1772834400, "timeHuman": "2026-03-07 01:00:00", "price": 69385.3316029075, "side": "short"}
+{"type": "stop_move", "tradeId": "1772722800", "time": 1772834400, "timeHuman": "2026-03-07 01:00:00", "price": 69227.13686247138, "side": "short"}
+{"type": "stop_move", "tradeId": "1772722800", "time": 1772834400, "timeHuman": "2026-03-07 01:00:00", "price": 69385.3316029075, "side": "short"}
+{"type": "stop_move", "tradeId": "1772722800", "time": 1772834400, "timeHuman": "2026-03-07 01:00:00", "price": 69227.13686247138, "side": "short"}
+{"type": "stop_move", "tradeId": "1772722800", "time": 1772834400, "timeHuman": "2026-03-07 01:00:00", "price": 69385.3316029075, "side": "short"}
+{"type": "stop_move", "tradeId": "1772722800", "time": 1772838000, "timeHuman": "2026-03-07 02:00:00", "price": 69108.69133310067, "side": "short"}
+{"type": "stop_move", "tradeId": "1772722800", "time": 1772841600, "timeHuman": "2026-03-07 03:00:00", "price": 68997.75263313556, "side": "short"}
+{"type": "stop_move", "tradeId": "1772722800", "time": 1772841600, "timeHuman": "2026-03-07 03:00:00", "price": 69108.69133310067, "side": "short"}
+{"type": "stop_move", "tradeId": "1772722800", "time": 1772841600, "timeHuman": "2026-03-07 03:00:00", "price": 68997.75263313556, "side": "short"}
+{"type": "stop_move", "tradeId": "1772722800", "time": 1772845200, "timeHuman": "2026-03-07 04:00:00", "price": 68906.52973816523, "side": "short"}
+{"type": "stop_move", "tradeId": "1772722800", "time": 1772848800, "timeHuman": "2026-03-07 05:00:00", "price": 68825.39027744046, "side": "short"}
+{"type": "stop_move", "tradeId": "1772722800", "time": 1772852400, "timeHuman": "2026-03-07 06:00:00", "price": 68756.21173582438, "side": "short"}
+{"type": "stop_move", "tradeId": "1772722800", "time": 1772852400, "timeHuman": "2026-03-07 06:00:00", "price": 68825.39027744046, "side": "short"}
+{"type": "stop_move", "tradeId": "1772722800", "time": 1772852400, "timeHuman": "2026-03-07 06:00:00", "price": 68756.21173582438, "side": "short"}
+{"type": "stop_move", "tradeId": "1772722800", "time": 1772852400, "timeHuman": "2026-03-07 06:00:00", "price": 68825.39027744046, "side": "short"}
+{"type": "stop_move", "tradeId": "1772722800", "time": 1772852400, "timeHuman": "2026-03-07 06:00:00", "price": 68756.21173582438, "side": "short"}
+{"type": "stop_move", "tradeId": "1772722800", "time": 1772852400, "timeHuman": "2026-03-07 06:00:00", "price": 68825.39027744046, "side": "short"}
+{"type": "stop_move", "tradeId": "1772722800", "time": 1772852400, "timeHuman": "2026-03-07 06:00:00", "price": 68756.21173582438, "side": "short"}
+{"type": "stop_move", "tradeId": "1772722800", "time": 1772856000, "timeHuman": "2026-03-07 07:00:00", "price": 68724.49997545073, "side": "short"}
+{"type": "stop_move", "tradeId": "1772722800", "time": 1772859600, "timeHuman": "2026-03-07 08:00:00", "price": 68637.73997913313, "side": "short"}
+{"type": "stop_move", "tradeId": "1772722800", "time": 1772863200, "timeHuman": "2026-03-07 09:00:00", "price": 68563.33398226315, "side": "short"}
+{"type": "stop_move", "tradeId": "1772722800", "time": 1772866800, "timeHuman": "2026-03-07 10:00:00", "price": 68482.47888492368, "side": "short"}
+{"type": "stop_move", "tradeId": "1772722800", "time": 1772870400, "timeHuman": "2026-03-07 11:00:00", "price": 68390.66705218513, "side": "short"}
+{"type": "stop_move", "tradeId": "1772722800", "time": 1772870400, "timeHuman": "2026-03-07 11:00:00", "price": 68482.47888492368, "side": "short"}
+{"type": "stop_move", "tradeId": "1772722800", "time": 1772870400, "timeHuman": "2026-03-07 11:00:00", "price": 68390.66705218513, "side": "short"}
+{"type": "stop_move", "tradeId": "1772722800", "time": 1772874000, "timeHuman": "2026-03-07 12:00:00", "price": 68338.42699435736, "side": "short"}
+{"type": "stop_move", "tradeId": "1772722800", "time": 1772874000, "timeHuman": "2026-03-07 12:00:00", "price": 68338.38636932826, "side": "short"}
+{"type": "stop_move", "tradeId": "1772722800", "time": 1772877600, "timeHuman": "2026-03-07 13:00:00", "price": 68298.78841392903, "side": "short"}
+{"type": "stop_move", "tradeId": "1772722800", "time": 1772881200, "timeHuman": "2026-03-07 14:00:00", "price": 68269.8395034232, "side": "short"}
+{"type": "stop_move", "tradeId": "1772722800", "time": 1772884800, "timeHuman": "2026-03-07 15:00:00", "price": 68264.95857790971, "side": "short"}
+{"type": "stop_move", "tradeId": "1772722800", "time": 1772888400, "timeHuman": "2026-03-07 16:00:00", "price": 68238.30979122325, "side": "short"}
+{"type": "stop_move", "tradeId": "1772722800", "time": 1772892000, "timeHuman": "2026-03-07 17:00:00", "price": 68214.81832253977, "side": "short"}
+{"type": "stop_move", "tradeId": "1772722800", "time": 1772895600, "timeHuman": "2026-03-07 18:00:00", "price": 68196.20057415881, "side": "short"}
+{"type": "stop_move", "tradeId": "1772722800", "time": 1772899200, "timeHuman": "2026-03-07 19:00:00", "price": 68172.42548803499, "side": "short"}
+{"type": "stop_move", "tradeId": "1772722800", "time": 1772902800, "timeHuman": "2026-03-07 20:00:00", "price": 68132.56666482975, "side": "short"}
+{"type": "stop_move", "tradeId": "1772722800", "time": 1772906400, "timeHuman": "2026-03-07 21:00:00", "price": 68104.29666510528, "side": "short"}
+{"type": "stop_move", "tradeId": "1772722800", "time": 1772910000, "timeHuman": "2026-03-07 22:00:00", "price": 68057.19716533949, "side": "short"}
+{"type": "stop_move", "tradeId": "1772722800", "time": 1772913600, "timeHuman": "2026-03-07 23:00:00", "price": 67984.10259053856, "side": "short"}
+{"type": "stop_move", "tradeId": "1772722800", "time": 1772917200, "timeHuman": "2026-03-08 00:00:00", "price": 67901.55720195778, "side": "short"}
+{"type": "stop_move", "tradeId": "1772722800", "time": 1772924400, "timeHuman": "2026-03-08 02:00:00", "price": 67843.27137166412, "side": "short"}
+{"type": "stop_move", "tradeId": "1772722800", "time": 1772928000, "timeHuman": "2026-03-08 03:00:00", "price": 67777.74066591449, "side": "short"}
+{"type": "stop_move", "tradeId": "1772722800", "time": 1772931600, "timeHuman": "2026-03-08 04:00:00", "price": 67734.27956602731, "side": "short"}
+{"type": "stop_move", "tradeId": "1772722800", "time": 1772935200, "timeHuman": "2026-03-08 05:00:00", "price": 67678.13763112322, "side": "short"}
+{"type": "stop_move", "tradeId": "1772722800", "time": 1772938800, "timeHuman": "2026-03-08 06:00:00", "price": 67640.79698645473, "side": "short"}
+{"type": "stop_move", "tradeId": "1772722800", "time": 1772942400, "timeHuman": "2026-03-08 07:00:00", "price": 67558.86743848653, "side": "short"}
+{"type": "stop_move", "tradeId": "1772722800", "time": 1772946000, "timeHuman": "2026-03-08 08:00:00", "price": 67488.80732271355, "side": "short"}
+{"type": "stop_move", "tradeId": "1772722800", "time": 1772953200, "timeHuman": "2026-03-08 10:00:00", "price": 67470.41922430652, "side": "short"}
+{"type": "exit", "tradeId": "1772722800", "time": 1772956800, "timeHuman": "2026-03-08 11:00:00", "closePrice": 67489.4, "closeReason": "stop", "points": 4167.400000000009}
+{"type": "entry", "tradeId": "1773007200", "time": 1773007200, "timeHuman": "2026-03-09 01:00:00", "barIndex": 1999, "side": "short", "price": 65942.4, "initialStopPrice": 67013.6, "targetPrice": null, "snapshotFile": "entry_1773007200.md", "size": 0.001}
+{"type": "stop_move", "tradeId": "1773007200", "time": 1773010800, "timeHuman": "2026-03-09 02:00:00", "price": 66987.58062989132, "side": "short"}
+{"type": "exit", "tradeId": "1773007200", "time": 1773025200, "timeHuman": "2026-03-09 06:00:00", "closePrice": 66802.5, "closeReason": "stop", "points": -570.8000000000029}
+{"type": "entry", "tradeId": "1773061200", "time": 1773061200, "timeHuman": "2026-03-09 16:00:00", "barIndex": 1999, "side": "long", "price": 69118.0, "initialStopPrice": 67777.77405377122, "targetPrice": null, "snapshotFile": "entry_1773061200.md", "requestedEntryPrice": 69118.0, "size": 0.001}
+{"type": "stop_move", "tradeId": "1773061200", "time": 1773064800, "timeHuman": "2026-03-09 17:00:00", "price": 68009.74133427914, "side": "long"}
+{"type": "stop_move", "tradeId": "1773061200", "time": 1773068400, "timeHuman": "2026-03-09 18:00:00", "price": 68606.73651701355, "side": "long"}
+{"type": "stop_move", "tradeId": "1773061200", "time": 1773072000, "timeHuman": "2026-03-09 19:00:00", "price": 68381.24060685295, "side": "long"}
+{"type": "stop_move", "tradeId": "1773061200", "time": 1773075600, "timeHuman": "2026-03-09 20:00:00", "price": 68417.17451582501, "side": "long"}
+{"type": "stop_move", "tradeId": "1773061200", "time": 1773075600, "timeHuman": "2026-03-09 20:00:00", "price": 68369.10239759296, "side": "long"}
+{"type": "stop_move", "tradeId": "1773061200", "time": 1773075600, "timeHuman": "2026-03-09 20:00:00", "price": 68332.41458540347, "side": "long"}
+{"type": "exit", "tradeId": "1773061200", "time": 1773078059, "timeHuman": "2026-03-09 20:40:59", "closePrice": 68332.41458540347, "closeReason": "stop", "points": -785.5854145965277}
+{"type": "entry", "tradeId": "1773237600", "time": 1773237600, "timeHuman": "2026-03-11 17:00:00", "barIndex": 1999, "side": "long", "price": 70549.0, "initialStopPrice": 69165.0, "targetPrice": null, "snapshotFile": "entry_1773061200.md", "requestedEntryPrice": 70549.0, "size": 0.001}
+{"type": "stop_move", "tradeId": "1773237600", "time": 1773237600, "timeHuman": "2026-03-11 17:00:00", "price": 69226.3, "side": "long"}
+{"type": "stop_move", "tradeId": "1773237600", "time": 1773255600, "timeHuman": "2026-03-11 22:00:00", "price": 70220.10407856572, "side": "long"}
+{"type": "stop_move", "tradeId": "1773237600", "time": 1773255600, "timeHuman": "2026-03-11 22:00:00", "price": 70360.51126522732, "side": "long"}
+{"type": "stop_move", "tradeId": "1773237600", "time": 1773255600, "timeHuman": "2026-03-11 22:00:00", "price": 70278.72418696976, "side": "long"}
+{"type": "stop_move", "tradeId": "1773237600", "time": 1773259200, "timeHuman": "2026-03-11 23:00:00", "price": 70454.90571169037, "side": "long"}
+{"type": "exit", "tradeId": "1773237600", "time": 1773259308, "timeHuman": "2026-03-11 23:01:48", "closePrice": 70454.90571169037, "closeReason": "stop", "points": -94.09428830962861}
+{"type": "entry", "tradeId": "1773759600", "time": 1773759600, "timeHuman": "2026-03-17 18:00:00", "barIndex": 1999, "side": "long", "price": 74636.4, "initialStopPrice": 73343.47184028591, "targetPrice": 79725.1792, "snapshotFile": "entry_1773759600.md", "requestedEntryPrice": 74587.9, "size": 0.001}
+{"type": "stop_move", "tradeId": "1773759600", "time": 1773759600, "timeHuman": "2026-03-17 18:00:00", "price": 73490.77184028592, "side": "long"}
+{"type": "stop_move", "tradeId": "1773759600", "time": 1773774000, "timeHuman": "2026-03-17 22:00:00", "price": 73774.87605345494, "side": "long"}
+{"type": "stop_move", "tradeId": "1773759600", "time": 1773777600, "timeHuman": "2026-03-17 23:00:00", "price": 74061.4927800684, "side": "long"}
+{"type": "stop_move", "tradeId": "1773759600", "time": 1773781200, "timeHuman": "2026-03-18 00:00:00", "price": 74182.60, "side": "long"}
+{"type": "stop_move", "tradeId": "1773759600", "time": 1773781200, "timeHuman": "2026-03-18 00:00:00", "price": 74216.8820850513, "side": "long"}
+{"type": "stop_move", "tradeId": "1773759600", "time": 1773784800, "timeHuman": "2026-03-18 01:00:00", "price": 74310.09906378848, "side": "long"}
+{"type": "exit", "tradeId": "1773759600", "time": 1773786689, "timeHuman": "2026-03-18 01:31:29", "closePrice": 74310.1792, "closeReason": "stop", "points": -326}
+{"type": "stop_move", "tradeId": "1773990000", "time": 1773990000, "timeHuman": "2026-03-20 10:00:00", "price": 69805.73058258914, "side": "long"}
+{"type": "entry", "tradeId": "1773990000", "time": 1773990000, "timeHuman": "2026-03-20 10:00:00", "barIndex": 1999, "side": "long", "price": 70804.7, "initialStopPrice": 69715.8595089284, "targetPrice": 75873.9, "snapshotFile": "entry_1773990000.md", "requestedEntryPrice": 70804.6, "size": 0.001}
+{"type": "stop_move", "tradeId": "1773990000", "time": 1773993600, "timeHuman": "2026-03-20 11:00:00", "price": 70055.47293694185, "side": "long"}
+{"type": "stop_move", "tradeId": "1773990000", "time": 1773993600, "timeHuman": "2026-03-20 11:00:00", "price": 70064.19543694185, "side": "long"}
+{"type": "stop_move", "tradeId": "1773990000", "time": 1773997200, "timeHuman": "2026-03-20 12:00:00", "price": 70258.04407770639, "side": "long"}
+{"type": "stop_move", "tradeId": "1773990000", "time": 1774000800, "timeHuman": "2026-03-20 13:00:00", "price": 70274.92746605043, "side": "long"}
+{"type": "exit", "tradeId": "1773990000", "time": 1774001492, "timeHuman": "2026-03-20 13:11:32", "closePrice": 70274.92746605043, "closeReason": "stop", "points": -529.7725339495664}
+{"type": "stop_move", "tradeId": "1773990000", "time": 1774004400, "timeHuman": "2026-03-20 14:00:00", "price": 70183.22757610033, "side": "long"}
+{"type": "stop_move", "tradeId": "1773990000", "time": 1774008000, "timeHuman": "2026-03-20 15:00:00", "price": 70202.37068207524, "side": "long"}
+{"type": "stop_move", "tradeId": "1773990000", "time": 1774011600, "timeHuman": "2026-03-20 16:00:00", "price": 70216.72801155644, "side": "long"}
+{"type": "stop_move", "tradeId": "1774015200", "time": 1774015200, "timeHuman": "2026-03-20 17:00:00", "price": 70605.02962141308, "side": "short"}
+{"type": "entry", "tradeId": "1774015200", "time": 1774015200, "timeHuman": "2026-03-20 17:00:00", "barIndex": 1999, "side": "short", "price": 69699.9, "initialStopPrice": 70720.1061618841, "targetPrice": 66976.5, "snapshotFile": "entry_1774015200.md", "requestedEntryPrice": 69652.1, "size": 0.001}
+{"type": "stop_move", "tradeId": "1774015200", "time": 1774018800, "timeHuman": "2026-03-20 18:00:00", "price": 70432.19642820112, "side": "short"}
+{"type": "stop_move", "tradeId": "1774015200", "time": 1774022400, "timeHuman": "2026-03-20 19:00:00", "price": 70364.78696397095, "side": "short"}
+{"type": "stop_move", "tradeId": "1774015200", "time": 1774026000, "timeHuman": "2026-03-20 20:00:00", "price": 70321.27391937531, "side": "short"}
+{"type": "stop_move", "tradeId": "1774015200", "time": 1774029600, "timeHuman": "2026-03-20 21:00:00", "price": 70274.55283146902, "side": "short"}
+{"type": "stop_move", "tradeId": "1774015200", "time": 1774033200, "timeHuman": "2026-03-20 22:00:00", "price": 70240.11990674866, "side": "short"}
+{"type": "stop_move", "tradeId": "1774015200", "time": 1774036800, "timeHuman": "2026-03-20 23:00:00", "price": 70228.58192073635, "side": "short"}
+{"type": "exit", "tradeId": "1774015200", "time": 1774037487, "timeHuman": "2026-03-20 23:11:27", "closePrice": 70228.58192073635, "closeReason": "stop", "points": -528.6819207363587}
+{"type": "stop_move", "tradeId": "1774555200", "time": 1774555200, "timeHuman": "2026-03-26 23:00:00", "price": 68283.21273600438, "side": "long"}
+{"type": "entry", "tradeId": "1774555200", "time": 1774555200, "timeHuman": "2026-03-26 23:00:00", "barIndex": 1999, "side": "long", "price": 69242.8, "initialStopPrice": 68200.59351467251, "targetPrice": 72110.1392, "snapshotFile": "entry_1774555200.md", "requestedEntryPrice": 69285.9, "size": 0.001}
+{"type": "stop_move", "tradeId": "1774555200", "time": 1774558800, "timeHuman": "2026-03-27 00:00:00", "price": 68345.17715200328, "side": "long"}
+{"type": "stop_move", "tradeId": "1774555200", "time": 1774562400, "timeHuman": "2026-03-27 01:00:00", "price": 68419.38557920279, "side": "long"}
+{"type": "stop_move", "tradeId": "1774555200", "time": 1774566000, "timeHuman": "2026-03-27 02:00:00", "price": 68441.97774232237, "side": "long"}
+{"type": "stop_move", "tradeId": "1774555200", "time": 1774569600, "timeHuman": "2026-03-27 03:00:00", "price": 68465.96608097402, "side": "long"}
+{"type": "exit", "tradeId": "1774555200", "time": 1774573247, "timeHuman": "2026-03-27 04:00:47", "closePrice": 68465.96608097402, "closeReason": "stop", "points": -776.8339190259867}
+{"type": "stop_move", "tradeId": "1775019600", "time": 1775019600, "timeHuman": "2026-04-01 08:00:00", "price": 67608.285, "side": "long"}
+{"type": "entry", "tradeId": "1775019600", "time": 1775019600, "timeHuman": "2026-04-01 08:00:00", "barIndex": 1999, "side": "long", "price": 68498.4, "initialStopPrice": 67543.8, "targetPrice": 72110.1392, "snapshotFile": "entry_1775019600.md", "requestedEntryPrice": 68482.6, "size": 0.001}
+{"type": "stop_move", "tradeId": "1775019600", "time": 1775023200, "timeHuman": "2026-04-01 09:00:00", "price": 67684.89225, "side": "long"}
+{"type": "stop_move", "tradeId": "1775019600", "time": 1775026800, "timeHuman": "2026-04-01 10:00:00", "price": 68004.0146875, "side": "long"}
+{"type": "stop_move", "tradeId": "1775019600", "time": 1775030400, "timeHuman": "2026-04-01 11:00:00", "price": 68131.213515625, "side": "long"}
+{"type": "stop_move", "tradeId": "1775019600", "time": 1775034000, "timeHuman": "2026-04-01 12:00:00", "price": 68226.61263671875, "side": "long"}
+{"type": "stop_move", "tradeId": "1775019600", "time": 1775037600, "timeHuman": "2026-04-01 13:00:00", "price": 68298.16197753907, "side": "long"}
+{"type": "stop_move", "tradeId": "1775019600", "time": 1775041200, "timeHuman": "2026-04-01 14:00:00", "price": 68351.8239831543, "side": "long"}
+{"type": "stop_move", "tradeId": "1775019600", "time": 1775044800, "timeHuman": "2026-04-01 15:00:00", "price": 68392.07048736572, "side": "long"}
+{"type": "exit", "tradeId": "1775019600", "time": 1775046869, "timeHuman": "2026-04-01 15:34:29", "closePrice": 68392.07048736572, "closeReason": "stop", "points": -106.32951263427094}
+{"type": "stop_move", "tradeId": "1775286000", "time": 1775286000, "timeHuman": "2026-04-04 10:00:00", "price": 66624.99111305791, "side": "long"}
+{"type": "entry", "tradeId": "1775286000", "time": 1775286000, "timeHuman": "2026-04-04 10:00:00", "barIndex": 1999, "side": "long", "price": 66996.8, "initialStopPrice": 66581.06601536226, "targetPrice": 68383.9, "snapshotFile": "entry_1775286000.md", "requestedEntryPrice": 66993.2, "size": 0.001}
+{"type": "stop_move", "tradeId": "1775286000", "time": 1775289600, "timeHuman": "2026-04-04 11:00:00", "price": 66718.05583479343, "side": "long"}
+{"type": "stop_move", "tradeId": "1775286000", "time": 1775293200, "timeHuman": "2026-04-04 12:00:00", "price": 66742.34745957442, "side": "long"}
+{"type": "stop_move", "tradeId": "1775286000", "time": 1775296800, "timeHuman": "2026-04-04 13:00:00", "price": 66762.81534063826, "side": "long"}
+{"type": "stop_move", "tradeId": "1775286000", "time": 1775300400, "timeHuman": "2026-04-04 14:00:00", "price": 66853.86732101062, "side": "long"}
+{"type": "stop_move", "tradeId": "1775286000", "time": 1775304000, "timeHuman": "2026-04-04 15:00:00", "price": 66889.71299075797, "side": "long"}
+{"type": "stop_move", "tradeId": "1775286000", "time": 1775307600, "timeHuman": "2026-04-04 16:00:00", "price": 66916.59724306848, "side": "long"}
+{"type": "stop_move", "tradeId": "1775286000", "time": 1775311200, "timeHuman": "2026-04-04 17:00:00", "price": 66936.76043230135, "side": "long"}
+{"type": "stop_move", "tradeId": "1775286000", "time": 1775314800, "timeHuman": "2026-04-04 18:00:00", "price": 66951.88282422602, "side": "long"}
+{"type": "stop_move", "tradeId": "1775286000", "time": 1775318400, "timeHuman": "2026-04-04 19:00:00", "price": 66980.43040059211, "side": "long"}
+{"type": "stop_move", "tradeId": "1775286000", "time": 1775322000, "timeHuman": "2026-04-04 20:00:00", "price": 67026.8958405033, "side": "long"}
+{"type": "stop_move", "tradeId": "1775286000", "time": 1775325600, "timeHuman": "2026-04-04 21:00:00", "price": 67061.0064644278, "side": "long"}
+{"type": "stop_move", "tradeId": "1775286000", "time": 1775329200, "timeHuman": "2026-04-04 22:00:00", "price": 67084.15049476363, "side": "long"}
+{"type": "stop_move", "tradeId": "1775286000", "time": 1775332800, "timeHuman": "2026-04-04 23:00:00", "price": 67107.52792054908, "side": "long"}
+{"type": "stop_move", "tradeId": "1775286000", "time": 1775336400, "timeHuman": "2026-04-05 00:00:00", "price": 67110.16373246672, "side": "long"}
+{"type": "stop_move", "tradeId": "1775286000", "time": 1775340000, "timeHuman": "2026-04-05 01:00:00", "price": 67120.02417259672, "side": "long"}
+{"type": "stop_move", "tradeId": "1775286000", "time": 1775343600, "timeHuman": "2026-04-05 02:00:00", "price": 67146.36054670722, "side": "long"}
+{"type": "stop_move", "tradeId": "1775286000", "time": 1775347200, "timeHuman": "2026-04-05 03:00:00", "price": 67157.70646470114, "side": "long"}
+{"type": "exit", "tradeId": "1775286000", "time": 1775350699, "timeHuman": "2026-04-05 03:58:19", "closePrice": 67157.70646470114, "closeReason": "stop", "points": 160.90646470114007}
+{"type": "stop_move", "tradeId": "1775286000", "time": 1775350800, "timeHuman": "2026-04-05 04:00:00", "price": 67115.2706774414, "side": "long"}
+{"type": "entry", "tradeId": "1775430000", "time": 1775430000, "timeHuman": "2026-04-06 02:00:00", "barIndex": 1999, "side": "long", "price": 68438.3, "initialStopPrice": 67807.52351600243, "targetPrice": 72110.1392, "snapshotFile": "entry_1775430000.md", "requestedEntryPrice": 68426.4, "size": 0.001}
+{"type": "stop_move", "tradeId": "1775430000", "time": 1775430000, "timeHuman": "2026-04-06 02:00:00", "price": 67969.01763700182, "side": "long"}
+{"type": "stop_move", "tradeId": "1775430000", "time": 1775433600, "timeHuman": "2026-04-06 03:00:00", "price": 68113.73697775137, "side": "long"}
+{"type": "stop_move", "tradeId": "1775430000", "time": 1775437200, "timeHuman": "2026-04-06 04:00:00", "price": 68246.81143108866, "side": "long"}
+{"type": "stop_move", "tradeId": "1775430000", "time": 1775440800, "timeHuman": "2026-04-06 05:00:00", "price": 68322.97971642535, "side": "long"}
+{"type": "stop_move", "tradeId": "1775430000", "time": 1775444400, "timeHuman": "2026-04-06 06:00:00", "price": 68384.57275896156, "side": "long"}
+{"type": "stop_move", "tradeId": "1775430000", "time": 1775448000, "timeHuman": "2026-04-06 07:00:00", "price": 68481.46184511733, "side": "long"}
+{"type": "stop_move", "tradeId": "1775430000", "time": 1775451600, "timeHuman": "2026-04-06 08:00:00", "price": 68551.74256834973, "side": "long"}
+{"type": "stop_move", "tradeId": "1775430000", "time": 1775455200, "timeHuman": "2026-04-06 09:00:00", "price": 68626.48118309726, "side": "long"}
+{"type": "stop_move", "tradeId": "1775430000", "time": 1775458800, "timeHuman": "2026-04-06 10:00:00", "price": 68647.90400563268, "side": "long"}
+{"type": "stop_move", "tradeId": "1775430000", "time": 1775462400, "timeHuman": "2026-04-06 11:00:00", "price": 68669.48840478777, "side": "long"}
+{"type": "stop_move", "tradeId": "1775430000", "time": 1775466000, "timeHuman": "2026-04-06 12:00:00", "price": 68725.6201440696, "side": "long"}
+{"type": "stop_move", "tradeId": "1775430000", "time": 1775469600, "timeHuman": "2026-04-06 13:00:00", "price": 69042.03592769311, "side": "long"}
+{"type": "stop_move", "tradeId": "1775430000", "time": 1775473200, "timeHuman": "2026-04-06 14:00:00", "price": 69133.60553853915, "side": "long"}
+{"type": "stop_move", "tradeId": "1775430000", "time": 1775476800, "timeHuman": "2026-04-06 15:00:00", "price": 69218.27810932737, "side": "long"}
+{"type": "stop_move", "tradeId": "1775430000", "time": 1775480400, "timeHuman": "2026-04-06 16:00:00", "price": 69228.85639292827, "side": "long"}
+{"type": "exit", "tradeId": "1775430000", "time": 1775482664, "timeHuman": "2026-04-06 16:37:44", "closePrice": 69228.85639292827, "closeReason": "stop", "points": 790.5563929282653}
+{"type": "stop_move", "tradeId": "1775656800", "time": 1775656800, "timeHuman": "2026-04-08 17:00:00", "price": 72215.89198055788, "side": "short"}
+{"type": "stop_move", "tradeId": "1775656800", "time": 1775660400, "timeHuman": "2026-04-08 18:00:00", "price": 71808.83834620666, "side": "short"}
+{"type": "stop_move", "tradeId": "1775656800", "time": 1775664000, "timeHuman": "2026-04-08 19:00:00", "price": 71734.38759427566, "side": "short"}
+{"type": "stop_move", "tradeId": "1775656800", "time": 1775667600, "timeHuman": "2026-04-08 20:00:00", "price": 71787.89259427566, "side": "short"}
+{"type": "stop_move", "tradeId": "1776236400", "time": 1776236400, "timeHuman": "2026-04-15 09:00:00", "price": 74565.14794139321, "side": "short"}
