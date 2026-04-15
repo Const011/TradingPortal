@@ -426,7 +426,7 @@ export function PriceChart() {
       autoScale: autoScaleEnabled,
       mode,
     });
-  }, [autoScaleEnabled, logScaleEnabled]);
+  }, [selectedSymbol, chartInterval, autoScaleEnabled, logScaleEnabled]);
 
   useEffect(() => {
     if (seriesRef.current) {
@@ -435,13 +435,19 @@ export function PriceChart() {
     if (volumeSeriesRef.current) {
       volumeSeriesRef.current.setData(volumeData);
     }
+    if (chartData.length === 0) {
+      lastFittedKeyRef.current = null;
+      return;
+    }
+    // Include first bar time so we refit after the real snapshot arrives: one render can still
+    // show the previous symbol's candles while `selectedSymbol` has already changed; latching
+    // only on symbol+interval would skip fitContent for the new data.
     const symbolIntervalKey = `${selectedSymbol}:${chartInterval}`;
-    if (
-      chartData.length > 0 &&
-      lastFittedKeyRef.current !== symbolIntervalKey
-    ) {
+    const headTime = String(chartData[0].time);
+    const fitKey = `${symbolIntervalKey}:${headTime}`;
+    if (lastFittedKeyRef.current !== fitKey) {
       chartRef.current?.timeScale().fitContent();
-      lastFittedKeyRef.current = symbolIntervalKey;
+      lastFittedKeyRef.current = fitKey;
     }
   }, [chartData, volumeData, selectedSymbol, chartInterval]);
 
