@@ -204,7 +204,7 @@ async def _apply_trade_logging(
             continue
         res = await execute_forced_closure(symbol, interval, ev, bybit_client)
         if res.get("ok"):
-            state.logged_exit_ids.add(tid)
+            _register_trade_exit(state, tid)
             if getattr(state, "restored_trades", None):
                 state.restored_trades = [t for t in state.restored_trades if t.get("tradeId") != tid]
 
@@ -225,7 +225,7 @@ async def _apply_trade_logging(
                     entry_emitted_for_bar = True
                     rev_closed = response.reversal_closed_trade_id
                     if rev_closed:
-                        state.logged_exit_ids.add(rev_closed)
+                        _register_trade_exit(state, rev_closed)
                         if getattr(state, "restored_trades", None):
                             state.restored_trades = [
                                 t for t in state.restored_trades if t.get("tradeId") != rev_closed
@@ -266,6 +266,8 @@ async def _apply_trade_logging(
     )
 
     for trade_id, seg in best_seg_per_trade.items():
+        if trade_id in state.logged_exit_ids:
+            continue
         prev = state.last_stop_price_per_trade.get(trade_id)
         # Always accept the newly computed stop level from the strategy and
         # overwrite whatever is in current.json, as long as the price itself
@@ -468,6 +470,20 @@ class CandleStreamState:
     signals_emitted_for_bar: set[int] = field(default_factory=set)
 
 
+def _register_trade_exit(state: CandleStreamState, trade_id: str) -> None:
+    """Record exit and clear trailing-stop cache.
+
+    Strategy replay still emits ``StopSegment``s for historical trade IDs while those IDs
+    remain in ``logged_entry_ids``; without this, we would keep calling ``update_stop`` /
+    appending ``stop_move`` after the exchange (or dry-run) has already closed the leg.
+    """
+    if not trade_id:
+        return
+    state.logged_exit_ids.add(trade_id)
+    state.last_stop_price_per_trade.pop(trade_id, None)
+    state.logged_stop_bar_per_trade.pop(trade_id, None)
+
+
 class CandleStreamHub:
     def __init__(self, bybit_client: BybitClient, snapshot_limit: int = 300) -> None:
         self._bybit_client = bybit_client
@@ -589,7 +605,7 @@ class CandleStreamHub:
                     if settings.mode == "trading":
                         _refresh_current_trades_from_file(symbol, interval, state)
                         for tid in exited_ids:
-                            state.logged_exit_ids.add(tid)
+                            _register_trade_exit(state, tid)
 
                 payload = await _make_snapshot_payload(
                     candles,
