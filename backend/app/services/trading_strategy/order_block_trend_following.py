@@ -13,8 +13,8 @@ logger = logging.getLogger(__name__)
 # Temporary debug: log bullish signal steps for bars around 2026-03-02 17:00
 now = datetime.now(timezone.utc)
 current_hour = now.replace(minute=0, second=0, microsecond=0)
-#_DEBUG_TS_START = int(datetime(2026, 4, 14, 15, 0).timestamp() * 1000)
-#_DEBUG_TS_END = int(datetime(2026, 4, 30, 0, 0).timestamp() * 1000)
+#_DEBUG_TS_START = int(datetime(2026, 4, 20, 20, 0).timestamp() * 1000)
+#_DEBUG_TS_END = int(datetime(2026, 4, 20, 20, 0).timestamp() * 1000)
 
 # last bar
 N_HOURS = 1
@@ -177,9 +177,9 @@ def _bar_intersects_ob_span(c: Candle, ob_bottom: float, ob_top: float) -> bool:
     return c.high >= ob_bottom and c.low <= ob_top
 
 
-def _price_inside_ob_span(c: Candle, ob_bottom: float, ob_top: float) -> bool:
+def _price_inside_ob_span(price: float, ob_bottom: float, ob_top: float) -> bool:
     """Price-inside definition for entry blocking (close-based)."""
-    return c.close >= ob_bottom and c.close <= ob_top
+    return price >= ob_bottom and price <= ob_top
 
 
 def _forced_opposite_volume_spike(
@@ -1381,29 +1381,85 @@ def compute_order_block_trend_following(
                 entry_price = c.close
                 trade_id = str(time_s)
 
+                # Opposing OB blocking must iterate over the FULL unfiltered OB set
+                # (ignore strength filtering) but still:
+                # - ignore breakers on the current iteration bar (we only block if price is inside an active opposing OB span)
+                opposing_non_breaker_bearish: list[OrderBlock] = [
+                    ob
+                    for ob in all_bear
+                    if (ob.breaking_bar is None or ob.breaking_bar > i)
+                ]
+                opposing_non_breaker_bullish: list[OrderBlock] = [
+                    ob
+                    for ob in all_bull
+                    if (ob.breaking_bar is None or ob.breaking_bar > i)
+                ]
+
                 # New blocking rule:
                 # Block if the entry price lies inside any active opposing-polarity OB.
                 # Long entry → block if inside any bearish OB span.
                 # Short entry → block if inside any bullish OB span.
                 if candidate.side == "long":
-                    if any(_price_inside_ob_span(c, ob_bottom=ob.bottom, ob_top=ob.top) for ob in bearish_ob):
+                    blocked_by_opposing = False
+                    for ob in opposing_non_breaker_bearish:
+                        inside = _price_inside_ob_span(
+                            entry_price, ob_bottom=ob.bottom, ob_top=ob.top
+                        )
                         if _debug:
                             logger.info(
-                                "[OB_STRAT_LONG] bar=%d time=%s | BLOCKED by opposing OB (price inside bearish span) entry=%.1f",
+                                "[OB_STRAT_LONG][OPPOSE_CHECK] bar=%d time=%s | entry=%.2f "
+                                "| bearish_ob span=[%.2f,%.2f] breaker=%s -> inside=%s",
                                 i,
                                 ts_human(c.time),
                                 entry_price,
+                                ob.bottom,
+                                ob.top,
+                                str(ob.breaker),
+                                str(inside),
                             )
+                        if inside:
+                            blocked_by_opposing = True
+                            if _debug:
+                                logger.info(
+                                    "[OB_STRAT_LONG] bar=%d time=%s | BLOCKED by opposing OB "
+                                    "(price inside bearish span) entry=%.1f",
+                                    i,
+                                    ts_human(c.time),
+                                    entry_price,
+                                )
+                            break
+                    if blocked_by_opposing:
                         return
                 else:
-                    if any(_price_inside_ob_span(c, ob_bottom=ob.bottom, ob_top=ob.top) for ob in bullish_ob):
+                    blocked_by_opposing = False
+                    for ob in opposing_non_breaker_bullish:
+                        inside = _price_inside_ob_span(
+                            entry_price, ob_bottom=ob.bottom, ob_top=ob.top
+                        )
                         if _debug:
                             logger.info(
-                                "[OB_STRAT_SHORT] bar=%d time=%s | BLOCKED by opposing OB (price inside bullish span) entry=%.1f",
+                                "[OB_STRAT_SHORT][OPPOSE_CHECK] bar=%d time=%s | entry=%.2f "
+                                "| bullish_ob span=[%.2f,%.2f] breaker=%s -> inside=%s",
                                 i,
                                 ts_human(c.time),
                                 entry_price,
+                                ob.bottom,
+                                ob.top,
+                                str(ob.breaker),
+                                str(inside),
                             )
+                        if inside:
+                            blocked_by_opposing = True
+                            if _debug:
+                                logger.info(
+                                    "[OB_STRAT_SHORT] bar=%d time=%s | BLOCKED by opposing OB "
+                                    "(price inside bullish span) entry=%.1f",
+                                    i,
+                                    ts_human(c.time),
+                                    entry_price,
+                                )
+                            break
+                    if blocked_by_opposing:
                         return
 
                 # CVD-based anti-chop filter: require last `cvd_sequence_bars` deltas

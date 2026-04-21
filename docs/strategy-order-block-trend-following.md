@@ -90,6 +90,7 @@ Even when a signal is triggered and confirmed, **block** the order if:
 2. **Opposing polarity OB (must not be inside it):**
    - **Long:** block the entry if the **entry price** (`entry_candle.close`) lies **inside any active bearish order block** span (`[ob_bottom, ob_top]`).
    - **Short:** symmetric; block if `entry_candle.close` lies **inside any active bullish order block** span.
+   - **List used for this rule:** this check iterates over the **full unfiltered opposing OB set** (ignores the strategy strength filter), and skips **breakers**.
 3. **Insufficient CVD sequence (chop guard):**
    - **Long:** Even when OB + volume spike conditions are met, **skip** the entry if the last `cvd_sequence_bars` CVD `delta` bars do **not** satisfy the long CVD impulse rule above (i.e. there are not enough same-direction CVD bars, or CVD is weakening too much).
    - **Short:** Symmetric; skip if the last `cvd_sequence_bars` CVD `delta` bars do not satisfy the short CVD impulse rule.
