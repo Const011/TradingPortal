@@ -177,6 +177,11 @@ def _bar_intersects_ob_span(c: Candle, ob_bottom: float, ob_top: float) -> bool:
     return c.high >= ob_bottom and c.low <= ob_top
 
 
+def _price_inside_ob_span(c: Candle, ob_bottom: float, ob_top: float) -> bool:
+    """Price-inside definition for entry blocking (close-based)."""
+    return c.close >= ob_bottom and c.close <= ob_top
+
+
 def _forced_opposite_volume_spike(
     candles: list[Candle],
     bar_index: int,
@@ -1375,6 +1380,32 @@ def compute_order_block_trend_following(
                 prev_pos = position
                 entry_price = c.close
                 trade_id = str(time_s)
+
+                # New blocking rule:
+                # Block if the entry price lies inside any active opposing-polarity OB.
+                # Long entry → block if inside any bearish OB span.
+                # Short entry → block if inside any bullish OB span.
+                if candidate.side == "long":
+                    if any(_price_inside_ob_span(c, ob_bottom=ob.bottom, ob_top=ob.top) for ob in bearish_ob):
+                        if _debug:
+                            logger.info(
+                                "[OB_STRAT_LONG] bar=%d time=%s | BLOCKED by opposing OB (price inside bearish span) entry=%.1f",
+                                i,
+                                ts_human(c.time),
+                                entry_price,
+                            )
+                        return
+                else:
+                    if any(_price_inside_ob_span(c, ob_bottom=ob.bottom, ob_top=ob.top) for ob in bullish_ob):
+                        if _debug:
+                            logger.info(
+                                "[OB_STRAT_SHORT] bar=%d time=%s | BLOCKED by opposing OB (price inside bullish span) entry=%.1f",
+                                i,
+                                ts_human(c.time),
+                                entry_price,
+                            )
+                        return
+
                 # CVD-based anti-chop filter: require last `cvd_sequence_bars` deltas
                 # to be consistently in the direction of the candidate.
                 if cvd_sequence_bars > 0 and cvd_delta and 0 <= i < len(cvd_delta):

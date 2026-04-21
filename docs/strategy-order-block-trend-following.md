@@ -80,6 +80,9 @@ On trigger, the strategy emits **`FORCED_CLOSE`** and flatlines; no new position
 Even when a signal is triggered and confirmed, **block** the order if:
 
 1. **Optional candle-color alignment:** With overlapping bull/bear color sets, this branch does not materially restrict entries; rely on the rules below.
+2. **Opposing polarity OB (must not be inside it):**
+   - **Long:** block the entry if the **entry price** (`entry_candle.close`) lies **inside any active bearish order block** span (`[ob_bottom, ob_top]`).
+   - **Short:** symmetric; block if `entry_candle.close` lies **inside any active bullish order block** span.
 2. **Insufficient CVD sequence (chop guard):**
    - **Long:** Even when OB + volume spike conditions are met, **skip** the entry if the last `cvd_sequence_bars` CVD `delta` bars do **not** satisfy the long CVD impulse rule above (i.e. there are not enough same-direction CVD bars, or CVD is weakening too much).
    - **Short:** Symmetric; skip if the last `cvd_sequence_bars` CVD `delta` bars do not satisfy the short CVD impulse rule.
