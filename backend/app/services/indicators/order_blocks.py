@@ -15,8 +15,9 @@ DEFAULT_SHOW_BEAR = 50
 MAX_LOOKBACK = 2000
 
 # Order block strength parameters:
-# N = bars in the "impulse window" including the structure-breaking candle.
-# Strength index is the **raw sum of volumes** over this window.
+# N = number of bars in the founding-volume window.
+# Order block volume/strength = volume of the founding bar (the last opposing
+# candle that begins the swing) plus the next N-1 consecutive bars.
 DEFAULT_OB_STRENGTH_N = 2
 
 # Valid order blocks: bullish = greenish, bearish = reddish
@@ -33,39 +34,41 @@ DEFAULT_KEEP_BREAKERS = True
 class OrderBlock:
     top: float
     bottom: float
-    loc: int
-    formation_bar: int  # Bar index when OB was created (swing broken)
+    founding_bar: int  # Last opposing candle at the beginning of the swing
+    detection_bar: int  # BOS/CHoCH candle where the structure break detects the OB
     breaker: bool
-    break_loc: int | None
+    breaking_bar: int | None  # Candle that crosses the OB and converts it into a breaker
     fill_color: str
     strength_index: float = 0.0
-    # Bar index when this OB was fully negated (price crossed back through
-    # the zone in the opposite direction *after* becoming a breaker).
+    # Bar index when this breaker is eliminated (price crosses back through
+    # the zone in the opposite direction after becoming a breaker).
     # None means "still valid" from the engine's perspective.
-    negated_bar: int | None = None
+    eliminating_bar: int | None = None
 
 
 def _compute_ob_strength(
     candles: list[Candle],
-    pivot_bar: int,
+    founding_bar: int,
     n_window: int = DEFAULT_OB_STRENGTH_N,
 ) -> float:
     """
-    Strength index for an order block, based on **raw impulse volume**:
-    - Window A: N-bar window ending at the pivot bar (inclusive).
+    Strength index / OB volume for an order block.
+
+    Window: N-bar window starting at the founding bar (inclusive):
+    founding bar volume + next N-1 consecutive bars.
     Strength index = sum(volume over window A).
     Returns 0.0 when insufficient history.
 
     NOTE: `m_window` is kept for backward compatibility but no longer used.
     """
     n = len(candles)
-    if n == 0 or pivot_bar < 0 or pivot_bar >= n:
+    if n == 0 or founding_bar < 0 or founding_bar >= n:
         return 0.0
     n_window = max(1, n_window)
 
-    # Window A: [start_a, pivot_bar]
-    start_a = max(0, pivot_bar - n_window + 1)
-    end_a = pivot_bar
+    # Window A: [founding_bar, founding_bar + n_window - 1]
+    start_a = founding_bar
+    end_a = min(n - 1, founding_bar + n_window - 1)
     if start_a > end_a:
         return 0.0
     vol_sum = sum(candles[i].volume for i in range(start_a, end_a + 1))
@@ -158,23 +161,23 @@ def _iter_order_blocks_from_pivots(
             if end_idx >= start_idx:
                 minima = candles[start_idx].low
                 maxima = candles[start_idx].high
-                loc_bar = start_idx
+                founding_bar = start_idx
                 for j in range(start_idx + 1, end_idx + 1):
                     if candles[j].low < minima:
                         minima = candles[j].low
                         maxima = candles[j].high
-                        loc_bar = j
-                # Strength should be tied to the initiation candle (loc_bar), not the break candle.
-                strength = _compute_ob_strength(candles, loc_bar)
+                        founding_bar = j
+                # Strength is tied to the founding bar, not the BOS/CHoCH detection bar.
+                strength = _compute_ob_strength(candles, founding_bar)
                 bullish_ob.insert(
                     0,
                     OrderBlock(
                         top=maxima,
                         bottom=minima,
-                        loc=loc_bar,
-                        formation_bar=i,
+                        founding_bar=founding_bar,
+                        detection_bar=i,
                         breaker=False,
-                        break_loc=None,
+                        breaking_bar=None,
                         fill_color=BULL_FILL,
                         strength_index=strength,
                     ),
@@ -193,23 +196,23 @@ def _iter_order_blocks_from_pivots(
             if end_idx >= start_idx:
                 maxima = candles[start_idx].high
                 minima = candles[start_idx].low
-                loc_bar = start_idx
+                founding_bar = start_idx
                 for j in range(start_idx + 1, end_idx + 1):
                     if candles[j].high > maxima:
                         maxima = candles[j].high
                         minima = candles[j].low
-                        loc_bar = j
-                # Strength should be tied to the initiation candle (loc_bar), not the break candle.
-                strength = _compute_ob_strength(candles, loc_bar)
+                        founding_bar = j
+                # Strength is tied to the founding bar, not the BOS/CHoCH detection bar.
+                strength = _compute_ob_strength(candles, founding_bar)
                 bearish_ob.insert(
                     0,
                     OrderBlock(
                         top=maxima,
                         bottom=minima,
-                        loc=loc_bar,
-                        formation_bar=i,
+                        founding_bar=founding_bar,
+                        detection_bar=i,
                         breaker=False,
-                        break_loc=None,
+                        breaking_bar=None,
                         fill_color=BEAR_FILL,
                         strength_index=strength,
                     ),
@@ -217,27 +220,27 @@ def _iter_order_blocks_from_pivots(
 
         # Mark bullish OBs as breakers when price crosses below.
         # If price later crosses back above the OB top after breaker status,
-        # mark the OB as negated instead of dropping it from history.
+        # mark the breaker as eliminated instead of dropping it from history.
         for ob in list(bullish_ob):
-            if not ob.breaker and ob.loc < i:
+            if not ob.breaker and ob.founding_bar < i:
                 if min(close, c.open) < ob.bottom:
                     ob.breaker = True
-                    ob.break_loc = i
-            elif ob.breaker and ob.negated_bar is None and max(close, c.open) > ob.top:
-                ob.negated_bar = i
+                    ob.breaking_bar = i
+            elif ob.breaker and ob.eliminating_bar is None and max(close, c.open) > ob.top:
+                ob.eliminating_bar = i
                 if not keep_breakers:
                     bullish_ob.remove(ob)
 
         # Mark bearish OBs as breakers when price crosses above.
         # If price later crosses back below the OB bottom after breaker
-        # status, mark the OB as negated instead of dropping it.
+        # status, mark the breaker as eliminated instead of dropping it.
         for ob in list(bearish_ob):
-            if not ob.breaker and ob.loc < i:
+            if not ob.breaker and ob.founding_bar < i:
                 if max(close, c.open) > ob.top:
                     ob.breaker = True
-                    ob.break_loc = i
-            elif ob.breaker and ob.negated_bar is None and min(close, c.open) < ob.bottom:
-                ob.negated_bar = i
+                    ob.breaking_bar = i
+            elif ob.breaker and ob.eliminating_bar is None and min(close, c.open) < ob.bottom:
+                ob.eliminating_bar = i
                 if not keep_breakers:
                     bearish_ob.remove(ob)
 
@@ -312,7 +315,7 @@ def compute_order_blocks(
     # Split into active (not crossed) vs breakers (crossed); keep within MAX_LOOKBACK
     # show_bull/show_bear=0 means return all; otherwise take most recent N
     last_bar = n - 1
-    in_range = lambda ob: last_bar - ob.loc <= MAX_LOOKBACK
+    in_range = lambda ob: last_bar - ob.founding_bar <= MAX_LOOKBACK
 
     bullish_in_range = [ob for ob in bullish_ob if in_range(ob) and not ob.breaker]
     bullish_breakers_in_range = [ob for ob in bullish_ob if in_range(ob) and ob.breaker]
@@ -325,28 +328,31 @@ def compute_order_blocks(
     bearish_breakers = bearish_breakers_in_range if show_bear <= 0 else bearish_breakers_in_range[:show_bear]
 
     def ob_to_primitive(ob: OrderBlock, fill: str) -> dict:
-        loc_candle = candles[ob.loc]
-        formation_candle = candles[ob.formation_bar]
-        start_time = loc_candle.time // 1000
+        founding_candle = candles[ob.founding_bar]
+        detection_candle = candles[ob.detection_bar]
+        start_time = founding_candle.time // 1000
         end_time = candles[-1].time // 1000
-        initiation_time = loc_candle.time // 1000  # Candle whose size defines OB top/bottom
-        structure_break_time = formation_candle.time // 1000  # Bar that broke the swing
-        breaker_time = candles[ob.break_loc].time // 1000 if ob.breaker and ob.break_loc is not None else None
-        negated_time = (
-            candles[ob.negated_bar].time // 1000 if ob.negated_bar is not None else None
+        founding_time = founding_candle.time // 1000
+        detection_time = detection_candle.time // 1000
+        breaking_time = (
+            candles[ob.breaking_bar].time // 1000 if ob.breaker and ob.breaking_bar is not None else None
+        )
+        eliminating_time = (
+            candles[ob.eliminating_bar].time // 1000 if ob.eliminating_bar is not None else None
         )
         return {
             "top": ob.top,
             "bottom": ob.bottom,
             "startTime": start_time,
             "endTime": end_time,
-            "initiationTime": initiation_time,
-            "structureBreakTime": structure_break_time,
-            "breakerTime": breaker_time,
+            "foundingTime": founding_time,
+            "detectionTime": detection_time,
+            "breakingTime": breaking_time,
             "breaker": ob.breaker,
             "fillColor": fill,
+            "obVolume": ob.strength_index,
             "strengthIndex": ob.strength_index,
-            "negatedTime": negated_time,
+            "eliminatingTime": eliminating_time,
         }
 
     return {

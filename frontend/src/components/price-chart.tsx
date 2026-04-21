@@ -96,9 +96,10 @@ export function PriceChart() {
     const convertOb = (ob: {
       startTime: number;
       endTime: number;
-      breakerTime?: number | null;
-      breakTime?: number | null;
-      negatedTime?: number | null;
+      breakingTime?: number | null;
+      eliminatingTime?: number | null;
+      foundingTime?: number;
+      detectionTime?: number;
       top: number;
       bottom: number;
       breaker: boolean;
@@ -107,12 +108,13 @@ export function PriceChart() {
       ...ob,
       startTime: toChartTimeLocal(ob.startTime),
       endTime: toChartTimeLocal(ob.endTime),
-      breakerTime:
-        (ob.breakerTime ?? ob.breakTime) != null
-          ? toChartTimeLocal((ob.breakerTime ?? ob.breakTime)!)
-          : null,
-      negatedTime:
-        ob.negatedTime != null ? toChartTimeLocal(ob.negatedTime) : null,
+      foundingTime:
+        ob.foundingTime != null ? toChartTimeLocal(ob.foundingTime) : undefined,
+      detectionTime:
+        ob.detectionTime != null ? toChartTimeLocal(ob.detectionTime) : undefined,
+      breakingTime: ob.breakingTime != null ? toChartTimeLocal(ob.breakingTime) : null,
+      eliminatingTime:
+        ob.eliminatingTime != null ? toChartTimeLocal(ob.eliminatingTime) : null,
     });
     return {
       ...orderBlocksForDisplay,

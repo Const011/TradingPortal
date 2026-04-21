@@ -15,7 +15,7 @@ class TradeEvent:
     price: float  # Entry price
     target_price: float | None  # Optional; for close-on-target orders
     initial_stop_price: float  # Required; no orders without stop
-    context: dict  # type-specific: ob_top, ob_bottom, ob_loc, etc.
+    context: dict  # type-specific: ob_top, ob_bottom, ob_founding_bar, etc.
 
 
 @dataclass

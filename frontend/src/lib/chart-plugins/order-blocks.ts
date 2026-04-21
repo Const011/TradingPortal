@@ -120,11 +120,17 @@ class OrderBlocksPaneView implements IPrimitivePaneView {
         const tEnd = ob.endTime;
         const top = ob.top;
         const bottom = ob.bottom;
-        const breakerT = ob.breakerTime ?? ob.breakTime;
-        const negatedT = ob.negatedTime ?? null;
+        const breakerT = ob.breakingTime ?? ob.breakerTime ?? ob.breakTime;
+        const negatedT = ob.eliminatingTime ?? ob.negatedTime ?? null;
+        const obVolume =
+          typeof ob.obVolume === "number" && Number.isFinite(ob.obVolume)
+            ? ob.obVolume
+            : typeof ob.strengthIndex === "number" && Number.isFinite(ob.strengthIndex)
+              ? ob.strengthIndex
+              : undefined;
         const strength =
-          typeof ob.strengthIndex === "number" && Number.isFinite(ob.strengthIndex)
-            ? ob.strengthIndex
+          typeof obVolume === "number" && Number.isFinite(obVolume)
+            ? obVolume
             : undefined;
         const strengthText =
           strength !== undefined && strength > 0

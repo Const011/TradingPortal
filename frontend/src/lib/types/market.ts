@@ -106,17 +106,13 @@ export type OrderBlockData = {
   bottom: number;
   startTime: number;
   endTime: number;
-  initiationTime?: number;
-  structureBreakTime?: number;
-  breakerTime?: number | null;
-  /** @deprecated Use breakerTime */
-  breakTime?: number | null;
-  /** Time (sec) when this order block was fully negated, if ever. */
-  negatedTime?: number | null;
+  foundingTime?: number;
+  detectionTime?: number;
+  breakingTime?: number | null;
+  eliminatingTime?: number | null;
+  obVolume?: number;
   breaker: boolean;
   fillColor: string;
-  /** Relative volume-based strength index (N-bar impulse vs previous M bars). */
-  strengthIndex?: number;
 };
 
 /** Bar marker from order blocks (boundary cross, breaker created). */

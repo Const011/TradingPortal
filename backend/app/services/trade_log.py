@@ -285,18 +285,21 @@ def _build_entry_snapshot_markdown(
             for o in lst:
                 all_obs.append({**o, "list": key})
         if all_obs:
-            lines.append("| list | top | bottom | initiationTime | structureBreakTime | breakerTime | breaker |")
-            lines.append("|------|-----|--------|-----------------|--------------------|------------|---------|")
+            lines.append("| list | top | bottom | foundingTime | detectionTime | breakingTime | eliminatingTime | obVolume | breaker |")
+            lines.append("|------|-----|--------|-------------|---------------|--------------|-----------------|----------|---------|")
             for o in all_obs:
-                init = o.get("initiationTime")
-                init_str = _format_ts_local(init, "s") if isinstance(init, (int, float)) else "-"
-                struct = o.get("structureBreakTime")
-                struct_str = _format_ts_local(struct, "s") if isinstance(struct, (int, float)) else "-"
-                breaker = o.get("breakerTime")
-                breaker_str = _format_ts_local(breaker, "s") if isinstance(breaker, (int, float)) else "-"
+                founding = o.get("foundingTime", o.get("initiationTime"))
+                founding_str = _format_ts_local(founding, "s") if isinstance(founding, (int, float)) else "-"
+                detection = o.get("detectionTime", o.get("structureBreakTime"))
+                detection_str = _format_ts_local(detection, "s") if isinstance(detection, (int, float)) else "-"
+                breaking = o.get("breakingTime", o.get("breakerTime"))
+                breaking_str = _format_ts_local(breaking, "s") if isinstance(breaking, (int, float)) else "-"
+                eliminating = o.get("eliminatingTime", o.get("negatedTime"))
+                eliminating_str = _format_ts_local(eliminating, "s") if isinstance(eliminating, (int, float)) else "-"
+                ob_volume = o.get("obVolume", o.get("strengthIndex"))
                 lines.append(
                     f"| {o.get('list', '')} | {o.get('top', '')} | {o.get('bottom', '')} | "
-                    f"{init_str} | {struct_str} | {breaker_str} | {o.get('breaker', '')} |"
+                    f"{founding_str} | {detection_str} | {breaking_str} | {eliminating_str} | {ob_volume if ob_volume is not None else '-'} | {o.get('breaker', '')} |"
                 )
         else:
             lines.append("*No order blocks.*")

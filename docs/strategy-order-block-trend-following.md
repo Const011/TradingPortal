@@ -23,13 +23,20 @@ Both cases are treated as breakout/continuation above a significant level.
 
 ### OB event detection (per bar)
 
+Bar terminology used below:
+
+- **Founding bar:** the last opposite-direction candle at the beginning of the swing; the OB zone and OB volume are anchored here.
+- **Detection bar:** the BOS/CHoCH candle that breaks structure and causes the OB to be detected.
+- **Breaking bar:** the later candle that crosses the OB and converts it into a breaker block.
+- **Eliminating bar:** the later candle that crosses the breaker back in the opposite direction and removes it from active breaker scope.
+
 Order in the implementation matches the intended rules:
 
-1. **Registration:** For bar index `i`, the bullish and bearish OB lists are the **complete** sets for that bar (the pivot-based iterator has already appended any block whose `formation_bar` is `i`).
-2. **Same-bar evaluation:** Every **eligible** non-breaker block in those lists is tested for the touch + directional-close rules, **including** blocks that first appear on `i`. Eligibility is: anchor `loc < i` **or** `formation_bar == i` (so a block formed on the current bar is never skipped merely because `loc >= i`).
-3. **Emit:** `bullish_boundary_crossed` / `bearish_boundary_crossed` is emitted **only** when the bar intersects the entry band **and** the close confirms direction (bullish candle above the OB top for longs; bearish candle below the OB bottom for shorts). **Formation on `i` alone does not emit a boundary cross** — the candle must still satisfy the touch-and-exit geometry on that bar.
+1. **Registration:** For bar index `i`, the bullish and bearish OB lists are the **complete** sets for that bar (the pivot-based iterator has already appended any block whose `detection_bar` is `i`).
+2. **Same-bar evaluation:** Every **eligible** non-breaker block in those lists is tested for the touch + directional-close rules, **including** blocks that first appear on `i`. Eligibility is: `founding_bar < i` **or** `detection_bar == i` (so a block detected on the current bar is never skipped merely because its founding bar is too recent).
+3. **Emit:** `bullish_boundary_crossed` / `bearish_boundary_crossed` is emitted **only** when the bar intersects the entry band **and** the close confirms direction (bullish candle above the OB top for longs; bearish candle below the OB bottom for shorts). **Detection on `i` alone does not emit a boundary cross** — the candle must still satisfy the touch-and-exit geometry on that bar.
 
-Breaker-created events (`*_breaker_created`) follow their separate rules (wick through level, or `break_loc == i`).
+Breaker-created events (`*_breaker_created`) follow their separate rules (wick through level, or `breaking_bar == i`).
 
 **OB entry limit:** Each order block can generate at most **N** actual trade entries (default 2). This protects against stale price ranges when price oscillates back and forth. The cap counts only **confirmed entries** (trades that were opened), not boundary crosses that were considered but not confirmed (e.g. pending signals that lost confirmation, or triggers that were blocked). Boundary-crossed events are emitted freely; the limit is enforced only when opening a position.
 
@@ -83,7 +90,7 @@ Even when a signal is triggered and confirmed, **block** the order if:
 2. **Opposing polarity OB (must not be inside it):**
    - **Long:** block the entry if the **entry price** (`entry_candle.close`) lies **inside any active bearish order block** span (`[ob_bottom, ob_top]`).
    - **Short:** symmetric; block if `entry_candle.close` lies **inside any active bullish order block** span.
-2. **Insufficient CVD sequence (chop guard):**
+3. **Insufficient CVD sequence (chop guard):**
    - **Long:** Even when OB + volume spike conditions are met, **skip** the entry if the last `cvd_sequence_bars` CVD `delta` bars do **not** satisfy the long CVD impulse rule above (i.e. there are not enough same-direction CVD bars, or CVD is weakening too much).
    - **Short:** Symmetric; skip if the last `cvd_sequence_bars` CVD `delta` bars do not satisfy the short CVD impulse rule.
 
@@ -144,6 +151,7 @@ For **short**: breakeven when close below `entry − 0.1×|entry_bar_close − e
 | `breakeven_body_frac`          | 0.1     | Trail toward entry + N×(close−open); 0 = disabled                                                                                   |
 | `warmup_bars`                  | 1000    | Number of initial bars used for indicator warm-up; no entries are taken before this bar index                                      |
 | `min_ob_strength`              | 0.75    | **Relative OB strength filter (strategy only)**. When > 0, the strategy uses only order blocks whose strength is greater than `min_ob_strength × average_strength` across **all** identified order blocks. The indicator itself keeps all blocks; filtering is applied only at the strategy layer. |
+| `ob_strength_n`                | 2       | Order-block engine setting: OB volume = founding bar volume plus the next `N-1` consecutive bars. |
 | `keep_breakers`                | False   | **Whether to keep OBs after price closes beyond them.** When **False** (default, both indicator and strategy): an order block is **removed** from the list once price **closes** beyond its level (bullish OB when close > OB top, bearish OB when close < OB bottom). Only those OBs disappear; others stay. When **True**: OBs that have been crossed stay in the list so breaker bottoms (long) and breaker tops (short) can be used as trailing levels. The strategy uses **False** by default (crossed breakers disabled), so trailing levels are S/R, active OBs, entry, breakeven target, and previous bar low/high only. |
 | `cvd_length`                   | 7      | Length (bars) of the EMA used to smooth buying and selling volume in the CVD indicator (must match backend CVD length to align visuals and logic). |
 | `cvd_sequence_bars`            | 1      | Number of **preceding CVD bars** in the same direction required before allowing an entry; acts as a sequence-length filter against choppy CVD.    |
@@ -169,7 +177,7 @@ COLORS disabled (all colors allow entry)
 
 For **sell** signals:
 
-- Trigger: price touched the **entry zone** (OB top − N×OB height to OB top) and closed below with bearish candle, or crossed below a breaker that acts as resistance. The entry zone extends from the OB upper boundary downward by N×OB height (`entry_zone_mult`). Section 2 (“OB event detection”) applies symmetrically: blocks formed on the signal bar are in the list before evaluation, and `bearish_boundary_crossed` requires band touch + bearish close — not formation alone. The same OB entry limit (max N **actual trades** per OB) applies.
+- Trigger: price touched the **entry zone** (OB top − N×OB height to OB top) and closed below with bearish candle, or crossed below a breaker that acts as resistance. The entry zone extends from the OB upper boundary downward by N×OB height (`entry_zone_mult`). Section 2 (“OB event detection”) applies symmetrically: blocks detected on the signal bar are in the list before evaluation, and `bearish_boundary_crossed` requires band touch + bearish close — not detection alone. The same OB entry limit (max N **actual trades** per OB) applies.
 - Entry: same conditions as Section 3 (OB event, volume spike, CVD, RR). Reversal uses that **full** opposite-side path when a position is already open the other way, as in Section 3.
 - Initial stop: OB top or above closest resistance with gap/2.
 - Trailing: when price crosses a lower level (resistance, lower OB), move stop down.

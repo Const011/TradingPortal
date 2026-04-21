@@ -112,13 +112,20 @@ export function buildStrategyExportMarkdown(input: StrategyExportInput): string 
       ...(input.orderBlocks.bearishBreakers ?? []).map((o) => ({ ...o, list: "bearishBreakers" })),
     ];
     if (allObs.length > 0) {
-      lines.push("| list | top | bottom | initiationTime | structureBreakTime | breakerTime | breaker |");
-      lines.push("|------|-----|--------|-----------------|--------------------|------------|---------|");
+      lines.push("| list | top | bottom | foundingTime | detectionTime | breakingTime | eliminatingTime | obVolume | breaker |");
+      lines.push("|------|-----|--------|-------------|---------------|--------------|-----------------|----------|---------|");
       for (const o of allObs) {
-        const init = o.initiationTime != null ? formatTimestampLocal(o.initiationTime, "s") : "-";
-        const struct = o.structureBreakTime != null ? formatTimestampLocal(o.structureBreakTime, "s") : "-";
-        const breaker = o.breakerTime != null ? formatTimestampLocal(o.breakerTime, "s") : "-";
-        lines.push(`| ${(o as { list: string }).list} | ${o.top} | ${o.bottom} | ${init} | ${struct} | ${breaker} | ${o.breaker} |`);
+        const founding = o.foundingTime ?? o.initiationTime;
+        const detection = o.detectionTime ?? o.structureBreakTime;
+        const breaking = o.breakingTime ?? o.breakerTime;
+        const eliminating = o.eliminatingTime ?? o.negatedTime;
+        const obVolume = o.obVolume ?? o.strengthIndex;
+        const foundingStr = founding != null ? formatTimestampLocal(founding, "s") : "-";
+        const detectionStr = detection != null ? formatTimestampLocal(detection, "s") : "-";
+        const breakingStr = breaking != null ? formatTimestampLocal(breaking, "s") : "-";
+        const eliminatingStr = eliminating != null ? formatTimestampLocal(eliminating, "s") : "-";
+        const volumeStr = obVolume != null ? String(obVolume) : "-";
+        lines.push(`| ${(o as { list: string }).list} | ${o.top} | ${o.bottom} | ${foundingStr} | ${detectionStr} | ${breakingStr} | ${eliminatingStr} | ${volumeStr} | ${o.breaker} |`);
       }
     } else {
       lines.push("*No order blocks.*");
