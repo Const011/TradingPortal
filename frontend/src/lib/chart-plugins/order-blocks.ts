@@ -120,25 +120,23 @@ class OrderBlocksPaneView implements IPrimitivePaneView {
         const tEnd = ob.endTime;
         const top = ob.top;
         const bottom = ob.bottom;
-        const breakerT = ob.breakingTime ?? ob.breakerTime ?? ob.breakTime;
-        const negatedT = ob.eliminatingTime ?? ob.negatedTime ?? null;
+        // Canonical backend fields:
+        // - breakingTime: when OB became a breaker
+        // - eliminatingTime: when breaker was eliminated (end of breaker segment)
+        const breakerT = ob.breakingTime ?? null;
+        const eliminatingT = ob.eliminatingTime ?? null;
         const obVolume =
           typeof ob.obVolume === "number" && Number.isFinite(ob.obVolume)
             ? ob.obVolume
-            : typeof ob.strengthIndex === "number" && Number.isFinite(ob.strengthIndex)
-              ? ob.strengthIndex
-              : undefined;
-        const strength =
-          typeof obVolume === "number" && Number.isFinite(obVolume)
-            ? obVolume
             : undefined;
+        const strength = obVolume;
         const strengthText =
           strength !== undefined && strength > 0
             ? formatStrengthCompact(strength)
             : undefined;
 
-        // If the block has been negated, clamp its visual end at negatedT.
-        const lastTime = negatedT != null ? negatedT : tEnd;
+        // Clamp visual end of the breaker segment at eliminatingTime (when present).
+        const lastTime = eliminatingT != null ? eliminatingT : tEnd;
 
         if (ob.breaker && breakerT != null) {
           // Breaker case: we may have two time segments (pre-break and post-break).
